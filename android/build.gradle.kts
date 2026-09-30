@@ -96,7 +96,7 @@ configurations.configureEach {
     exclude(group = "org.lwjgl")
 }
 
-val target = "runelite-1.13.0-injected-36433848015.271"
+val target = "runelite-1.13.1-injected-36697419414.273"
 
 // --------------------------------------------------------------------------------------
 // rewriteLauncherEnv: makes the injected client read its JX_* launcher credentials from
@@ -351,7 +351,7 @@ if (androidSdkAvailable) {
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
             val versionMajor = 1
             val versionMinor = 0
-            val versionPatch = 29
+            val versionPatch = 30
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
             // Anti-tamper hook. SignatureGuard reads this field at MainActivity init and
