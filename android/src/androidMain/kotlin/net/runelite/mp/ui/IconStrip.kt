@@ -52,9 +52,7 @@ internal const val NAV_KEY_PLUGINS = "__compose__plugins"
  * Click behaviour:
  *  - Our synthetic "Plugins" icon → flip the selection to it; content area shows the
  *    Compose plugin list.
- *  - Any RL [NavEntry] with a panel → call into ClientUI to open it (the panel renders
- *    inside the AWT bitmap), and flip the Compose selection so the content area shows
- *    a "rendered in-game" placeholder.
+ *  - Any RL [NavEntry] with a panel opens in the shared Swing host.
  *  - Action-only RL nav (no panel) → fire its onClick. Selection state is unchanged.
  */
 @Composable
@@ -142,7 +140,6 @@ internal fun NavIconStrip(
         ) {
             items(entries, key = { it.key }) { entry ->
                 val isActive = selected == entry.key
-                val composeOverride = net.runelite.mp.ui.panels.PanelRegistry.hasPanel(entry.key)
                 IconButton(
                     label = entry.initial,
                     tooltip = entry.tooltip,
@@ -151,20 +148,15 @@ internal fun NavIconStrip(
                 ) {
                     if (isActive)
                     {
-                        // Same tap-to-close behaviour as the Plugins wrench — but only close
-                        // the AWT panel for non-Compose buttons. The Compose path never
-                        // opened one in the first place.
-                        if (!composeOverride) net.runelite.mp.ui.bridge.NavBarBridge.closePanels()
+                        // Re-tapping closes the selected panel.
+                        net.runelite.mp.ui.bridge.NavBarBridge.closePanels()
                         onSelect(null)
                     }
                     else
                     {
-                        if (composeOverride)
+                        if (entry.hasPanel)
                         {
-                            // Compose-replacement path: skip the AWT openPanel reflection
-                            // entirely so the Swing panel never paints into the game bitmap.
-                            // Still close any previously-open AWT panel from the prior
-                            // selection so it stops bleeding through.
+                            // The shared host owns rendering and activation of the original panel.
                             net.runelite.mp.ui.bridge.NavBarBridge.closePanels()
                             onSelect(entry.key)
                         }
