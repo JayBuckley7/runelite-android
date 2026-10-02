@@ -48,8 +48,8 @@ import net.runelite.mp.ui.bridge.PluginRow
  */
 object WindowImpl
 {
-    private val ICON_WIDTH = 44.dp
-    private val CONTENT_WIDTH = 280.dp
+    private val ICON_WIDTH = 36.dp
+    private val CONTENT_WIDTH = 256.dp
 
     /** First launch shows the game with NO panel open — user explicitly taps a nav
      *  icon to reveal one. Avoids slamming the plugin list on top of every fresh boot. */
@@ -105,29 +105,31 @@ object WindowImpl
                 // floating beside the boot splash during the long initial load.
                 if (bootComplete.value)
                 {
-                    // Compose-native content column. Renders for our synthetic "Plugins"
-                    // key AND for any nav button whose tooltip has a Compose replacement
-                    // in [PanelRegistry] (XP Tracker, Notes, GE, etc). RL-registered
-                    // buttons without a Compose override keep painting their panels
-                    // inside the AWT bitmap on the left — no Compose column eats game
-                    // space in that case.
-                    val key = selectedKey.value
-                    val renderCompose = key == NAV_KEY_PLUGINS ||
-                        (key != null && net.runelite.mp.ui.panels.PanelRegistry.hasPanel(key))
-                    if (renderCompose)
-                    {
-                        Box(Modifier.width(CONTENT_WIDTH).fillMaxHeight()) {
-                            ContentPanel()
+                    RuneLiteMenuTheme {
+                        // Compose-native content column. Renders for our synthetic "Plugins"
+                        // key AND for any nav button whose tooltip has a Compose replacement
+                        // in [PanelRegistry] (XP Tracker, Notes, GE, etc). RL-registered
+                        // buttons without a Compose override keep painting their panels
+                        // inside the AWT bitmap on the left — no Compose column eats game
+                        // space in that case.
+                        val key = selectedKey.value
+                        val renderCompose = key == NAV_KEY_PLUGINS ||
+                            (key != null && net.runelite.mp.ui.panels.PanelRegistry.hasPanel(key))
+                        if (renderCompose)
+                        {
+                            Box(Modifier.width(CONTENT_WIDTH).fillMaxHeight()) {
+                                ContentPanel()
+                            }
                         }
+                        NavIconStrip(
+                            width = ICON_WIDTH,
+                            selected = selectedKey.value,
+                            onSelect = { key ->
+                                selectedKey.value = key
+                                if (key != NAV_KEY_PLUGINS) configTarget.value = null
+                            },
+                        )
                     }
-                    NavIconStrip(
-                        width = ICON_WIDTH,
-                        selected = selectedKey.value,
-                        onSelect = { key ->
-                            selectedKey.value = key
-                            if (key != NAV_KEY_PLUGINS) configTarget.value = null
-                        },
-                    )
                 }
             }
         }
