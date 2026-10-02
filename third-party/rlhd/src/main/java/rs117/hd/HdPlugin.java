@@ -147,11 +147,19 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 @Singleton
 @PluginDescriptor(
 	name = "117 HD",
+	enabledByDefault = false,
 	description = "GPU renderer with a suite of graphical enhancements",
 	tags = { "hd", "high", "detail", "graphics", "shaders", "textures", "gpu", "shadows", "lights" },
-	conflicts = "GPU"
+	conflicts = { "GPU", "GPU (GLES)" }
 )
 public class HdPlugin extends Plugin {
+	private int androidContextGeneration;
+	public boolean prepareAndroidFrame() {
+		if (!AndroidSupport.host.makeCurrent()) return false;
+		if (androidContextGeneration != AndroidSupport.host.contextGeneration()) { restartPlugin(); return false; }
+		return true;
+	}
+
 	public static final ResourcePath PLUGIN_DIR = Props
 		.getFolder("rlhd.plugin-dir", () -> path(RuneLite.RUNELITE_DIR, "117hd"));
 
@@ -506,6 +514,7 @@ public class HdPlugin extends Plugin {
 
 	@Override
 	protected void startUp() {
+		log.info("Starting 117 HD Android GLES renderer");
 		// Lazily inject members into our singletons
 		for (var clazz : LAZY_SINGLETONS)
 			injector.injectMembers(injector.getInstance(clazz));
@@ -517,6 +526,7 @@ public class HdPlugin extends Plugin {
 				if (!textureManager.vanillaTexturesAvailable())
 					return false;
 
+				if (!AndroidSupport.host.makeCurrent()) return false;
 				AWTContext.loadNatives();
 				canvas = client.getCanvas();
 				synchronized (canvas.getTreeLock()) {
@@ -528,6 +538,7 @@ public class HdPlugin extends Plugin {
 					awtContext.configurePixelFormat(0, 0, 0);
 				}
 				awtContext.createGLContext();
+				androidContextGeneration = AndroidSupport.host.contextGeneration();
 				canvas.setIgnoreRepaint(true);
 				clientJFrame = HDUtils.getJFrame(canvas);
 
@@ -558,7 +569,7 @@ public class HdPlugin extends Plugin {
 				useLowMemoryMode = config.lowMemoryMode();
 				BUFFER_GROWTH_MULTIPLIER = useLowMemoryMode ? 1.333f : 2;
 
-				var rendererClass = config.legacyRenderer() ? LegacyRenderer.class : ZoneRenderer.class;
+				var rendererClass = ZoneRenderer.class;
 				String rlawtVersion = System.getProperty("runelite.rlawtpath", "Release");
 				String javaVmName = System.getProperty("java.vm.name", "Unknown");
 				String javaVersion = System.getProperty("java.version", "Unknown");
@@ -806,6 +817,7 @@ public class HdPlugin extends Plugin {
 			if (awtContext != null)
 				awtContext.destroy();
 			awtContext = null;
+			AndroidSupport.host.stopped();
 
 			if (debugCallback != null)
 				debugCallback.free();
@@ -840,6 +852,7 @@ public class HdPlugin extends Plugin {
 				try {
 					pluginManager.setPluginEnabled(this, false);
 					pluginManager.stopPlugin(this);
+					AndroidSupport.host.failed();
 				} catch (Throwable ex) {
 					log.error("Error while stopping 117HD:", ex);
 				}
@@ -908,7 +921,7 @@ public class HdPlugin extends Plugin {
 	public ShaderIncludes getShaderIncludes() {
 		var includes = new ShaderIncludes()
 			.addIncludePath(SHADER_PATH)
-			.addInclude("VERSION_HEADER", OSType.getOSType() == OSType.Linux ? LINUX_VERSION_HEADER : WINDOWS_VERSION_HEADER)
+			.addInclude("VERSION_HEADER", AndroidSupport.GLSL_HEADER)
 			.define("UI_SCALING_MODE", config.uiScalingMode())
 			.define("COLOR_BLINDNESS", config.colorBlindness())
 			.define("APPLY_COLOR_FILTER", configColorFilter != ColorFilter.NONE)
@@ -1492,7 +1505,7 @@ public class HdPlugin extends Plugin {
 
 			glActiveTexture(TEXTURE_UNIT_UI);
 			glBindTexture(GL_TEXTURE_2D, texUi);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uiResolution[0], uiResolution[1], 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uiResolution[0], uiResolution[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 		}
 
 		if (client.isStretchedEnabled()) {
@@ -1502,7 +1515,8 @@ public class HdPlugin extends Plugin {
 		} else {
 			copyTo(actualUiResolution, uiResolution);
 		}
-		round(actualUiResolution, multiply(vec(actualUiResolution), getDpiScaling()));
+		actualUiResolution[0] = AndroidSupport.host.width();
+		actualUiResolution[1] = AndroidSupport.host.height();
 
 		final BufferProvider bufferProvider = client.getBufferProvider();
 		final int[] pixels = bufferProvider.getPixels();
@@ -1576,7 +1590,7 @@ public class HdPlugin extends Plugin {
 			pbo.unmap();
 			pbo.bind();
 
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uiWidth, uiHeight, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uiWidth, uiHeight, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 			pbo.unbind();
 			frameTimer.end(Timer.UPLOAD_UI);
 		}

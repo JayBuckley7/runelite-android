@@ -289,7 +289,7 @@ public class ZoneRenderer implements Renderer {
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
 		int minLevel, int level, int maxLevel, Set<Integer> hideRoofIds
 	) {
-		if (plugin.isPluginStopPending())
+		if (plugin.isPluginStopPending() || !plugin.prepareAndroidFrame())
 			return;
 
 		try {
@@ -1123,6 +1123,7 @@ public class ZoneRenderer implements Renderer {
 
 	@Override
 	public void draw(int overlayColor) {
+		if (!plugin.prepareAndroidFrame()) return;
 		if (plugin.isPluginStopPending())
 			return;
 

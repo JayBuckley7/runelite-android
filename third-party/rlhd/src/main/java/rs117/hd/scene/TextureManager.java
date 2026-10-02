@@ -24,10 +24,7 @@
  */
 package rs117.hd.scene;
 
-import java.awt.geom.AffineTransform;
-import java.awt.image.AffineTransformOp;
 import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferInt;
 import java.nio.IntBuffer;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -41,6 +38,7 @@ import net.runelite.client.callback.ClientThread;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.*;
 import rs117.hd.HdPluginConfig;
+import rs117.hd.AndroidTextureScaler;
 import rs117.hd.utils.Props;
 import rs117.hd.utils.ResourcePath;
 
@@ -72,7 +70,6 @@ public class TextureManager {
 
 	// Temporary variables for texture loading and generating material uniforms
 	private IntBuffer pixelBuffer;
-	private BufferedImage scaledImage;
 	private BufferedImage vanillaImage;
 
 	private ScheduledFuture<?> debounce;
@@ -104,7 +101,6 @@ public class TextureManager {
 
 	public void shutDown() {
 		pixelBuffer = null;
-		scaledImage = null;
 		vanillaImage = null;
 	}
 
@@ -195,28 +191,13 @@ public class TextureManager {
 		int numPixels = product(textureSize);
 		if (pixelBuffer == null || pixelBuffer.capacity() < numPixels)
 			pixelBuffer = BufferUtils.createIntBuffer(numPixels);
-		if (scaledImage == null || scaledImage.getWidth() != textureSize[0] || scaledImage.getHeight() != textureSize[1])
-			scaledImage = new BufferedImage(textureSize[0], textureSize[1], BufferedImage.TYPE_INT_ARGB);
+		AndroidTextureScaler.uploadPixels(image, textureSize[0], textureSize[1], image != vanillaImage, pixelBuffer);
 
-		// TODO: scale and transform on the GPU for better performance (would save 400+ ms)
-		AffineTransform t = new AffineTransform();
-		if (image != vanillaImage) {
-			// Flip non-vanilla textures horizontally to match vanilla UV orientation
-			t.translate(textureSize[1], 0);
-			t.scale(-1, 1);
-		}
-		t.scale((double) textureSize[0] / image.getWidth(), (double) textureSize[1] / image.getHeight());
-		AffineTransformOp scaleOp = new AffineTransformOp(t, AffineTransformOp.TYPE_BICUBIC);
-		scaleOp.filter(image, scaledImage);
-
-		int[] pixels = ((DataBufferInt) scaledImage.getRaster().getDataBuffer()).getData();
-		pixelBuffer.clear().put(pixels).flip();
-
-		// Go from TYPE_4BYTE_ABGR in the BufferedImage to RGBA
+		// The buffer contains native little-endian RGBA bytes.
 		glTexSubImage3D(
 			target, 0, 0, 0,
 			textureLayer, textureSize[0], textureSize[1], 1,
-			GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, pixelBuffer
+			GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer
 		);
 	}
 

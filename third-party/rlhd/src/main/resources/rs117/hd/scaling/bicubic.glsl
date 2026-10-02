@@ -52,9 +52,9 @@ float catmull_rom(float x)
     float t2 = t * t;
     float t3 = t * t * t;
 
-    if (t < 1)
+    if (t < 1.0)
         return 1.5 * t3 - 2.5 * t2 + 1.0;
-    else if (t < 2)
+    else if (t < 2.0)
         return -0.5 * t3 + 2.5 * t2 - 4.0 * t + 2.0;
     else
         return 0.0;
@@ -71,9 +71,9 @@ float mitchell(float x)
     float t2 = t * t;
     float t3 = t * t * t;
 
-    if (t < 1)
+    if (t < 1.0)
         return 7.0/6.0 * t3 + -2.0 * t2 + 8.0/9.0;
-    else if (t < 2)
+    else if (t < 2.0)
         return -7.0/18.0 * t3 + 2.0 * t2 - 10.0/3.0 * t + 16.0/9.0;
     else
         return 0.0;
@@ -94,7 +94,7 @@ float d(vec2 pt1, vec2 pt2)
 // Samples a texture using a 4x4 kernel.
 vec4 textureCubic(sampler2D sampler, vec2 texCoords)
 {
-    vec2 texSize = textureSize(sampler, 0);
+    vec2 texSize = vec2(textureSize(sampler, 0));
     vec2 texelSize = 1.0 / texSize;
     vec2 texelFCoords = texCoords * texSize;
     texelFCoords -= 0.5;

@@ -74,6 +74,7 @@ public class ShaderTemplate
 				String source = includes
 					.addInclude("SHADER_TYPE", SHADER_TYPE_DEFINE + entry.getKey())
 					.loadFile(entry.getValue());
+				source = rs117.hd.AndroidSupport.adaptShader(source);
 				glShaderSource(shader, source);
 				glCompileShader(shader);
 

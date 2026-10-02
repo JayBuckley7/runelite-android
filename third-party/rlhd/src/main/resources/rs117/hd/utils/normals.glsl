@@ -37,7 +37,7 @@ vec3 sampleNormalMap(const Material material, const vec2 uv, const mat3 TBN) {
     // Undo automatic sRGB to linear conversion, since we want the raw values
     n = linearToSrgb(n);
     // Scale and shift normal so it can point in both directions
-    n.xy = n.xy * 2 - 1;
+    n.xy = n.xy * 2.0 - 1.0;
     // Flip normals when UVs are flipped
     n.xy *= sign(material.textureScale.xy);
     // Scale the normal map's Z-component to adjust strength

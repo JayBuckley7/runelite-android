@@ -37,7 +37,7 @@ float translateRange(float rangeStart, float rangeEnd, float value) {
 // returns a value between 0-1 representing a frame of animation
 // based on the length of the animation
 float animationFrame(float animationDuration) {
-    if (animationDuration == 0)
+    if (animationDuration == 0.0)
         return 0.0;
     return mod(elapsedTime, animationDuration) / animationDuration;
 }
@@ -76,16 +76,16 @@ void undoVanillaShading(inout int hsl, vec3 unrotatedNormal) {
     int saturation = hsl >> 7 & 0x7;
     int lightness = hsl & 0x7F;
     float vanillaLightDotNormals = dot(LIGHT_DIR_MODEL, unrotatedNormal);
-    if (vanillaLightDotNormals > 0) {
+    if (vanillaLightDotNormals > 0.0) {
         vanillaLightDotNormals /= length(unrotatedNormal);
-        float lighten = max(0, lightness - IGNORE_LOW_LIGHTNESS);
-        lightness += int((lighten * LIGHTNESS_MULTIPLIER + BASE_LIGHTEN - lightness) * vanillaLightDotNormals);
+        float lighten = float(max(0, lightness - IGNORE_LOW_LIGHTNESS));
+        lightness += int((lighten * LIGHTNESS_MULTIPLIER + float(BASE_LIGHTEN - lightness)) * vanillaLightDotNormals);
     }
     int maxLightness;
     #if LEGACY_GREY_COLORS
         maxLightness = 55;
     #else
-        maxLightness = int(127 - 72 * pow(saturation / 7., .05));
+        maxLightness = int(127.0 - 72.0 * pow(float(saturation) / 7., .05));
     #endif
     lightness = min(lightness, maxLightness);
     hsl &= ~0x7F;

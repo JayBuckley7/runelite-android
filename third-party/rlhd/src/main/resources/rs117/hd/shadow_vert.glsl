@@ -63,10 +63,10 @@ layout (location = 0) in vec3 vPosition;
         int terrainData = texelFetch(textureFaces, faceIdx + 2)[vertex];
 
         int waterTypeIndex = terrainData >> 3 & 0xFF;
-        float opacity = 1 - (alphaBiasHsl >> 24 & 0xFF) / float(0xFF);
+        float opacity = 1.0 - float(alphaBiasHsl >> 24 & 0xFF) / float(0xFF);
 
-        float opacityThreshold = float(materialData >> MATERIAL_SHADOW_OPACITY_THRESHOLD_SHIFT & 0x3F) / 0x3F;
-        if (opacityThreshold == 0)
+        float opacityThreshold = float(materialData >> MATERIAL_SHADOW_OPACITY_THRESHOLD_SHIFT & 0x3F) / float(0x3F);
+        if (opacityThreshold == 0.0)
             opacityThreshold = SHADOW_DEFAULT_OPACITY_THRESHOLD;
 
         bool isTransparent = opacity <= opacityThreshold;
@@ -143,8 +143,8 @@ layout (location = 0) in vec3 vPosition;
         int waterTypeIndex = vTerrainData >> 3 & 0xFF;
         float opacity = 1 - (vAlphaBiasHsl >> 24 & 0xFF) / float(0xFF);
 
-        float opacityThreshold = float(vMaterialData >> MATERIAL_SHADOW_OPACITY_THRESHOLD_SHIFT & 0x3F) / 0x3F;
-        if (opacityThreshold == 0)
+        float opacityThreshold = float(vMaterialData >> MATERIAL_SHADOW_OPACITY_THRESHOLD_SHIFT & 0x3F) / float(0x3F);
+        if (opacityThreshold == 0.0)
             opacityThreshold = SHADOW_DEFAULT_OPACITY_THRESHOLD;
 
         bool isTransparent = opacity <= opacityThreshold;

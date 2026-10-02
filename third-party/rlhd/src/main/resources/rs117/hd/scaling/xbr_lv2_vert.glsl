@@ -28,8 +28,8 @@
 
 XBRTable xbr_vert(vec2 texCoord, ivec2 sourceDimensions)
 {
-    float dx = (1.0/sourceDimensions.x);
-    float dy = (1.0/sourceDimensions.y);
+    float dx = (1.0/float(sourceDimensions.x));
+    float dy = (1.0/float(sourceDimensions.y));
 
     // Define coordinates to optimize later fetching of adjacent pixels
     //    A1 B1 C1

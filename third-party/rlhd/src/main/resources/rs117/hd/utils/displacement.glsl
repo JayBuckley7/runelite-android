@@ -48,10 +48,10 @@ void sampleDisplacementMap(
 
     // TODO: consider anti-aliasing to fit more nicely with MSAA
     // TODO: improve close-up accuracy
-    const float minLayers = 1;
-    const float maxLayers = 16;
+    const float minLayers = 1.0;
+    const float maxLayers = 16.0;
     float cosView = normalize(tsViewDir).z;
-    float numLayers = mix(minLayers, maxLayers, 1 - clamp(cosView * cosView, 0, 1));
+    float numLayers = mix(minLayers, maxLayers, 1.0 - clamp(cosView * cosView, 0.0, 1.0));
     float heightPerLayer = 1. / numLayers;
 
     vec2 deltaXyPerZ = tsViewDir.xy / tsViewDir.z * scale;
@@ -61,11 +61,11 @@ void sampleDisplacementMap(
     uv += deltaXyPerZ * .5;
     fragDelta -= vec3(deltaXyPerZ, scale) * .5;
 
-    float height = 0;
-    float prevHeight = 0;
-    float layer = 1;
-    float prevLayer = 1;
-    for (; layer >= 0 && height <= layer; layer -= heightPerLayer) {
+    float height = 0.0;
+    float prevHeight = 0.0;
+    float layer = 1.0;
+    float prevLayer = 1.0;
+    for (; layer >= 0.0 && height <= layer; layer -= heightPerLayer) {
         prevLayer = layer;
         prevHeight = height;
         height = sampleHeight(material, uv - deltaXyPerZ * layer);
@@ -84,35 +84,35 @@ void sampleDisplacementMap(
 //    #define PARALLAX_OCCLUSION_MAPPING 2
     #if PARALLAX_OCCLUSION_MAPPING >= 2 // self-shadowing
         float cosLight = normalize(tsLightDir).z;
-        float shadowBias = max(.0001, pow(1 - cosLight, 5.) * scale);
+        float shadowBias = max(.0001, pow(1.0 - cosLight, 5.) * scale);
 
         // Prepare for shadow steps
         deltaXyPerZ = tsLightDir.xy / tsLightDir.z * scale;
         layer = height;
 
         #if PARALLAX_OCCLUSION_MAPPING == 2 // hard shadows
-            for (; layer <= 1 && height <= layer; layer += heightPerLayer)
+            for (; layer <= 1.0 && height <= layer; layer += heightPerLayer)
                 height = sampleHeight(material, uv - deltaXyPerZ * layer) - shadowBias;
 
-            if (layer <= 1)
+            if (layer <= 1.0)
                 selfShadowing++;
         #else // PCF 3x3 soft shadows
-            float shadow = 0;
-            float texelSize = 1. / textureSize(textureArray, 0).x;
+            float shadow = 0.0;
+            float texelSize = 1. / float(textureSize(textureArray, 0).x);
             for (int x = -1; x <= 1; x++) {
                 for (int y = -1; y <= 1; y++) {
                     vec2 sUv = uv + (vec2(x, y) - .5) * texelSize;
 
                     float sLayer = layer;
                     float sHeight = height;
-                    for (; sLayer <= 1 && sHeight <= sLayer; sLayer += heightPerLayer)
+                    for (; sLayer <= 1.0 && sHeight <= sLayer; sLayer += heightPerLayer)
                         sHeight = sampleHeight(material, sUv - deltaXyPerZ * sLayer);
 
-                    if (sLayer <= 1)
+                    if (sLayer <= 1.0)
                         shadow++;
                 }
             }
-            selfShadowing += shadow / 9;
+            selfShadowing += shadow / 9.0;
         #endif
     #endif
 }

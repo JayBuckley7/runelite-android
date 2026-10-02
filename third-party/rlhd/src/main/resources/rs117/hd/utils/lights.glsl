@@ -16,13 +16,13 @@ void calculateLight(
     float distanceSquared = dot(lightToFrag, lightToFrag);
     float radiusSquared = light.position.w;
     if (distanceSquared <= radiusSquared) {
-        float attenuation = 1 - sqrt(distanceSquared / radiusSquared);
+        float attenuation = 1.0 - sqrt(distanceSquared / radiusSquared);
         attenuation *= attenuation;
 
         vec3 pointLightColor = light.color.rgb * attenuation;
         vec3 pointLightDir = normalize(lightToFrag);
 
-        float pointLightDotNormals = max(dot(normals, pointLightDir), 0);
+        float pointLightDotNormals = max(dot(normals, pointLightDir), 0.0);
         pointLightsOut += pointLightColor * pointLightDotNormals;
 
         vec3 pointLightReflectDir = reflect(-pointLightDir, normals);
@@ -36,7 +36,7 @@ void calculateLighting(
     inout vec3 pointLightsOut, inout vec3 pointLightsSpecularOut
 ) {
     #if TILED_LIGHTING
-        ivec2 tileXY = ivec2(gl_FragCoord.xy / sceneResolution * tiledLightingResolution);
+        ivec2 tileXY = ivec2(gl_FragCoord.xy / vec2(sceneResolution) * vec2(tiledLightingResolution));
 
         for (int tileLayer = 0; tileLayer < TILED_LIGHTING_LAYER_COUNT; tileLayer++) {
             uvec4 tileLayerData = texelFetch(tiledLightingArray, ivec3(tileXY, tileLayer), 0);

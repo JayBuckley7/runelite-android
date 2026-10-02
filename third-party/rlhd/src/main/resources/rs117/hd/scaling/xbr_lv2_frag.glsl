@@ -111,7 +111,7 @@ vec4 textureXBR(sampler2D image, vec2 texCoord, XBRTable t, float scale)
     vec4 delta_l = vec4(0.5/scale, 1.0/scale, 0.5/scale, 1.0/scale);
     vec4 delta_u = delta_l.yxwz;
 
-    vec2 textureDimensions = textureSize(image, 0);
+    vec2 textureDimensions = vec2(textureSize(image, 0));
 
     vec4 edri, edr, edr_l, edr_u, px; // px = pixel, edr = edge detection rule
     vec4 irlv0, irlv1, irlv2l, irlv2u, block_3d;

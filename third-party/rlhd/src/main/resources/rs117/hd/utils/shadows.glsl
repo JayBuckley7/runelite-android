@@ -47,14 +47,14 @@
 #if SHADOW_MODE != SHADOW_MODE_OFF
 float fetchShadowTexel(ivec2 pixelCoord, float fragDepth, vec3 fragPos, int i) {
     #if SHADOW_FILTERING == SHADOW_FILTERING_DITHER
-        int index = int(hash(vec4(floor(fragPos.xyz), i)) * POISSON_DISK_LENGTH) % POISSON_DISK_LENGTH;
+        int index = int(hash(vec4(floor(fragPos.xyz), i)) * float(POISSON_DISK_LENGTH)) % POISSON_DISK_LENGTH;
         pixelCoord += ivec2(getPoissonDisk(index) * 1.25);
     #endif
 
     #if SHADOW_TRANSPARENCY
-        int alphaDepth = int(texelFetch(shadowMap, pixelCoord, 0).r * SHADOW_COMBINED_MAX);
-        float depth = float(alphaDepth & SHADOW_DEPTH_MAX) / SHADOW_DEPTH_MAX;
-        float alpha = 1 - float(alphaDepth >> SHADOW_DEPTH_BITS) / SHADOW_ALPHA_MAX;
+        int alphaDepth = int(texelFetch(shadowMap, pixelCoord, 0).r * float(SHADOW_COMBINED_MAX));
+        float depth = float(alphaDepth & SHADOW_DEPTH_MAX) / float(SHADOW_DEPTH_MAX);
+        float alpha = 1.0 - float(alphaDepth >> SHADOW_DEPTH_BITS) / float(SHADOW_ALPHA_MAX);
         return depth < fragDepth ? alpha : 0.f;
     #else
         return texelFetch(shadowMap, pixelCoord, 0).r < fragDepth ? 1.f : 0.f;
@@ -62,7 +62,7 @@ float fetchShadowTexel(ivec2 pixelCoord, float fragDepth, vec3 fragPos, int i) {
 }
 
 float sampleShadowMap(vec3 fragPos, vec2 distortion, float lightDotNormals) {
-    if (lightStrength <= 0)
+    if (lightStrength <= 0.0)
         return 0.f;
 
     vec4 shadowPos = lightProjectionMatrix * vec4(fragPos, 1);
@@ -71,36 +71,36 @@ float sampleShadowMap(vec3 fragPos, vec2 distortion, float lightDotNormals) {
     // Fade out shadows near the shadow map edges
     #if ZONE_RENDERER
         // TODO: Make this configurable if we make the Shadow Distance Variable
-        const float fadeStart = 55.0 * TILE_SIZE;
-        const float fadeEnd   = 65.0 * TILE_SIZE;
+        const float fadeStart = 55.0 * float(TILE_SIZE);
+        const float fadeEnd   = 65.0 * float(TILE_SIZE);
         float fadeOut = smoothstep(fadeStart, fadeEnd, length(fragPos - cameraPos));
     #else
         float fadeOut = smoothstep(.75, 1., dot(shadowPos.xy, shadowPos.xy));
     #endif
-    if (fadeOut >= 1)
+    if (fadeOut >= 1.0)
         return 0.f;
 
     // NDC to texture space
     ivec2 shadowRes = textureSize(shadowMap, 0);
-    shadowPos.xyz += 1;
-    shadowPos.xyz /= 2;
+    shadowPos.xyz += 1.0;
+    shadowPos.xyz /= 2.0;
     shadowPos.xy += distortion;
-    shadowPos.xy = clamp(shadowPos.xy, 0, 1);
-    shadowPos.xy *= shadowRes;
+    shadowPos.xy = clamp(shadowPos.xy, 0.0, 1.0);
+    shadowPos.xy *= vec2(shadowRes);
     shadowPos.xy += .5; // Shift to texel center
 
-    float shadowBias = MIN_SHADOW_BIAS * max(1, 1.0 - lightDotNormals);
+    float shadowBias = MIN_SHADOW_BIAS * max(1.0, 1.0 - lightDotNormals);
     float fragDepth = shadowPos.z + shadowBias;
 
     const int kernelSize = 3;
-    ivec2 kernelOffset = ivec2(shadowPos.xy - kernelSize / 2);
+    ivec2 kernelOffset = ivec2(shadowPos.xy - float(kernelSize / 2));
     #if SHADOW_FILTERING == SHADOW_FILTERING_AVERAGE
-        const float kernelAreaReciprocal = 1. / (kernelSize * kernelSize);
+        const float kernelAreaReciprocal = 1. / float(kernelSize * kernelSize);
     #else
         const float kernelAreaReciprocal = .25; // This is effectively a 2x2 kernel
         vec2 lerp = fract(shadowPos.xy);
-        vec3 lerpX = vec3(1 - lerp.x, 1, lerp.x);
-        vec3 lerpY = vec3(1 - lerp.y, 1, lerp.y);
+        vec3 lerpX = vec3(1.0 - lerp.x, 1, lerp.x);
+        vec3 lerpY = vec3(1.0 - lerp.y, 1, lerp.y);
     #endif
 
     // Sample 4 corners first
@@ -144,8 +144,8 @@ float sampleShadowMap(vec3 fragPos, vec2 distortion, float lightDotNormals) {
         shadow *= kernelAreaReciprocal;
     }
 
-    return shadow * (1 - fadeOut);
+    return shadow * (1.0 - fadeOut);
 }
 #else
-#define sampleShadowMap(fragPos, distortion, lightDotNormals) 0
+#define sampleShadowMap(fragPos, distortion, lightDotNormals) 0.0
 #endif

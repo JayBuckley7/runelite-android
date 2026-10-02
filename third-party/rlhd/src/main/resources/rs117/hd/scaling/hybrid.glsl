@@ -10,9 +10,9 @@
 // Approach taken from https://colececil.dev/blog/2017/scaling-pixel-art-without-destroying-it/
 
 vec4 textureHybrid(sampler2D tex, vec2 uv) {
-    uv *= sourceDimensions;
+    uv *= vec2(sourceDimensions);
     vec2 texelUv = fract(uv);
     vec2 pixelsPerTexel = vec2(targetDimensions) / vec2(sourceDimensions);
-    vec2 interpolationAmount = min(texelUv * pixelsPerTexel, .5) - min((1 - texelUv) * pixelsPerTexel, .5);
-    return texture(tex, (floor(uv) + .5 + interpolationAmount) / sourceDimensions);
+    vec2 interpolationAmount = min(texelUv * pixelsPerTexel, .5) - min((1.0 - texelUv) * pixelsPerTexel, .5);
+    return texture(tex, (floor(uv) + .5 + interpolationAmount) / vec2(sourceDimensions));
 }

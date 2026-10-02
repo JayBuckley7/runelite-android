@@ -1,10 +1,6 @@
 package rs117.hd.utils.buffer;
 
 import java.nio.IntBuffer;
-import rs117.hd.opengl.compute.OpenCLManager;
-
-import static org.lwjgl.opencl.CL10.*;
-import static org.lwjgl.opencl.CL10GL.clCreateFromGLBuffer;
 
 public class SharedGLBuffer extends GLBuffer {
 	public final int clUsage;
@@ -17,8 +13,6 @@ public class SharedGLBuffer extends GLBuffer {
 	}
 
 	private void releaseCLBuffer() {
-		if (clId != 0 && OpenCLManager.context != 0)
-			clReleaseMemObject(clId);
 		clId = 0;
 	}
 
@@ -31,13 +25,6 @@ public class SharedGLBuffer extends GLBuffer {
 	@Override
 	public boolean ensureCapacity(long byteOffset, long numBytes) {
 		boolean resized = super.ensureCapacity(byteOffset, numBytes);
-		if (OpenCLManager.context != 0) {
-			releaseCLBuffer();
-
-			// OpenCL does not allow 0-size GL buffers, it will segfault on macOS
-			if (size != 0)
-				clId = clCreateFromGLBuffer(OpenCLManager.context, clUsage, id, (IntBuffer) null);
-		}
 		return resized;
 	}
 }

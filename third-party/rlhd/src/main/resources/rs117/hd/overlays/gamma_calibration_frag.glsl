@@ -36,30 +36,30 @@ in vec2 fUv;
 out vec4 FragColor;
 
 void main() {
-    const int numDots = 3;
+    const float numDots = 3.0;
     const float minBrightness = .02;
     const float lineFeather = .02;
     const float dotRadius = .4;
     const float timerDotRadius = .1;
     const float timerMargin = .125;
 
-    vec4 src = vec4(vec3(0), smoothstep(0, .05, calibrationTimer));
+    vec4 src = vec4(vec3(0), smoothstep(0.0, .05, calibrationTimer));
 
     vec2 uv = fUv - .5;
     uv.x *= numDots;
 
-    float dotIndex = floor(mod(uv.x + numDots / 2. + 1, numDots + 1));
+    float dotIndex = floor(mod(uv.x + numDots / 2. + 1.0, numDots + 1.0));
     vec2 dotUv = uv;
     dotUv.x = fract(dotUv.x + .5) - .5;
     float dot = smoothstep(dotRadius, dotRadius - lineFeather, length(dotUv));
-    dot *= mix(minBrightness, 1, (dotIndex - 1) / (numDots - 1));
+    dot *= mix(minBrightness, 1.0, (dotIndex - 1.0) / (numDots - 1.0));
     dot = pow(dot, gammaCorrection);
     src.rgb += vec3(dot);
 
     vec2 cornerDotUv = uv + vec2(-numDots / 2., .5) + timerMargin * vec2(1, -1);
-    float cornerDot = smoothstep(0, lineFeather, timerDotRadius - length(cornerDotUv));
-    float angle = fract(.25 + atan(cornerDotUv.y, cornerDotUv.x) / (2 * PI));
-    cornerDot *= mix(.1, 1, smoothstep(0, lineFeather, calibrationTimer - angle));
+    float cornerDot = smoothstep(0.0, lineFeather, timerDotRadius - length(cornerDotUv));
+    float angle = fract(.25 + atan(cornerDotUv.y, cornerDotUv.x) / (2.0 * PI));
+    cornerDot *= mix(.1, 1.0, smoothstep(0.0, lineFeather, calibrationTimer - angle));
     src.rgb += vec3(cornerDot);
 
     FragColor = src;

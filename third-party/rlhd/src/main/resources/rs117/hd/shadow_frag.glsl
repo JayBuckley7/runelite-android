@@ -41,23 +41,23 @@
 #endif
 
 void main() {
-    float opacity = 1;
+    float opacity = 1.0;
     #if SHADOW_TRANSPARENCY
         opacity = fOpacity;
     #endif
 
     #if SHADOW_MODE == SHADOW_MODE_DETAILED
-        if (fUvw.z != -1) {
+        if (fUvw.z != -1.0) {
             vec4 uvw = fUvw;
 
             // Vanilla tree textures rely on UVs being clamped horizontally,
             // which HD doesn't do, so we instead opt to hide these fragments
             if ((fMaterialData >> MATERIAL_FLAG_VANILLA_UVS & 1) == 1)
-                uvw.x = clamp(uvw.x, 0, .984375);
+                uvw.x = clamp(uvw.x, 0.0, .984375);
 
-            if (uvw.z != -1)
+            if (uvw.z != -1.0)
                 opacity *= texture(textureArray, uvw.xyz).a;
-            if (uvw.w != -1)
+            if (uvw.w != -1.0)
                 opacity *= linearToSrgb(texture(textureArray, uvw.xyw).r);
 
             #if !SHADOW_TRANSPARENCY
@@ -74,9 +74,9 @@ void main() {
         // Unfortunately, the exact handling of floats is implementation dependant, so this may not work
         // the same across all GPUs.
         float depth = gl_FragCoord.z;
-        gl_FragDepth = (
-            int((1 - opacity) * SHADOW_ALPHA_MAX) << SHADOW_DEPTH_BITS |
-            int(depth * SHADOW_DEPTH_MAX)
+        gl_FragDepth = float(
+            int((1.0 - opacity) * float(SHADOW_ALPHA_MAX)) << SHADOW_DEPTH_BITS |
+            int(depth * float(SHADOW_DEPTH_MAX))
         ) / float(SHADOW_COMBINED_MAX);
     #endif
 }

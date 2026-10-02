@@ -40,7 +40,7 @@ vec3 applySingleColorFilter(int filterIndex, vec3 color) {
             return quantizedColor;
         }
         case COLOR_FILTER_INVERT:
-            return 1 - color;
+            return 1.0 - color;
         case COLOR_FILTER_BLACK_AND_WHITE:
             return dot(color, vec3(0.2126, 0.7152, 0.0722)) > 0.4 ? vec3(1) : vec3(0);
         case COLOR_FILTER_CEL_SHADING: {
@@ -58,6 +58,6 @@ vec3 applyColorFilter(vec3 color) {
     vec3 previous = applySingleColorFilter(colorFilterPrevious, color);
     vec3 current = applySingleColorFilter(colorFilter, color);
     // Fade smoothly between the previous and current filters
-    return mix(previous, current, smoothstep(0, 1, colorFilterFade));
+    return mix(previous, current, smoothstep(0.0, 1.0, colorFilterFade));
 }
 #endif

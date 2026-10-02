@@ -58,13 +58,15 @@ void main() {
     #if UI_SCALING_MODE == UI_SCALING_MODE_MITCHELL || UI_SCALING_MODE == UI_SCALING_MODE_CATROM
         c = textureCubic(uiTexture, fUv);
     #elif UI_SCALING_MODE == UI_SCALING_MODE_XBR
-        c = textureXBR(uiTexture, fUv, xbrTable, ceil(1.0 * targetDimensions.x / sourceDimensions.x));
+        c = textureXBR(uiTexture, fUv, xbrTable, ceil(float(targetDimensions.x) / float(sourceDimensions.x)));
     #elif UI_SCALING_MODE == UI_SCALING_MODE_HYBRID
         c = textureHybrid(uiTexture, fUv);
     #else // NEAREST or LINEAR, which uses GL_TEXTURE_MIN_FILTER/GL_TEXTURE_MAG_FILTER to affect sampling
         c = texture(uiTexture, fUv);
     #endif
 
+    // Android uploads native little-endian ARGB pixels as RGBA bytes.
+    c = c.bgra;
     c = alphaBlend(c, alphaOverlay);
     c.rgb = colorBlindnessCompensation(c.rgb);
 
