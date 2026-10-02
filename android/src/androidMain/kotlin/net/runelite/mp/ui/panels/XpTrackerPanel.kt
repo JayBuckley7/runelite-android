@@ -1,141 +1,144 @@
 package net.runelite.mp.ui.panels
 
+import android.graphics.BitmapFactory
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import net.runelite.api.Experience
+import net.runelite.api.GameState
 import net.runelite.api.Skill
 import net.runelite.client.plugins.xptracker.XpTrackerService
+import net.runelite.client.ui.SkillColor
+import net.runelite.mp.ui.RlFonts
 import net.runelite.mp.ui.RlPalette
 import net.runelite.mp.ui.bridge.RuneLiteAccess
+import java.util.Locale
 
-/**
- * Mobile XP Tracker — shows total + per-skill session gain, current XP, level,
- * xp/hr, and time-to-goal. Subscribes to xp-tracker state via [XpTrackerService]
- * (public) for the rate calc and reflects into [net.runelite.client.plugins.xptracker.XpTrackerPlugin.getSkillSnapshot]
- * (package-private) for `xpGainedInSession`, which the public service interface
- * doesn't expose.
- *
- * Refresh cadence: every 1s while visible. Cheap — no allocations on the hot path,
- * just a reflection invoke per skill. Hidden skills (gain=0 since boot) sink to
- * the bottom so the user sees what they're actually training first.
- */
+/** Compact desktop-style tracker backed by the registered plugin's real session state. */
 @Composable
-internal fun XpTrackerPanel()
-{
-    val rows = remember { mutableStateListOf<XpTrackerBridge.SkillRow>() }
-    var total by remember { mutableStateOf(XpTrackerBridge.totalSnapshot()) }
-
-    LaunchedEffect(Unit)
-    {
-        while (true)
-        {
-            val next = XpTrackerBridge.list()
-            // We don't try to short-circuit on equality here — list() reads ~28 small
-            // structs and the snapshot's `xpPerHour` value changes constantly anyway.
-            rows.clear()
-            rows.addAll(next)
-            total = XpTrackerBridge.totalSnapshot()
+internal fun XpTrackerPanel() {
+    var rows by remember { mutableStateOf(emptyList<XpTrackerBridge.SkillRow>()) }
+    val expanded = remember { mutableStateMapOf<Skill, Boolean>() }
+    LaunchedEffect(Unit) {
+        while (true) {
+            rows = XpTrackerBridge.list()
             delay(1000)
         }
     }
-
-    PanelScaffold(
-        title = "XP Tracker",
-        subtitle = "${total.xpGainedInSession.formatXp()} session · ${total.xpPerHour.formatXp()}/hr",
-    ) {
-        if (rows.all { it.xpGainedInSession == 0 })
-        {
-            Text(
-                "No XP gained since login. Train a skill to start tracking.",
-                color = RlPalette.TextSecondary,
-                fontSize = 11.sp,
-            )
-            return@PanelScaffold
-        }
-        for (row in rows)
-        {
-            SkillRow(row)
+    PanelScaffold(title = "XP Tracker", scrollable = false) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().background(RlPalette.DarkerGray).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                SkillIcon(null, Modifier.size(24.dp))
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    XpStat("Gained", rows.sumOf { it.xpGainedInSession }.formatXp())
+                    XpStat("Per hour", rows.sumOf { it.xpPerHour }.formatXp())
+                }
+            }
             PanelDivider()
+            if (rows.isEmpty()) {
+                PanelEmptyState("Log in to view your skills.")
+            } else {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 4.dp)) {
+                    items(rows, key = { it.skill }) { row ->
+                        val open = expanded[row.skill] ?: (row.xpGainedInSession > 0)
+                        SkillRow(row, open) { expanded[row.skill] = !open }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SkillRow(row: XpTrackerBridge.SkillRow)
-{
-    val active = row.xpGainedInSession > 0
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                row.skillName,
-                color = if (active) RlPalette.TextPrimary else RlPalette.TextSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "Lv ${row.level}",
-                color = RlPalette.TextSecondary,
-                fontSize = 11.sp,
-            )
-        }
-        Spacer(Modifier.size(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "+${row.xpGainedInSession.formatXp()} (${row.xpPerHour.formatXp()}/hr)",
-                color = if (active) Color(0xFF8FE188) else RlPalette.TextSecondary,
-                fontSize = 11.sp,
-                modifier = Modifier.weight(1f),
-            )
-            if (row.timeTillGoal.isNotEmpty() && row.timeTillGoal != "∞")
-            {
-                Text(row.timeTillGoal, color = RlPalette.TextSecondary, fontSize = 11.sp)
+private fun SkillIcon(skill: Skill?, modifier: Modifier) {
+    val name = skill?.getName() ?: "Overall"
+    val bitmap = remember(skill) {
+        runCatching {
+            val resourceName = skill?.name?.lowercase(Locale.ROOT) ?: "overall"
+            XpTrackerBridge::class.java.getResourceAsStream("/skill_icons/$resourceName.png")
+                ?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+        }.getOrNull()
+    }
+    if (bitmap != null) Image(bitmap, contentDescription = name, modifier = modifier,
+        filterQuality = FilterQuality.None)
+    else Box(modifier, contentAlignment = Alignment.Center) {
+        Text(name.take(1), color = RlPalette.TextSecondary)
+    }
+}
+
+@Composable
+private fun XpStat(label: String, value: String) {
+    Row {
+        Text("$label: ", color = RlPalette.TextSecondary, fontFamily = RlFonts.Small, fontSize = 14.sp)
+        Text(value, color = RlPalette.TextPrimary, fontFamily = RlFonts.Small, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun SkillRow(row: XpTrackerBridge.SkillRow, expanded: Boolean, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().animateContentSize(tween(140)).clickable(onClick = onClick)
+        .semantics { contentDescription = "${row.skillName}, level ${row.level}, ${if (expanded) "collapse" else "expand"} statistics" }
+        .padding(vertical = 4.dp)) {
+        if (expanded) {
+            Row(Modifier.fillMaxWidth().background(RlPalette.DarkerGray).padding(horizontal = 4.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                SkillIcon(row.skill, Modifier.size(24.dp))
+                Spacer(Modifier.width(6.dp))
+                Column(Modifier.weight(1f)) {
+                    XpStat("XP gained", row.xpGainedInSession.formatXp())
+                    XpStat("XP/hr", row.xpPerHour.formatXp())
+                }
+                Column {
+                    XpStat("XP left", row.xpRemaining.formatXp())
+                    XpStat("Actions", if (row.actions > 0) row.actions.formatXp() else "—")
+                }
+            }
+            if (row.timeTillGoal.isNotBlank() && row.timeTillGoal != "∞") {
+                Text("Time left: ${row.timeTillGoal}  ·  Actions/hr: ${row.actionsPerHour.formatXp()}",
+                    color = RlPalette.TextSecondary, fontFamily = RlFonts.Small, fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
             }
         }
-        if (active && row.progressToGoal in 0.0..1.0)
-        {
-            Spacer(Modifier.size(4.dp))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFF2A2A2A))
-                    .border(1.dp, RlPalette.SurfaceBorder, RoundedCornerShape(2.dp))
-                    .padding(1.dp),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(row.progressToGoal.toFloat())
-                        .background(RlPalette.Accent),
-                ) { Text("", fontSize = 4.sp) }  // forces height ≈ 6sp
+        Row(Modifier.fillMaxWidth().heightIn(min = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!expanded) {
+                SkillIcon(row.skill, Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+            }
+            Box(Modifier.weight(1f).height(18.dp).background(Color(0xFF3D3831))
+                .border(1.dp, Color(0xFF171717)).padding(1.dp)) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(row.progressToGoal.toFloat())
+                    .background(Color(SkillColor.find(row.skill).color.rgb)))
+                val style = TextStyle(fontFamily = RlFonts.Regular, fontSize = 13.sp, color = Color.White,
+                    shadow = Shadow(Color.Black, Offset(1f, 1f), 0f))
+                Text("Lvl. ${row.level}", style = style, modifier = Modifier.align(Alignment.CenterStart).padding(start = 3.dp))
+                Text(String.format(Locale.US, "%.2f%%", row.progressToGoal * 100), style = style,
+                    modifier = Modifier.align(Alignment.Center))
+                Text(if (row.level == Experience.MAX_VIRT_LEVEL) "200M" else "Lvl. ${row.endLevel}",
+                    style = style, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 3.dp))
             }
         }
     }
@@ -144,8 +147,13 @@ private fun SkillRow(row: XpTrackerBridge.SkillRow)
 internal object XpTrackerBridge
 {
     data class SkillRow(
+        val skill: Skill,
         val skillName: String,
         val level: Int,
+        val endLevel: Int,
+        val xpRemaining: Int,
+        val actions: Int,
+        val actionsPerHour: Int,
         val xpGainedInSession: Int,
         val xpPerHour: Int,
         val timeTillGoal: String,
@@ -228,28 +236,46 @@ internal object XpTrackerBridge
     fun list(): List<SkillRow>
     {
         val plugin = plugin() ?: return emptyList()
-        val client = RuneLiteAccess.instance(net.runelite.api.Client::class.java)
+        val client = RuneLiteAccess.instance(net.runelite.api.Client::class.java) ?: return emptyList()
+        if (client.gameState !in setOf(GameState.LOGGED_IN, GameState.LOADING, GameState.HOPPING, GameState.CONNECTION_LOST))
+            return emptyList()
         val getSnap = skillSnapshotMethod ?: return emptyList()
         val service = service()
-        return Skill.values().filter { it != Skill.OVERALL }.map { skill ->
+        return Skill.values().map { skill ->
             val snap = try { getSnap.invoke(plugin, skill) } catch (t: Throwable) { null }
             val gained = snap?.let { snapshotInt(it, "getXpGainedInSession") } ?: 0
             val perHr = snap?.let { snapshotInt(it, "getXpPerHour") } ?: service?.getXpHr(skill) ?: 0
             val ttg = snap?.let { snapshotString(it, "getTimeTillGoal") } ?: ""
             val progress = snap?.let { snapshotDouble(it, "getSkillProgressToGoal") } ?: 0.0
-            val level = client?.getRealSkillLevel(skill) ?: 1
+            val xp = client.getSkillExperience(skill).coerceAtLeast(0)
+            val level = Experience.getLevelForXp(xp)
+            val snapshotStart = snap?.let { snapshotInt(it, "getStartLevel") } ?: 0
+            val snapshotEnd = snap?.let { snapshotInt(it, "getEndLevel") } ?: 0
+            val startXp = Experience.getXpForLevel(level)
+            val goalXp = if (level < Experience.MAX_VIRT_LEVEL) Experience.getXpForLevel(level + 1) else Experience.MAX_SKILL_XP
+            val snapshotStartXp = snap?.let { snapshotInt(it, "getStartGoalXp") } ?: 0
+            val snapshotEndXp = snap?.let { snapshotInt(it, "getEndGoalXp") } ?: 0
+            // Untrained skills have a placeholder snapshot with both goal XP values at zero.
+            val hasGoal = snapshotStart > 0 && snapshotEnd > 0 && snapshotEndXp > snapshotStartXp && progress.isFinite()
+            val fraction = if (hasGoal) progress / 100.0 else
+                (xp - startXp).toDouble() / (goalXp - startXp).coerceAtLeast(1)
             SkillRow(
+                skill = skill,
                 skillName = skill.getName(),
-                level = level,
+                level = if (hasGoal) snapshotStart else level,
+                endLevel = if (hasGoal) snapshotEnd else (level + 1).coerceAtMost(Experience.MAX_VIRT_LEVEL),
+                xpRemaining = if (hasGoal) snap?.let { snapshotInt(it, "getXpRemainingToGoal") } ?: 0 else (goalXp - xp).coerceAtLeast(0),
+                actions = snap?.let { snapshotInt(it, "getActionsInSession") } ?: 0,
+                actionsPerHour = snap?.let { snapshotInt(it, "getActionsPerHour") } ?: 0,
                 xpGainedInSession = gained,
                 xpPerHour = perHr,
                 timeTillGoal = ttg,
-                progressToGoal = progress / 100.0,
+                progressToGoal = if (fraction.isFinite()) fraction.coerceIn(0.0, 1.0) else 0.0,
             )
         }.sortedWith(
             compareByDescending<SkillRow> { it.xpGainedInSession > 0 }
                 .thenByDescending { it.xpPerHour }
-                .thenBy { it.skillName }
+                .thenBy { it.skill.ordinal }
         )
     }
 
@@ -262,10 +288,9 @@ internal object XpTrackerBridge
     }
 }
 
-/** "1,234" or "12.3k" / "1.23m" depending on magnitude — matches the desktop XP panel. */
-internal fun Int.formatXp(): String = when
-{
-    this < 10_000 -> "%,d".format(this)
-    this < 10_000_000 -> "%.1fk".format(this / 1000.0)
-    else -> "%.2fm".format(this / 1_000_000.0)
+/** Compact XP values, shared by the existing panels. */
+internal fun Int.formatXp(): String = when {
+    this < 10_000 -> String.format(Locale.US, "%,d", this)
+    this < 1_000_000 -> String.format(Locale.US, "%.1fK", this / 1000.0)
+    else -> String.format(Locale.US, "%.2fM", this / 1_000_000.0)
 }
