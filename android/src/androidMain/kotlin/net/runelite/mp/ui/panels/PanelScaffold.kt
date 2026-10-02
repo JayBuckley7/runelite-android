@@ -28,7 +28,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.runelite.mp.ui.RlPalette
@@ -91,7 +90,6 @@ internal fun PanelTextInput(
     singleLine: Boolean = true,
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    visualTransformation: VisualTransformation = VisualTransformation.None,
 )
 {
     Box(
@@ -110,7 +108,6 @@ internal fun PanelTextInput(
             value = value,
             onValueChange = onChange,
             singleLine = singleLine,
-            visualTransformation = visualTransformation,
             textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
             cursorBrush = SolidColor(RlPalette.Accent),
             modifier = Modifier.fillMaxWidth(),
