@@ -106,8 +106,36 @@ public class KeyEvent extends InputEvent {
     public static final int VK_F10 = 121;
     public static final int VK_F11 = 122;
     public static final int VK_F12 = 123;
+    public static final int VK_F13 = 0xF000;
+    public static final int VK_F14 = 0xF001;
+    public static final int VK_F15 = 0xF002;
+    public static final int VK_F16 = 0xF003;
+    public static final int VK_F17 = 0xF004;
+    public static final int VK_F18 = 0xF005;
+    public static final int VK_F19 = 0xF006;
+    public static final int VK_F20 = 0xF007;
+    public static final int VK_F21 = 0xF008;
+    public static final int VK_F22 = 0xF009;
+    public static final int VK_F23 = 0xF00A;
+    public static final int VK_F24 = 0xF00B;
+    public static final int VK_NUM_LOCK = 144;
+    public static final int VK_SCROLL_LOCK = 145;
+    public static final int VK_ASTERISK = 151;
+    public static final int VK_PRINTSCREEN = 154;
+    public static final int VK_INSERT = 155;
+    public static final int VK_HELP = 156;
+    public static final int VK_META = 157;
     public static final int VK_BACK_QUOTE = 192;
     public static final int VK_QUOTE = 222;
+    public static final int VK_AT = 512;
+    public static final int VK_COLON = 513;
+    public static final int VK_LEFT_PARENTHESIS = 519;
+    public static final int VK_NUMBER_SIGN = 520;
+    public static final int VK_PLUS = 521;
+    public static final int VK_RIGHT_PARENTHESIS = 522;
+    public static final int VK_WINDOWS = 524;
+    public static final int VK_CONTEXT_MENU = 525;
+    public static final int VK_ALT_GRAPH = 65406;
 
     public static int getExtendedKeyCodeForChar(int c) {
         if (c >= '0' && c <= '9') return VK_0 + (c - '0');
@@ -196,13 +224,93 @@ public class KeyEvent extends InputEvent {
             case VK_F12:
             case VK_PAUSE:
             case VK_CAPS_LOCK:
+            case VK_NUM_LOCK:
+            case VK_SCROLL_LOCK:
+            case VK_PRINTSCREEN:
+            case VK_INSERT:
+            case VK_HELP:
+            case VK_WINDOWS:
+            case VK_CONTEXT_MENU:
                 return true;
             default:
-                return false;
+                return keyCode >= VK_F13 && keyCode <= VK_F24;
         }
     }
 
+    /**
+     * The JDK's default (English awt.properties) key names, so hotkeys shown in RuneLite's
+     * config (Keybind.toString) read exactly as they do on desktop.
+     */
     public static String getKeyText(int keyCode) {
-        return "VK_" + Integer.toHexString(keyCode).toUpperCase(java.util.Locale.ROOT);
+        if ((keyCode >= VK_0 && keyCode <= VK_9) || (keyCode >= VK_A && keyCode <= VK_Z)) {
+            return String.valueOf((char) keyCode);
+        }
+        if (keyCode >= VK_NUMPAD0 && keyCode <= VK_NUMPAD9) {
+            return "NumPad-" + (keyCode - VK_NUMPAD0);
+        }
+        if (keyCode >= VK_F1 && keyCode <= VK_F12) {
+            return "F" + (keyCode - VK_F1 + 1);
+        }
+        if (keyCode >= VK_F13 && keyCode <= VK_F24) {
+            return "F" + (keyCode - VK_F13 + 13);
+        }
+        switch (keyCode) {
+            case VK_ENTER: return "Enter";
+            case VK_BACK_SPACE: return "Backspace";
+            case VK_TAB: return "Tab";
+            case VK_CANCEL: return "Cancel";
+            case VK_CLEAR: return "Clear";
+            case VK_SHIFT: return "Shift";
+            case VK_CONTROL: return "Ctrl";
+            case VK_ALT: return "Alt";
+            case VK_PAUSE: return "Pause";
+            case VK_CAPS_LOCK: return "Caps Lock";
+            case VK_ESCAPE: return "Escape";
+            case VK_SPACE: return "Space";
+            case VK_PAGE_UP: return "Page Up";
+            case VK_PAGE_DOWN: return "Page Down";
+            case VK_END: return "End";
+            case VK_HOME: return "Home";
+            case VK_LEFT: return "Left";
+            case VK_UP: return "Up";
+            case VK_RIGHT: return "Right";
+            case VK_DOWN: return "Down";
+            case VK_COMMA: return "Comma";
+            case VK_MINUS: return "Minus";
+            case VK_PERIOD: return "Period";
+            case VK_SLASH: return "Slash";
+            case VK_SEMICOLON: return "Semicolon";
+            case VK_EQUALS: return "Equals";
+            case VK_OPEN_BRACKET: return "Open Bracket";
+            case VK_BACK_SLASH: return "Back Slash";
+            case VK_CLOSE_BRACKET: return "Close Bracket";
+            case VK_MULTIPLY: return "NumPad *";
+            case VK_ADD: return "NumPad +";
+            case VK_SEPARATOR: return "NumPad ,";
+            case VK_SUBTRACT: return "NumPad -";
+            case VK_DECIMAL: return "NumPad .";
+            case VK_DIVIDE: return "NumPad /";
+            case VK_DELETE: return "Delete";
+            case VK_NUM_LOCK: return "Num Lock";
+            case VK_SCROLL_LOCK: return "Scroll Lock";
+            case VK_ASTERISK: return "Asterisk";
+            case VK_PRINTSCREEN: return "Print Screen";
+            case VK_INSERT: return "Insert";
+            case VK_HELP: return "Help";
+            case VK_META: return "Meta";
+            case VK_BACK_QUOTE: return "Back Quote";
+            case VK_QUOTE: return "Quote";
+            case VK_AT: return "At";
+            case VK_COLON: return "Colon";
+            case VK_LEFT_PARENTHESIS: return "Left Parenthesis";
+            case VK_NUMBER_SIGN: return "Number Sign";
+            case VK_PLUS: return "Plus";
+            case VK_RIGHT_PARENTHESIS: return "Right Parenthesis";
+            case VK_WINDOWS: return "Windows";
+            case VK_CONTEXT_MENU: return "Context Menu";
+            case VK_ALT_GRAPH: return "Alt Graph";
+            default:
+                return "Unknown keyCode: 0x" + Integer.toHexString(keyCode);
+        }
     }
 }

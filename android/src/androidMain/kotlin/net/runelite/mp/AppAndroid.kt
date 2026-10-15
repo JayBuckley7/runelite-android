@@ -36,9 +36,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
@@ -319,6 +324,8 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                         // the cursor jerking between two finger positions during zoom.
                         if (event.changes.count { it.pressed } > 1) continue
                         val change = event.changes.firstOrNull() ?: continue
+                        // A real mouse is driven 1:1 by MouseBridge below.
+                        if (change.type == PointerType.Mouse) continue
                         when (event.type) {
                             PointerEventType.Move, PointerEventType.Enter,
                             PointerEventType.Press -> {
@@ -328,11 +335,29 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                     }
                 }
             }
+            // Physical mouse: forwarded as the exact AWT stream desktop Java produces
+            // (real buttons, hover, drags, wheel, enter/exit) instead of going through the
+            // touch emulation below — no long-press right-click, no BUTTON2 camera drags,
+            // no pinch-zoom.
+            .pointerInput(Unit) {
+                val mouse = MouseBridge()
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.type == PointerType.Mouse } ?: continue
+                        mouse.handle(event, change.position, change.scrollDelta.y, boxSize)
+                        event.changes.forEach { if (it.type == PointerType.Mouse) it.consume() }
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 val longPressMs = android.view.ViewConfiguration.getLongPressTimeout().toLong()
                 val touchSlop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // Mouse presses belong to MouseBridge; awaitEachGesture then waits for
+                    // every button to come up before looking for the next touch.
+                    if (down.type == PointerType.Mouse) return@awaitEachGesture
                     val downId = down.id
                     val downTime = System.currentTimeMillis()
                     var lastPos: Offset = down.position
@@ -711,7 +736,12 @@ private object RenderedFrame {
  *  bitmap, since that's what ContentScale.Fit laid out against. The live window is only
  *  consulted to rescale the result, which is a no-op in the steady state and keeps a tap
  *  roughly right if a resize lands between the last blit and the touch. */
-private fun composeToWindow(offset: Offset, boxSize: IntSize, window: java.awt.Window): Pair<Int, Int>? {
+private fun composeToWindow(
+    offset: Offset,
+    boxSize: IntSize,
+    window: java.awt.Window,
+    clamp: Boolean = false,
+): Pair<Int, Int>? {
     if (boxSize.width <= 0 || boxSize.height <= 0) return null
     val winW = window.width
     val winH = window.height
@@ -726,6 +756,8 @@ private fun composeToWindow(offset: Offset, boxSize: IntSize, window: java.awt.W
     val padY = (boxSize.height - drawnH) / 2f
     val x = (((offset.x - padX) / scale) * (winW / ww)).toInt()
     val y = (((offset.y - padY) / scale) * (winH / wh)).toInt()
+    // A held mouse button keeps reporting past the window edge, like a desktop drag does.
+    if (clamp) return x.coerceIn(0, winW - 1) to y.coerceIn(0, winH - 1)
     if (x < 0 || y < 0 || x >= winW || y >= winH) return null
     return x to y
 }
@@ -785,10 +817,13 @@ private fun dispatchClick(offset: Offset, boxSize: IntSize, button: Int) {
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_PRESSED, lx, ly, button, true)
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_RELEASED, lx, ly, button, false)
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_CLICKED, lx, ly, button, false)
+    clickDirectWidget(hit.comp, winX, winY, button)
+}
 
-    // Compose-side widget helpers — these aren't reachable via AWT MouseListener so we
-    // call their high-level click APIs directly when the hit lands on them.
-    when (val direct = hit.comp) {
+/** Compose-side widget helpers — these aren't reachable via AWT MouseListener so we
+ *  call their high-level click APIs directly when the hit lands on them. */
+private fun clickDirectWidget(direct: java.awt.Component, winX: Int, winY: Int, button: Int) {
+    when (direct) {
         is javax.swing.JTabbedPane -> {
             val (dx, dy) = localCoords(direct, winX, winY)
             val idx = direct.indexAtLocation(dx, dy)
@@ -1117,4 +1152,202 @@ private fun fireMouse(target: java.awt.Component, id: Int, x: Int, y: Int, butto
             mods, x, y, 1, button == BUTTON3, button,
         ),
     )
+}
+
+private fun downMaskFor(button: Int): Int = when (button) {
+    BUTTON1 -> java.awt.event.InputEvent.BUTTON1_DOWN_MASK
+    BUTTON2 -> java.awt.event.InputEvent.BUTTON2_DOWN_MASK
+    BUTTON3 -> java.awt.event.InputEvent.BUTTON3_DOWN_MASK
+    else -> 0
+}
+
+/**
+ * Physical mouse → AWT, reproducing what desktop Java delivers for the same hand motion:
+ *
+ *  - MOVED while no button is held, with ENTERED/EXITED as the pointer crosses between
+ *    components (and EXITED when it leaves the game area, so the client drops its cursor).
+ *  - PRESSED on the component under the pointer, which then owns the mouse until the last
+ *    button comes up: DRAGGED and RELEASED go to it even off its bounds (implicit grab).
+ *  - CLICKED after RELEASED unless the press turned into a drag, with multi-click counts.
+ *  - Each button reported as itself — primary BUTTON1, middle BUTTON2, secondary BUTTON3 —
+ *    with getModifiersEx carrying every button still down.
+ *  - MOUSE_WHEEL on the deepest component under the pointer that listens for it.
+ *
+ * Keyboard modifiers stay off the mouse events for the same reason as [fireMouse]: the
+ * client reads them from its own key state, which hardware keys already drive.
+ */
+private class MouseBridge {
+    private var held = 0
+    private var swallowed = 0
+    private var grab: java.awt.Component? = null
+    private var hover: java.awt.Component? = null
+    private var pressX = 0
+    private var pressY = 0
+    private var dragged = false
+    private var lastX = Int.MIN_VALUE
+    private var lastY = Int.MIN_VALUE
+    private var wheel = 0f
+
+    private var clickCount = 0
+    private var lastPressAt = 0L
+    private var lastPressButton = 0
+    private var lastPressX = 0
+    private var lastPressY = 0
+
+    fun handle(event: PointerEvent, position: Offset, scrollY: Float, boxSize: IntSize) {
+        val window = java.awt.Window.primaryFrame() ?: return
+        if (event.type == PointerEventType.Exit && grab == null) {
+            setHover(null, 0, 0)
+            return
+        }
+        val buttons = event.buttons
+        var now = (if (buttons.isPrimaryPressed) java.awt.event.InputEvent.BUTTON1_DOWN_MASK else 0) or
+            (if (buttons.isTertiaryPressed) java.awt.event.InputEvent.BUTTON2_DOWN_MASK else 0) or
+            (if (buttons.isSecondaryPressed) java.awt.event.InputEvent.BUTTON3_DOWN_MASK else 0)
+        // Some mice/touchpads report a press with an empty button state; that's a left click.
+        if (now == 0 && event.type == PointerEventType.Press) now = java.awt.event.InputEvent.BUTTON1_DOWN_MASK
+        if (event.changes.none { it.pressed }) now = 0
+
+        val pos = composeToWindow(position, boxSize, window, clamp = grab != null)
+        if (pos == null) {
+            // Over the letterbox: nothing to hover, and there's no grab to keep feeding.
+            // Buttons pressed out here never reach the game, even if dragged onto it —
+            // the same as pressing outside a desktop window.
+            swallowed = (swallowed or now) and held.inv()
+            setHover(null, 0, 0)
+            return
+        }
+        swallowed = swallowed and now
+        val (wx, wy) = pos
+
+        // Movement first, under the old button state — a release event's position is the
+        // drag's last position, and a press event's is where the press happens.
+        if (wx != lastX || wy != lastY) {
+            lastX = wx
+            lastY = wy
+            val g = grab
+            if (g != null && held != 0) {
+                if (kotlin.math.abs(wx - pressX) > DRAG_SLOP || kotlin.math.abs(wy - pressY) > DRAG_SLOP) {
+                    dragged = true
+                }
+                val (lx, ly) = localCoords(g, wx, wy)
+                fire(g, java.awt.event.MouseEvent.MOUSE_DRAGGED, lx, ly, held, java.awt.event.MouseEvent.NOBUTTON, 0)
+            } else {
+                val target = targetAt(window, wx, wy)
+                setHover(target, wx, wy)
+                if (target != null) {
+                    val (lx, ly) = localCoords(target, wx, wy)
+                    fire(target, java.awt.event.MouseEvent.MOUSE_MOVED, lx, ly, 0, java.awt.event.MouseEvent.NOBUTTON, 0)
+                }
+            }
+        }
+
+        for (button in intArrayOf(BUTTON1, BUTTON2, BUTTON3)) {
+            val mask = downMaskFor(button)
+            if ((now and mask) != 0 && (held and mask) == 0 && (swallowed and mask) == 0) {
+                press(window, button, mask, wx, wy)
+            }
+        }
+        for (button in intArrayOf(BUTTON1, BUTTON2, BUTTON3)) {
+            val mask = downMaskFor(button)
+            if ((now and mask) == 0 && (held and mask) != 0) release(window, button, mask, wx, wy)
+        }
+
+        if (event.type == PointerEventType.Scroll && scrollY != 0f) scroll(window, wx, wy, scrollY)
+    }
+
+    private fun press(window: java.awt.Window, button: Int, mask: Int, wx: Int, wy: Int) {
+        if (grab == null) {
+            grab = targetAt(window, wx, wy) ?: return
+            pressX = wx
+            pressY = wy
+            dragged = false
+        }
+        val now = System.currentTimeMillis()
+        clickCount = if (button == lastPressButton && now - lastPressAt <= MULTI_CLICK_MS &&
+            kotlin.math.abs(wx - lastPressX) <= DRAG_SLOP && kotlin.math.abs(wy - lastPressY) <= DRAG_SLOP
+        ) clickCount + 1 else 1
+        lastPressAt = now
+        lastPressButton = button
+        lastPressX = wx
+        lastPressY = wy
+
+        held = held or mask
+        val g = grab ?: return
+        val (lx, ly) = localCoords(g, wx, wy)
+        fire(g, java.awt.event.MouseEvent.MOUSE_PRESSED, lx, ly, held, button, clickCount)
+    }
+
+    private fun release(window: java.awt.Window, button: Int, mask: Int, wx: Int, wy: Int) {
+        held = held and mask.inv()
+        val g = grab ?: return
+        val (lx, ly) = localCoords(g, wx, wy)
+        fire(g, java.awt.event.MouseEvent.MOUSE_RELEASED, lx, ly, held, button, clickCount)
+        if (!dragged) {
+            fire(g, java.awt.event.MouseEvent.MOUSE_CLICKED, lx, ly, held, button, clickCount)
+            val hit = hitTest(window, wx, wy)
+            if (hit != null) clickDirectWidget(hit.comp, wx, wy, button)
+        }
+        if (held == 0) {
+            grab = null
+            // Desktop defers the enter/exit for a drag that ended over another component
+            // until the button comes up.
+            setHover(targetAt(window, wx, wy), wx, wy)
+        }
+    }
+
+    private fun scroll(window: java.awt.Window, wx: Int, wy: Int, delta: Float) {
+        // Compose reports wheel-down as positive, the same sign as AWT's wheelRotation.
+        // Smooth/high-resolution wheels arrive in fractions; whole notches are emitted
+        // as they accumulate, with the fraction carried in preciseWheelRotation.
+        wheel += delta
+        val notches = wheel.toInt()
+        wheel -= notches
+        val hit = hitTest(window, wx, wy) ?: return
+        val target = ancestorChain(hit.comp).firstOrNull { it.mouseWheelListeners.isNotEmpty() }
+            ?: ancestorChain(hit.comp).firstOrNull { it is java.awt.Canvas || it is javax.swing.JScrollPane }
+            ?: return
+        val (lx, ly) = localCoords(target, wx, wy)
+        target.dispatchMouseEvent(
+            java.awt.event.MouseWheelEvent(
+                target, java.awt.event.MouseEvent.MOUSE_WHEEL, System.currentTimeMillis(),
+                held, lx, ly, 0, false,
+                java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, notches, delta.toDouble(),
+            ),
+        )
+    }
+
+    private fun setHover(target: java.awt.Component?, wx: Int, wy: Int) {
+        val old = hover
+        if (old === target) return
+        hover = target
+        if (old != null) {
+            val (lx, ly) = if (target != null) localCoords(old, wx, wy) else (-1 to -1)
+            fire(old, java.awt.event.MouseEvent.MOUSE_EXITED, lx, ly, held, java.awt.event.MouseEvent.NOBUTTON, 0)
+        }
+        if (target != null) {
+            val (lx, ly) = localCoords(target, wx, wy)
+            fire(target, java.awt.event.MouseEvent.MOUSE_ENTERED, lx, ly, held, java.awt.event.MouseEvent.NOBUTTON, 0)
+        }
+    }
+
+    private fun targetAt(window: java.awt.Window, wx: Int, wy: Int): java.awt.Component? {
+        val hit = hitTest(window, wx, wy) ?: return null
+        return walkUpToListener(hit.comp) ?: hit.comp
+    }
+
+    private fun fire(target: java.awt.Component, id: Int, x: Int, y: Int, mods: Int, button: Int, clicks: Int) {
+        // Popup trigger on the secondary press, as the Linux/macOS toolkits report it.
+        val popup = id == java.awt.event.MouseEvent.MOUSE_PRESSED && button == BUTTON3
+        target.dispatchMouseEvent(
+            java.awt.event.MouseEvent(target, id, System.currentTimeMillis(), mods, x, y, clicks, popup, button),
+        )
+    }
+
+    companion object {
+        /** Window pixels a held button may wander before the press counts as a drag. */
+        private const val DRAG_SLOP = 2
+        /** awt.multiClickInterval's usual desktop value. */
+        private const val MULTI_CLICK_MS = 500L
+    }
 }
