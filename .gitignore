@@ -59,6 +59,8 @@ bin/
 ### client-inspector workspace ###
 # Locally-built jars and decompiled sources from :client-inspector:sanitize/decompile/recompile.
 data/
+# ...but not 117 HD's rs117.hd.data source package.
+!third-party/rlhd/src/main/java/rs117/hd/data/
 # Local Vineflower fork used via includeBuild; patches live in its own git repo.
 vineflower/
 # javac argfile dumps written during ad-hoc debugging

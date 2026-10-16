@@ -354,7 +354,7 @@ if (androidSdkAvailable) {
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
             val versionMajor = 1
             val versionMinor = 0
-            val versionPatch = 31
+            val versionPatch = 32
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
             // Anti-tamper hook. SignatureGuard reads this field at MainActivity init and
@@ -1104,7 +1104,7 @@ private class ConcatRewriter(
         if (implHandle == null || implHandle.tag != Opcodes.H_INVOKESTATIC) {
             // Unknown CONDY shape — fall back to a safe placeholder. Strip NULs so the
             // result can't trip xi.cq's NUL-rejection downstream.
-            push(c.toString().replace(' ', '_'))
+            push(c.toString().replace(' ', '_'))
             return
         }
         // Push the trailing bsm args (positions 1..N) as primitive constants matching
