@@ -64,6 +64,11 @@ public class TestSwingPanelHost {
         check(surface.getPixel(10, 10) == android.graphics.Color.GREEN, "panel paint must not cover game");
         check(surface.getPixel(160, 10) != android.graphics.Color.GREEN, "panel paints within its bounds");
         System.out.println("PASS: panel paint stays inside its translated bounds");
+        JEditorPane rich = new net.runelite.client.plugins.info.JRichTextPane();
+        Object htmlKit = rich.getEditorKitForContentType("text/html");
+        check(htmlKit instanceof javax.swing.text.html.HTMLEditorKit && htmlKit == rich.getEditorKitForContentType("text/html"),
+            "Info panel receives a stable HTML editor kit");
+        System.out.println("PASS: actual RuneLite Info panel HTML editor initialization");
         JPanel root = new JPanel(null);
         root.setBounds(0, 0, 240, 300);
         JButton button = new JButton("Test action");

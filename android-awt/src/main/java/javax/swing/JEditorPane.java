@@ -11,6 +11,7 @@ public class JEditorPane extends JTextComponent {
 
     private String contentType = "text/plain";
     private EditorKit kit;
+    private final java.util.Map<String, EditorKit> kits = new java.util.HashMap<>();
     private URL page;
 
     public JEditorPane() {}
@@ -29,7 +30,14 @@ public class JEditorPane extends JTextComponent {
     public void removeHyperlinkListener(HyperlinkListener listener) {}
     public void fireHyperlinkUpdate(javax.swing.event.HyperlinkEvent e) {}
 
-    public EditorKit getEditorKitForContentType(String type) { return null; }
-    public void setEditorKitForContentType(String type, EditorKit k) {}
-    public static EditorKit createEditorKitForContentType(String type) { return null; }
+    public EditorKit getEditorKitForContentType(String type) {
+        EditorKit result = kits.get(type);
+        if (result == null) {
+            result = createEditorKitForContentType(type);
+            if (result != null) kits.put(type, result);
+        }
+        return result;
+    }
+    public void setEditorKitForContentType(String type, EditorKit k) { kits.put(type, k); }
+    public static EditorKit createEditorKitForContentType(String type) { return "text/html".equals(type) ? new javax.swing.text.html.HTMLEditorKit() : null; }
 }
