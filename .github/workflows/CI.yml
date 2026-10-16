@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     permissions:
-      contents: read
+      contents: write
 
     env:
       GRADLE_OPTS: "-Dfile:encoding=UTF-8"
@@ -36,6 +36,16 @@ jobs:
         with:
           gradle-version: wrapper
 
+      # The runner image's preinstalled NDK doesn't match android-awt's pinned ndkVersion,
+      # and rust-android-gradle checks for it at configure time (before AGP could
+      # auto-download), failing with "NDK is not installed". Install the pinned one.
+      - name: Install Android NDK
+        run: |
+          NDK_VERSION=$(sed -n 's/^\s*ndkVersion\s*=\s*"\(.*\)"/\1/p' android-awt/build.gradle.kts)
+          test -n "$NDK_VERSION"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
       - name: Install Rust Android targets
         run: |
           rustup target add \
@@ -53,3 +63,61 @@ jobs:
           name: runelite-android-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
             **/build/outputs/apk/debug/*.apk
+
+      # Release: 1.0.<versionPatch>_<RuneLite version>, e.g. 1.0.31_1.13.2. Skipped when that
+      # tag already exists, so only pushes that bump versionPatch (or RuneLite) publish.
+      - name: Resolve release version
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          field() { grep -a -m1 -oP "val $1 = \K[0-9]+" android/build.gradle.kts; }
+          RL_VERSION=$(grep -m1 -oP '^project\.build\.version=\K.+' gradle.properties)
+          TAG="$(field versionMajor).$(field versionMinor).$(field versionPatch)_${RL_VERSION}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The release build type falls back to the debug key when no keystore is configured,
+      # and SignatureGuard refuses to boot anything not signed with the production cert —
+      # so refuse to publish rather than ship an APK that can't start.
+      - name: Build signed release APK
+        if: steps.version.outputs.publish == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then echo "::error::secret for $v is not set"; exit 1; fi
+          done
+          KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          {
+            echo "runeliteMp.signing.storeFile=$KEYSTORE"
+            echo "runeliteMp.signing.storePassword=$KEYSTORE_PASSWORD"
+            echo "runeliteMp.signing.keyAlias=$KEY_ALIAS"
+            echo "runeliteMp.signing.keyPassword=$KEY_PASSWORD"
+          } >> local.properties
+          export ORG_GRADLE_PROJECT_glslangPath="$HOME/.cache/runelite/glslang/bin/glslangValidator"
+          ./gradlew --build-cache ':android:assembleRelease'
+          APK=$(find android/build/outputs/apk/release -name '*.apk' | head -n1)
+          test -n "$APK"
+          mv "$APK" "runelite-android_${{ steps.version.outputs.tag }}.apk"
+
+      - name: Publish release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" "runelite-android_$TAG.apk" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes

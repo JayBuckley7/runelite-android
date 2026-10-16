@@ -190,44 +190,36 @@ object KeyDispatch {
         if (isSystemKey(event.keyCode)) {
             return false
         }
-        val vk = androidKeyCodeToAwt(event.keyCode)
+        val numLock = (event.metaState and AndroidKeyEvent.META_NUM_LOCK_ON) != 0
+        val vk = androidKeyCodeToAwt(event.keyCode, numLock)
         val mods = androidMetaToAwtModifiers(event.metaState) or ModifierState.modifierMask()
-        val unicodeChar = event.getUnicodeChar(event.metaState)
-        val keyChar = if (unicodeChar != 0) unicodeChar.toChar() else KeyEvent.CHAR_UNDEFINED
+        val keyChar = desktopKeyChar(event, vk, mods)
 
         // Nothing the game can do with a key we can't name and that types no character
         // (KEYCODE_TV_INPUT, gamepad buttons, vendor hotkeys, …). Decline it so whatever
         // the platform or an OEM overlay wanted to do with it still happens.
-        if (vk == KeyEvent.VK_UNDEFINED && unicodeChar == 0 && event.action != AndroidKeyEvent.ACTION_MULTIPLE) {
+        if (vk == KeyEvent.VK_UNDEFINED && keyChar == KeyEvent.CHAR_UNDEFINED && event.action != AndroidKeyEvent.ACTION_MULTIPLE) {
             return false
         }
 
         val source = dummyComponent()
         val whenMs = event.eventTime
+        val location = keyLocation(event.keyCode)
 
         when (event.action) {
+            // Auto-repeat arrives as further ACTION_DOWNs, which is also what desktop
+            // delivers (repeated PRESSED + TYPED, one RELEASED at the end).
             AndroidKeyEvent.ACTION_DOWN -> {
-                val pressedEv = KeyEvent(source, KeyEvent.KEY_PRESSED, whenMs, mods, vk, keyChar)
-                dispatchAwtEvent(pressedEv)
-
-                if (unicodeChar != 0 && !Character.isISOControl(unicodeChar)) {
-                    val typedEv = KeyEvent(source, KeyEvent.KEY_TYPED, whenMs, mods, KeyEvent.VK_UNDEFINED, keyChar)
-                    dispatchAwtEvent(typedEv)
-                } else if (event.keyCode == AndroidKeyEvent.KEYCODE_ENTER || event.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER) {
-                    val typedEv = KeyEvent(source, KeyEvent.KEY_TYPED, whenMs, mods, KeyEvent.VK_UNDEFINED, '\n')
-                    dispatchAwtEvent(typedEv)
-                } else if (event.keyCode == AndroidKeyEvent.KEYCODE_DEL) {
-                    val typedEv = KeyEvent(source, KeyEvent.KEY_TYPED, whenMs, mods, KeyEvent.VK_UNDEFINED, '\b')
-                    dispatchAwtEvent(typedEv)
-                } else if (event.keyCode == AndroidKeyEvent.KEYCODE_TAB) {
-                    val typedEv = KeyEvent(source, KeyEvent.KEY_TYPED, whenMs, mods, KeyEvent.VK_UNDEFINED, '\t')
-                    dispatchAwtEvent(typedEv)
+                dispatchAwtEvent(KeyEvent(source, KeyEvent.KEY_PRESSED, whenMs, mods, vk, keyChar, location))
+                // Desktop emits KEY_TYPED for every key that yields a character, control
+                // characters included (Enter, Backspace, Tab, Escape, Delete, Ctrl+letter).
+                if (keyChar != KeyEvent.CHAR_UNDEFINED) {
+                    dispatchAwtEvent(KeyEvent(source, KeyEvent.KEY_TYPED, whenMs, mods, KeyEvent.VK_UNDEFINED, keyChar))
                 }
                 return true
             }
             AndroidKeyEvent.ACTION_UP -> {
-                val releasedEv = KeyEvent(source, KeyEvent.KEY_RELEASED, whenMs, mods, vk, keyChar)
-                dispatchAwtEvent(releasedEv)
+                dispatchAwtEvent(KeyEvent(source, KeyEvent.KEY_RELEASED, whenMs, mods, vk, keyChar, location))
                 return true
             }
             AndroidKeyEvent.ACTION_MULTIPLE -> {
@@ -302,7 +294,67 @@ object KeyDispatch {
         return mods
     }
 
-    private fun androidKeyCodeToAwt(keyCode: Int): Int {
+    /**
+     * The keyChar desktop AWT reports for this key: the typed character, the ASCII control
+     * character for Enter/Backspace/Tab/Escape/Delete and Ctrl+letter (Ctrl+A = 0x01), and
+     * [KeyEvent.CHAR_UNDEFINED] for keys that type nothing (modifiers, arrows, F-keys).
+     */
+    private fun desktopKeyChar(event: AndroidKeyEvent, vk: Int, mods: Int): Char {
+        when (vk) {
+            KeyEvent.VK_ENTER -> return '\n'
+            KeyEvent.VK_BACK_SPACE -> return '\b'
+            KeyEvent.VK_TAB -> return '\t'
+            KeyEvent.VK_ESCAPE -> return '\u001b'
+            KeyEvent.VK_DELETE -> return '\u007f'
+        }
+        // Android's keymap resolves Ctrl/Meta chords to no character at all, so look the key
+        // up without them and apply desktop's Ctrl rule ourselves.
+        val stripped = event.metaState and
+            (AndroidKeyEvent.META_CTRL_MASK or AndroidKeyEvent.META_META_MASK).inv()
+        val u = event.getUnicodeChar(stripped)
+        // Dead keys (accent prefixes) type nothing until the following key.
+        if (u == 0 || (u and android.view.KeyCharacterMap.COMBINING_ACCENT) != 0) {
+            return KeyEvent.CHAR_UNDEFINED
+        }
+        val c = u.toChar()
+        if ((mods and InputEvent.CTRL_DOWN_MASK) != 0) {
+            val lower = c.lowercaseChar()
+            return if (lower in 'a'..'z') (lower - 'a' + 1).toChar() else KeyEvent.CHAR_UNDEFINED
+        }
+        return c
+    }
+
+    private fun keyLocation(keyCode: Int): Int = when (keyCode) {
+        AndroidKeyEvent.KEYCODE_SHIFT_LEFT, AndroidKeyEvent.KEYCODE_CTRL_LEFT,
+        AndroidKeyEvent.KEYCODE_ALT_LEFT, AndroidKeyEvent.KEYCODE_META_LEFT -> KeyEvent.KEY_LOCATION_LEFT
+        AndroidKeyEvent.KEYCODE_SHIFT_RIGHT, AndroidKeyEvent.KEYCODE_CTRL_RIGHT,
+        AndroidKeyEvent.KEYCODE_ALT_RIGHT, AndroidKeyEvent.KEYCODE_META_RIGHT -> KeyEvent.KEY_LOCATION_RIGHT
+        // NUM_LOCK through NUMPAD_RIGHT_PAREN are one contiguous block of keycodes.
+        in AndroidKeyEvent.KEYCODE_NUM_LOCK..AndroidKeyEvent.KEYCODE_NUMPAD_RIGHT_PAREN -> KeyEvent.KEY_LOCATION_NUMPAD
+        else -> KeyEvent.KEY_LOCATION_STANDARD
+    }
+
+    /** With Num Lock off the numpad is a second navigation cluster, as on desktop. */
+    private fun numpadNavigation(keyCode: Int): Int = when (keyCode) {
+        AndroidKeyEvent.KEYCODE_NUMPAD_0 -> KeyEvent.VK_INSERT
+        AndroidKeyEvent.KEYCODE_NUMPAD_1 -> KeyEvent.VK_END
+        AndroidKeyEvent.KEYCODE_NUMPAD_2 -> KeyEvent.VK_DOWN
+        AndroidKeyEvent.KEYCODE_NUMPAD_3 -> KeyEvent.VK_PAGE_DOWN
+        AndroidKeyEvent.KEYCODE_NUMPAD_4 -> KeyEvent.VK_LEFT
+        AndroidKeyEvent.KEYCODE_NUMPAD_5 -> KeyEvent.VK_CLEAR
+        AndroidKeyEvent.KEYCODE_NUMPAD_6 -> KeyEvent.VK_RIGHT
+        AndroidKeyEvent.KEYCODE_NUMPAD_7 -> KeyEvent.VK_HOME
+        AndroidKeyEvent.KEYCODE_NUMPAD_8 -> KeyEvent.VK_UP
+        AndroidKeyEvent.KEYCODE_NUMPAD_9 -> KeyEvent.VK_PAGE_UP
+        AndroidKeyEvent.KEYCODE_NUMPAD_DOT -> KeyEvent.VK_DELETE
+        else -> KeyEvent.VK_UNDEFINED
+    }
+
+    private fun androidKeyCodeToAwt(keyCode: Int, numLock: Boolean): Int {
+        if (!numLock) {
+            val nav = numpadNavigation(keyCode)
+            if (nav != KeyEvent.VK_UNDEFINED) return nav
+        }
         return when (keyCode) {
             AndroidKeyEvent.KEYCODE_A -> KeyEvent.VK_A
             AndroidKeyEvent.KEYCODE_B -> KeyEvent.VK_B
@@ -362,6 +414,15 @@ object KeyDispatch {
             AndroidKeyEvent.KEYCODE_SHIFT_LEFT, AndroidKeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.VK_SHIFT
             AndroidKeyEvent.KEYCODE_CTRL_LEFT, AndroidKeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.VK_CONTROL
             AndroidKeyEvent.KEYCODE_ALT_LEFT, AndroidKeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.VK_ALT
+            AndroidKeyEvent.KEYCODE_META_LEFT, AndroidKeyEvent.KEYCODE_META_RIGHT -> KeyEvent.VK_WINDOWS
+            AndroidKeyEvent.KEYCODE_CAPS_LOCK -> KeyEvent.VK_CAPS_LOCK
+            AndroidKeyEvent.KEYCODE_NUM_LOCK -> KeyEvent.VK_NUM_LOCK
+            AndroidKeyEvent.KEYCODE_SCROLL_LOCK -> KeyEvent.VK_SCROLL_LOCK
+            AndroidKeyEvent.KEYCODE_INSERT -> KeyEvent.VK_INSERT
+            AndroidKeyEvent.KEYCODE_BREAK -> KeyEvent.VK_PAUSE
+            AndroidKeyEvent.KEYCODE_SYSRQ -> KeyEvent.VK_PRINTSCREEN
+            AndroidKeyEvent.KEYCODE_CLEAR -> KeyEvent.VK_CLEAR
+            AndroidKeyEvent.KEYCODE_HELP -> KeyEvent.VK_HELP
 
             AndroidKeyEvent.KEYCODE_F1 -> KeyEvent.VK_F1
             AndroidKeyEvent.KEYCODE_F2 -> KeyEvent.VK_F2
@@ -403,6 +464,15 @@ object KeyDispatch {
             AndroidKeyEvent.KEYCODE_NUMPAD_MULTIPLY -> KeyEvent.VK_MULTIPLY
             AndroidKeyEvent.KEYCODE_NUMPAD_DIVIDE -> KeyEvent.VK_DIVIDE
             AndroidKeyEvent.KEYCODE_NUMPAD_DOT -> KeyEvent.VK_DECIMAL
+            AndroidKeyEvent.KEYCODE_NUMPAD_COMMA -> KeyEvent.VK_SEPARATOR
+            AndroidKeyEvent.KEYCODE_NUMPAD_EQUALS -> KeyEvent.VK_EQUALS
+            AndroidKeyEvent.KEYCODE_NUMPAD_LEFT_PAREN -> KeyEvent.VK_LEFT_PARENTHESIS
+            AndroidKeyEvent.KEYCODE_NUMPAD_RIGHT_PAREN -> KeyEvent.VK_RIGHT_PARENTHESIS
+
+            AndroidKeyEvent.KEYCODE_AT -> KeyEvent.VK_AT
+            AndroidKeyEvent.KEYCODE_POUND -> KeyEvent.VK_NUMBER_SIGN
+            AndroidKeyEvent.KEYCODE_PLUS -> KeyEvent.VK_PLUS
+            AndroidKeyEvent.KEYCODE_STAR -> KeyEvent.VK_ASTERISK
 
             else -> KeyEvent.VK_UNDEFINED
         }
