@@ -38,12 +38,11 @@ errors are shown in the External tab with a Retry action.
 
 ## Install
 
-### Building RuneLite 1.13.1
+### Building RuneLite 1.13.2
 
-Before running `:android:assembleDebug`, download the official
-[injected-client 1.13.1 JAR](https://repo.runelite.net/net/runelite/injected-client/1.13.1/injected-client-1.13.1.jar)
-to `data/injected-client-1.13.1.jar`. This local build input is ignored by Git.
-Its SHA-256 is `981eba4888f4cf0ec8fd74f09b9ed85728d7b2bc8c1f57194883aed64dec768a`.
+Run `:android:assembleDebug`. The matching injected client is included at
+`data/runelite-1.13.2-injected-38611712435.287.jar` from Zeruth release
+`1.0.31_1.13.2`.
 
 ### Installing an APK
 
