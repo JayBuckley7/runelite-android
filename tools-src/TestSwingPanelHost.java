@@ -42,6 +42,12 @@ public class TestSwingPanelHost {
     }
     public static void main(String[] args) throws Exception {
         System.setProperty("user.home", "/data/local/tmp/swing-host-test");
+        // app_process bypasses Zygote's initialization on recent Android releases.
+        try {
+            Class<?> shared = Class.forName("com.android.internal.os.ApplicationSharedMemory");
+            Object memory = shared.getMethod("create").invoke(null);
+            shared.getMethod("setInstance", shared).invoke(null, memory);
+        } catch (ClassNotFoundException olderAndroid) { /* Not present on older Android. */ }
         android.os.Looper.prepareMainLooper();
         Class<?> at = Class.forName("android.app.ActivityThread");
         Object thread = at.getMethod("systemMain").invoke(null);
@@ -285,4 +291,3 @@ public class TestSwingPanelHost {
         System.exit(0);
     }
 }
-
