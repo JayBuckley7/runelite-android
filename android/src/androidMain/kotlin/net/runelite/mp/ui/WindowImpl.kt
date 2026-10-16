@@ -41,10 +41,8 @@ import net.runelite.mp.ui.bridge.PluginRow
  *   │                             │           │  │
  *   └─────────────────────────────┴───────────┴──┘
  *
- * No collapse — the strip is always visible. The Compose-native "Plugins" wrench is
- * the default selection; clicking any other plugin's nav calls into ClientUI so the
- * native AWT panel actually swaps tabs, and the Compose content area shows a hint
- * until that panel is ported to Compose.
+ * The strip stays visible. Plugin panels open in the shared Swing host; the
+ * built-in Plugins screen uses Compose.
  */
 object WindowImpl
 {
@@ -57,15 +55,10 @@ object WindowImpl
     private val configTarget = mutableStateOf<PluginRow?>(null)
 
     /**
-     * Programmatically switch to a Compose panel by [PanelRegistry] key (the same key
-     * as the RL nav button's tooltip). Used by [net.runelite.mp.AppAndroidKt]'s startup
-     * hook to forward `ClientUI.openPanel` calls — e.g. right-click "Lookup" on a
-     * player in-game fires HiscorePlugin → ClientUI.openPanel → here → the Compose
-     * HiScore panel takes the foreground. No-op if the key has no Compose replacement.
+     * Open a panel by its RuneLite navigation tooltip, including ClientUI.openPanel calls.
      */
     fun showPanel(key: String)
     {
-        if (key != NAV_KEY_PLUGINS && !net.runelite.mp.ui.panels.PanelRegistry.hasPanel(key)) return
         selectedKey.value = key
         if (key != NAV_KEY_PLUGINS) configTarget.value = null
     }
@@ -106,15 +99,9 @@ object WindowImpl
                 if (bootComplete.value)
                 {
                     RuneLiteMenuTheme {
-                        // Compose-native content column. Renders for our synthetic "Plugins"
-                        // key AND for any nav button whose tooltip has a Compose replacement
-                        // in [PanelRegistry] (XP Tracker, Notes, GE, etc). RL-registered
-                        // buttons without a Compose override keep painting their panels
-                        // inside the AWT bitmap on the left — no Compose column eats game
-                        // space in that case.
+                        // Reserve a content column for the selected plugin panel.
                         val key = selectedKey.value
-                        val renderCompose = key == NAV_KEY_PLUGINS ||
-                            (key != null && net.runelite.mp.ui.panels.PanelRegistry.hasPanel(key))
+                        val renderCompose = key != null
                         if (renderCompose)
                         {
                             Box(Modifier.width(CONTENT_WIDTH).fillMaxHeight()) {
@@ -159,9 +146,9 @@ object WindowImpl
                     )
                 }
             }
-            key != null && net.runelite.mp.ui.panels.PanelRegistry.hasPanel(key) ->
+            key != null ->
             {
-                net.runelite.mp.ui.panels.PanelRegistry.render(key)
+                net.runelite.mp.ui.panels.PluginPanelHost(key)
             }
         }
     }
