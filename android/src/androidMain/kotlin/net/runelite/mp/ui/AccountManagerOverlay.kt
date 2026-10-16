@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,6 +71,7 @@ internal fun BoxScope.AccountManagerOverlay()
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
                 .padding(bottom = 12.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xCC1B1B1B))
@@ -87,6 +90,7 @@ internal fun BoxScope.AccountManagerOverlay()
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xF2101010))
+                .safeDrawingPadding()
                 .pointerInput(Unit) { }
         ) {
             AccountPicker(onSelect = { selection ->
