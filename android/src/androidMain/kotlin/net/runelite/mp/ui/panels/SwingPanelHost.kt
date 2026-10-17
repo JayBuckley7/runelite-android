@@ -281,13 +281,16 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
         // Compound controls own their editor/renderer children.
         var ancestor: Component? = target
         while (ancestor != null) {
-            if (!ancestor.isEnabled) return
+            // Swing permits mouse listeners on disabled leaf controls (profile cards
+            // use disabled names/arrows to expand). Never invoke their editing/actions.
+            if (!ancestor.isEnabled && !(ancestor === target &&
+                    (target is JTextComponent || target is AbstractButton) && target.mouseListeners.isNotEmpty())) return
             if (ancestor is JComboBox<*> || ancestor is JSpinner) { target = ancestor; break }
             if (ancestor === base) break
             ancestor = ancestor.parent
         }
         when (val control = target) {
-            is JTextComponent -> if (control.isEditable) {
+            is JTextComponent -> if (control.isEnabled && control.isEditable) {
                 val text = control.text
                 post {
                     if (!running || serial != mountSerial) return@post

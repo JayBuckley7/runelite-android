@@ -42,6 +42,12 @@ public class TestSwingPanelHost {
     }
     public static void main(String[] args) throws Exception {
         System.setProperty("user.home", "/data/local/tmp/swing-host-test");
+        // app_process bypasses Zygote's initialization on recent Android releases.
+        try {
+            Class<?> shared = Class.forName("com.android.internal.os.ApplicationSharedMemory");
+            Object memory = shared.getMethod("create").invoke(null);
+            shared.getMethod("setInstance", shared).invoke(null, memory);
+        } catch (ClassNotFoundException olderAndroid) { /* Not present on older Android. */ }
         android.os.Looper.prepareMainLooper();
         Class<?> at = Class.forName("android.app.ActivityThread");
         Object thread = at.getMethod("systemMain").invoke(null);
@@ -75,6 +81,21 @@ public class TestSwingPanelHost {
         tap.invoke(host, 25, 25);
         check(count[0] == 1, "disabled button must not fire");
         button.setEnabled(true);
+        // Profile rows use disabled read-only text as a clickable expansion label.
+        javax.swing.JTextField profileName = new javax.swing.JTextField("profile");
+        profileName.setBounds(10, 105, 100, 20);
+        profileName.setEditable(false); profileName.setEnabled(false);
+        int[] expanded = {0};
+        profileName.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent event) { expanded[0]++; }
+        });
+        root.add(profileName);
+        tap.invoke(host, 20, 110);
+        check(expanded[0] == 1, "disabled profile label must receive its mouse listener");
+        root.setEnabled(false);
+        tap.invoke(host, 20, 110);
+        check(expanded[0] == 1, "disabled ancestor must still block profile label input");
+        root.setEnabled(true); root.remove(profileName);
         // Real shadow Swing popup contract used by XP and Loot Tracker cards.
         JPanel card = new JPanel(null); card.setBounds(0, 160, 200, 100); root.add(card);
         JLabel cardText = new JLabel("Loot entry"); cardText.setBounds(10, 10, 150, 20); card.add(cardText);
@@ -282,6 +303,44 @@ public class TestSwingPanelHost {
         check(value(host, "root") == null && value(host, "panel") == null && replacement.deactivated == 2,
             "a temporarily removed navigation panel releases the entire Swing tree instead of retaining stale controls");
         System.out.println("PASS: panel replacement, generation remount, popup/touch/frame cleanup and current-tree dispatch");
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Profile import");
+        chooser.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("RuneLite properties", "properties"));
+        chooser.setAcceptAllFileFilterUsed(false);
+        JFileChooser.setDialogHandler((selected, save) -> {
+            check(!selected.isAcceptAllFileFilterUsed(), "profile chooser filter preference");
+            selected.setSelectedFile(new java.io.File("/data/local/tmp/test.properties"));
+            return save ? JFileChooser.CANCEL_OPTION : JFileChooser.APPROVE_OPTION;
+        });
+        check(chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile().getName().equals("test.properties"), "open chooser delegates result");
+        check(chooser.showSaveDialog(null) == JFileChooser.CANCEL_OPTION, "save cancellation");
+        JFileChooser.setDialogHandler(null);
+        check(chooser.showOpenDialog(null) == JFileChooser.CANCEL_OPTION, "missing picker cancels");
+        JOptionPane.setDialogHandler((message, title, type, options) -> JOptionPane.CANCEL_OPTION);
+        check(JOptionPane.showConfirmDialog(null, "Delete?", "Warning", JOptionPane.OK_CANCEL_OPTION) == JOptionPane.CANCEL_OPTION, "confirmation must preserve cancellation");
+        JOptionPane.setDialogHandler(null);
+        check(JOptionPane.showConfirmDialog(null, "Delete?") == JOptionPane.CLOSED_OPTION, "no automatic approval without host");
+        Class<?> completionClass = Class.forName("net.runelite.mp.ui.bridge.SwingDialogs$Completion");
+        Constructor<?> completionCtor = completionClass.getDeclaredConstructor(); completionCtor.setAccessible(true);
+        Method finishCompletion = completionClass.getDeclaredMethod("finish"); finishCompletion.setAccessible(true);
+        Method awaitCompletion = completionClass.getDeclaredMethod("await"); awaitCompletion.setAccessible(true);
+        java.util.concurrent.atomic.AtomicReference<Throwable> modalFailure = new java.util.concurrent.atomic.AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                Object completion = completionCtor.newInstance();
+                boolean[] pumped = {false};
+                SwingUtilities.invokeLater(() -> {
+                    pumped[0] = true;
+                    try { finishCompletion.invoke(completion); } catch (Exception e) { throw new RuntimeException(e); }
+                });
+                awaitCompletion.invoke(completion);
+                check(pumped[0], "modal wait must pump sidebar EDT work");
+                Object early = completionCtor.newInstance();
+                finishCompletion.invoke(early); awaitCompletion.invoke(early);
+            } catch (Throwable e) { modalFailure.set(e); }
+        });
+        if (modalFailure.get() != null) throw new AssertionError("modal completion", modalFailure.get());
+        System.out.println("PASS: profile chooser contract, cancel-safe confirmations, modal event pumping and early completion");
         System.exit(0);
     }
 }

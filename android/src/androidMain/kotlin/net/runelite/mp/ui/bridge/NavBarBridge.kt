@@ -30,12 +30,31 @@ internal data class NavEntry(
 
 internal object NavBarBridge
 {
+    const val PROFILES_PANEL_KEY = "runelite:profiles"
+
+    private var profilesPanel: net.runelite.client.ui.PluginPanel? = null // EDT only
+
     fun panel(key: String): net.runelite.client.ui.PluginPanel?
     {
         return try {
             onEdt {
                 val ui = RuneLiteAccess.instance(Class.forName("net.runelite.client.ui.ClientUI"))
-                ui?.let { buttons(it).firstOrNull { button -> identityKey(button) == key }?.panel }
+                ui?.let {
+                    if (key == PROFILES_PANEL_KEY) {
+                        // Own the Swing tree; the hidden desktop tab must not relayout it.
+                        profilesPanel ?: run {
+                            val manager = RuneLiteAccess.instance(net.runelite.client.config.ConfigManager::class.java)
+                            if (manager?.profile == null) return@run null
+                            val panel = RuneLiteAccess.instance(Class.forName(
+                                "net.runelite.client.plugins.config.ProfilePanel")) as? net.runelite.client.ui.PluginPanel
+                            panel?.let { created ->
+                                RuneLiteAccess.instance(net.runelite.client.eventbus.EventBus::class.java)?.register(created)
+                                profilesPanel = created
+                            }
+                            panel
+                        }
+                    } else buttons(it).firstOrNull { button -> identityKey(button) == key }?.panel
+                }
             }
         } catch (_: Throwable) { null }
     }
@@ -51,7 +70,13 @@ internal object NavBarBridge
     private fun buttons(ui: Any): List<NavigationButton> {
         val field = ui.javaClass.getDeclaredField("sidebarEntries").apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
-        return (field.get(ui) as? Collection<NavigationButton>)?.toList() ?: emptyList()
+        val panels = (field.get(ui) as? Collection<NavigationButton>)?.toList().orEmpty()
+        // RuneLite stores action-only buttons (including Account login/logout) separately.
+        val toolbar = ui.javaClass.getDeclaredField("toolbarPanel").apply { isAccessible = true }.get(ui)
+        val entries = toolbar.javaClass.getDeclaredField("entries").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val actions = (entries.get(toolbar) as? Map<NavigationButton, *>)?.keys.orEmpty()
+        return (panels + actions).distinct()
     }
     /** Currently-selected button's key, or null if the user hasn't picked one yet
      *  (we surface the Compose plugin list as the default). Lives outside Compose
