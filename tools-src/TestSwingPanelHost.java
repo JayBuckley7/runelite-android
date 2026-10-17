@@ -344,4 +344,3 @@ public class TestSwingPanelHost {
         System.exit(0);
     }
 }
-
