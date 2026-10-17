@@ -61,10 +61,10 @@ uint packLightIndices(in SortedLight bin[SORTING_BIN_SIZE], in int binSize, inou
 }
 
 void main() {
-    ivec2 pixelCoord = ivec2(fUv * tiledLightingResolution);
+    ivec2 pixelCoord = ivec2(fUv * vec2(tiledLightingResolution));
 
 #if USE_LIGHTS_MASK
-    int LightMaskSize = int(ceil(pointLightsCount / 32.0));
+    int LightMaskSize = int(ceil(float(pointLightsCount) / 32.0));
     uint LightsMask[32]; // 32 Words = 1024 Lights
     for (int i = 0; i < LightMaskSize; i++)
         LightsMask[i] = 0u;
@@ -93,7 +93,7 @@ void main() {
 #endif
 
     const vec2 tileSize = vec2(TILED_LIGHTING_TILE_SIZE);
-    vec2 screenUV = fUv * sceneResolution;
+    vec2 screenUV = fUv * vec2(sceneResolution);
     vec2 tileOrigin = floor(screenUV / tileSize) * tileSize;
 
     vec2 tl = tileOrigin + vec2(0.0, tileSize.y); // top-left
@@ -101,10 +101,10 @@ void main() {
     vec2 bl = tileOrigin;                         // bottom-left
     vec2 br = tileOrigin + vec2(tileSize.x, 0.0); // bottom-right
 
-    vec2 ndcTL = (tl / sceneResolution) * 2.0 - 1.0;
-    vec2 ndcTR = (tr / sceneResolution) * 2.0 - 1.0;
-    vec2 ndcBL = (bl / sceneResolution) * 2.0 - 1.0;
-    vec2 ndcBR = (br / sceneResolution) * 2.0 - 1.0;
+    vec2 ndcTL = (tl / vec2(sceneResolution)) * 2.0 - 1.0;
+    vec2 ndcTR = (tr / vec2(sceneResolution)) * 2.0 - 1.0;
+    vec2 ndcBL = (bl / vec2(sceneResolution)) * 2.0 - 1.0;
+    vec2 ndcBR = (br / vec2(sceneResolution)) * 2.0 - 1.0;
 
     const float eps = 1e-10;
 

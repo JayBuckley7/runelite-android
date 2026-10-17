@@ -400,12 +400,14 @@ void main() {
         // apply shadows
         dirLightColor *= inverseShadow;
 
-        vec3 lightColor = dirLightColor;
-        vec3 lightOut = max(lightDotNormals, 0.0) * lightColor;
+        // Android: upstream declared `vec3 lightColor = dirLightColor;` here, shadowing the
+        // global lightColor read above in the same scope. Adreno bound that earlier read to
+        // the (uninitialized) local, so the sun contributed nothing, and with it no shadows.
+        vec3 lightOut = max(lightDotNormals, 0.0) * dirLightColor;
 
         // directional light specular
         vec3 lightReflectDir = reflect(-lightDir, normals);
-        vec3 lightSpecularOut = lightColor * specular(IN.texBlend, viewDir, lightReflectDir, vSpecularGloss, vSpecularStrength);
+        vec3 lightSpecularOut = dirLightColor * specular(IN.texBlend, viewDir, lightReflectDir, vSpecularGloss, vSpecularStrength);
 
         // point lights
         vec3 pointLightsOut = vec3(0);

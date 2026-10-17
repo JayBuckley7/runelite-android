@@ -1441,7 +1441,9 @@ public class HdPlugin extends Plugin {
 			shadowMapResolution,
 			0,
 			GL_DEPTH_COMPONENT,
-			GL_FLOAT,
+			// Android: GLES only accepts DEPTH_COMPONENT24 with UNSIGNED_INT; FLOAT left the
+			// texture without storage, the FBO incomplete, and every shadow lookup unshadowed.
+			GL_UNSIGNED_INT,
 			0
 		);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -1466,7 +1468,7 @@ public class HdPlugin extends Plugin {
 		texShadowMap = glGenTextures();
 		glActiveTexture(TEXTURE_UNIT_SHADOW_MAP);
 		glBindTexture(GL_TEXTURE_2D, texShadowMap);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, 1, 1, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, 1, 1, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);

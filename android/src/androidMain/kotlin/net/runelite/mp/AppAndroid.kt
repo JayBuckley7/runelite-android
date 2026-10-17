@@ -324,8 +324,8 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                         // the cursor jerking between two finger positions during zoom.
                         if (event.changes.count { it.pressed } > 1) continue
                         val change = event.changes.firstOrNull() ?: continue
-                        // A real mouse is driven 1:1 by MouseBridge below.
-                        if (change.type == PointerType.Mouse) continue
+                        // A mouse or touchpad is driven 1:1 by MouseBridge below.
+                        if (pointerKind(event) != PointerKind.Touch) continue
                         when (event.type) {
                             PointerEventType.Move, PointerEventType.Enter,
                             PointerEventType.Press -> {
@@ -335,18 +335,32 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                     }
                 }
             }
-            // Physical mouse: forwarded as the exact AWT stream desktop Java produces
-            // (real buttons, hover, drags, wheel, enter/exit) instead of going through the
-            // touch emulation below — no long-press right-click, no BUTTON2 camera drags,
-            // no pinch-zoom.
+            // Physical mouse or touchpad: forwarded as the exact AWT stream desktop Java
+            // produces (real buttons, hover, drags, wheel, enter/exit) instead of going
+            // through the touch emulation below — no long-press right-click, no BUTTON2
+            // camera drags. Touchpad pinch and two-finger swipe become wheel notches, as a
+            // desktop trackpad's zoom and scroll do.
             .pointerInput(Unit) {
                 val mouse = MouseBridge()
+                val pinch = TouchpadPinch()
+                val swipe = TouchpadSwipe()
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Main)
-                        val change = event.changes.firstOrNull { it.type == PointerType.Mouse } ?: continue
-                        mouse.handle(event, change.position, change.scrollDelta.y, boxSize)
-                        event.changes.forEach { if (it.type == PointerType.Mouse) it.consume() }
+                        val kind = pointerKind(event)
+                        PointerLog.note(kind, event)
+                        if (kind != PointerKind.TouchpadPinch) pinch.reset()
+                        if (kind != PointerKind.TouchpadSwipe) swipe.reset()
+                        when (kind) {
+                            PointerKind.Touch -> continue
+                            PointerKind.Mouse -> {
+                                val change = event.changes.firstOrNull() ?: continue
+                                mouse.handle(event, change.position, change.scrollDelta.y, boxSize)
+                            }
+                            PointerKind.TouchpadPinch -> pinch.update(event, boxSize)
+                            PointerKind.TouchpadSwipe -> swipe.update(event, boxSize)
+                        }
+                        event.changes.forEach { it.consume() }
                     }
                 }
             }
@@ -355,9 +369,9 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                 val touchSlop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    // Mouse presses belong to MouseBridge; awaitEachGesture then waits for
-                    // every button to come up before looking for the next touch.
-                    if (down.type == PointerType.Mouse) return@awaitEachGesture
+                    // Mouse and touchpad presses belong to MouseBridge; awaitEachGesture then
+                    // waits for every pointer to come up before looking for the next touch.
+                    if (pointerKind(currentEvent) != PointerKind.Touch) return@awaitEachGesture
                     val downId = down.id
                     val downTime = System.currentTimeMillis()
                     var lastPos: Offset = down.position
@@ -395,25 +409,29 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                             // the touchscreen has to fold all three into one held gesture.
                             fired = true
                             dispatchClick(lastPos, boxSize, BUTTON3)
+                            val openPos = lastPos
                             var menuPos = lastPos
+                            var dragged = false
                             while (!sawUp) {
                                 val tail = awaitPointerEvent(PointerEventPass.Main)
                                 val tc = tail.changes.firstOrNull { it.id == downId } ?: break
                                 tc.consume()
                                 menuPos = tc.position
+                                if ((menuPos - openPos).getDistance() > touchSlop) dragged = true
                                 if (tc.changedToUpIgnoreConsumed() || !tc.pressed) {
                                     sawUp = true
                                 } else {
                                     // Keep the OSRS cursor in sync so the menu row under the
-                                    // finger highlights. dispatchMove is cheap (one hit-test +
-                                    // one fireMouse) and matches what desktop does on hover.
+                                    // finger highlights, and a submenu opens while its parent
+                                    // row is hovered — as it does on desktop.
                                     dispatchMove(menuPos, boxSize)
                                 }
                             }
-                            // Only commit the selection if the lift lands ON the open menu.
-                            // Releasing in the world (the user changed their mind) cancels
-                            // — a stray BUTTON1 there would walk-here or attack instead.
-                            if (releaseHitsOpenMenu(menuPos, boxSize)) {
+                            // Commit only a drag that ends on an option (a root-menu row or
+                            // a submenu row). A lift where the menu opened leaves it open —
+                            // the finger is on its header then, and a click there closes it —
+                            // and a lift in the world cancels without a stray walk/attack.
+                            if (dragged && releaseHitsMenuOption(menuPos, boxSize)) {
                                 dispatchClick(menuPos, boxSize, BUTTON1)
                             }
                             break
@@ -717,6 +735,117 @@ private fun loadSplashLogo(): ImageBitmap? {
 // the click coords into that component's local space.
 // ---------------------------------------------------------------------------------------
 
+/** Which input family a pointer event comes from. Compose's [PointerType] follows the
+ *  tool type alone, and Android reports a touchpad's pointer with TOOL_TYPE_FINGER on a
+ *  SOURCE_MOUSE event, so a touchpad looked like a touchscreen: no hover, no real
+ *  right button, and its gestures fell into the touch emulation. The MotionEvent's
+ *  source and (API 34+) classification tell the families apart. */
+private enum class PointerKind { Touch, Mouse, TouchpadPinch, TouchpadSwipe }
+
+private fun pointerKind(event: PointerEvent): PointerKind {
+    val me = event.motionEvent
+        ?: return if (event.changes.any { it.type == PointerType.Mouse }) PointerKind.Mouse else PointerKind.Touch
+    if (android.os.Build.VERSION.SDK_INT >= 34) {
+        when (me.classification) {
+            android.view.MotionEvent.CLASSIFICATION_PINCH -> return PointerKind.TouchpadPinch
+            android.view.MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE -> return PointerKind.TouchpadSwipe
+        }
+    }
+    if (me.isFromSource(android.view.InputDevice.SOURCE_MOUSE)) return PointerKind.Mouse
+    if (me.pointerCount > 0 && me.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_MOUSE) return PointerKind.Mouse
+    return PointerKind.Touch
+}
+
+/** Logs each non-touchscreen press, release, scroll and gesture start, so a device's
+ *  mouse/touchpad reporting can be checked in logcat (tag MobileInput). */
+private object PointerLog {
+    private var lastKind: PointerKind? = null
+
+    fun note(kind: PointerKind, event: PointerEvent) {
+        val me = event.motionEvent ?: return
+        val action = me.actionMasked
+        val interesting = kind != lastKind || event.type == PointerEventType.Press ||
+            event.type == PointerEventType.Release || event.type == PointerEventType.Scroll
+        lastKind = kind
+        if (kind == PointerKind.Touch && me.isFromSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)) return
+        if (!interesting) return
+        val cls = if (android.os.Build.VERSION.SDK_INT >= 34) me.classification else -1
+        android.util.Log.i(
+            "MobileInput",
+            "pointer kind=$kind type=${event.type} action=${android.view.MotionEvent.actionToString(action)} " +
+                "src=0x${Integer.toHexString(me.source)} tool=${me.getToolType(0)} cls=$cls " +
+                "buttons=0x${Integer.toHexString(me.buttonState)} pointers=${me.pointerCount}",
+        )
+    }
+}
+
+/** Trackpad pinch → wheel notches, from Android's per-event scale factor. Spreading the
+ *  fingers zooms in (wheel up), as pinch does on the touchscreen. */
+private class TouchpadPinch {
+    private var accumulated = 0f
+
+    fun update(event: PointerEvent, boxSize: IntSize) {
+        val me = event.motionEvent ?: return
+        val scale = me.getAxisValue(android.view.MotionEvent.AXIS_GESTURE_PINCH_SCALE_FACTOR)
+        if (scale <= 0f) return
+        accumulated += -kotlin.math.ln(scale) / LN_SCALE_PER_NOTCH
+        val notches = accumulated.toInt()
+        if (notches == 0) return
+        accumulated -= notches
+        dispatchWheel(centroid(event), boxSize, notches)
+    }
+
+    fun reset() { accumulated = 0f }
+
+    companion object {
+        /** ln(scale) per wheel notch: about 8% spread or squeeze per notch. */
+        private const val LN_SCALE_PER_NOTCH = 0.08f
+    }
+}
+
+/** Trackpad two-finger swipe → wheel notches, as a desktop trackpad scroll does: over the
+ *  scene it zooms the camera, over a plugin list it scrolls. Android moves the gesture's
+ *  pointer with the fingers; fingers down scrolls up (natural direction), so it zooms in. */
+private class TouchpadSwipe {
+    private var accumulated = 0f
+    private var lastY = Float.NaN
+
+    fun update(event: PointerEvent, boxSize: IntSize) {
+        val pos = centroid(event)
+        if (event.type == PointerEventType.Press || lastY.isNaN()) {
+            lastY = pos.y
+            return
+        }
+        accumulated += -(pos.y - lastY) / SWIPE_PX_PER_NOTCH
+        lastY = pos.y
+        val notches = accumulated.toInt()
+        if (notches != 0) {
+            accumulated -= notches
+            dispatchWheel(pos, boxSize, notches)
+        }
+        if (event.changes.none { it.pressed }) reset()
+    }
+
+    fun reset() {
+        accumulated = 0f
+        lastY = Float.NaN
+    }
+
+    companion object {
+        /** Finger travel per wheel notch, in screen pixels. */
+        private const val SWIPE_PX_PER_NOTCH = 40f
+    }
+}
+
+private fun centroid(event: PointerEvent): Offset {
+    val ps = event.changes
+    if (ps.isEmpty()) return Offset.Zero
+    var x = 0f
+    var y = 0f
+    for (p in ps) { x += p.position.x; y += p.position.y }
+    return Offset(x / ps.size, y / ps.size)
+}
+
 private const val BUTTON1 = java.awt.event.MouseEvent.BUTTON1
 private const val BUTTON2 = java.awt.event.MouseEvent.BUTTON2
 private const val BUTTON3 = java.awt.event.MouseEvent.BUTTON3
@@ -1012,17 +1141,17 @@ private fun dispatchWheel(pos: Offset, boxSize: IntSize, notches: Int) {
     target.dispatchMouseEvent(ev)
 }
 
-/** True iff the release position lies inside the currently-open right-click menu rect
- *  published by MobileInputPlugin. Converts Compose-space → window-space → canvas-local
- *  using the same path beginDrag uses so the coord systems match. */
-private fun releaseHitsOpenMenu(releasePos: Offset, boxSize: IntSize): Boolean {
+/** True iff the release position lies on an option of the open right-click menu (or an
+ *  open submenu) published by MobileInputPlugin. Converts Compose-space → window-space →
+ *  canvas-local using the same path beginDrag uses so the coord systems match. */
+private fun releaseHitsMenuOption(releasePos: Offset, boxSize: IntSize): Boolean {
     val window = java.awt.Window.primaryFrame() ?: return false
     val (winX, winY) = composeToWindow(releasePos, boxSize, window) ?: return false
     val hit = hitTest(window, winX, winY) ?: return false
     val canvas = ancestorChain(hit.comp).firstOrNull { it is java.awt.Canvas } as? java.awt.Canvas
         ?: return false
     val cHit = hitTestExact(window, canvas) ?: return false
-    return net.runelite.client.plugins.mobile.MobileHitTest.isMenuAt(
+    return net.runelite.client.plugins.mobile.MobileHitTest.isMenuOptionAt(
         winX - cHit.absX, winY - cHit.absY)
 }
 

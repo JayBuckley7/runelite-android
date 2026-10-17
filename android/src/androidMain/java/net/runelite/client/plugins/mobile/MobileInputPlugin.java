@@ -8,6 +8,8 @@ import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.Menu;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetType;
@@ -32,6 +34,10 @@ import net.runelite.client.plugins.PluginDescriptor;
 )
 public class MobileInputPlugin extends Plugin
 {
+	/** Height of the root menu's "Choose Option" header in real (unstretched) pixels;
+	 *  the first option row starts below it. */
+	private static final int MENU_HEADER_HEIGHT = 19;
+
 	@Inject private Client client;
 
 	private long lastLogMs;
@@ -42,6 +48,7 @@ public class MobileInputPlugin extends Plugin
 	{
 		MobileHitTest.setInterfaceRects(null);
 		MobileHitTest.setMenuRect(null);
+		MobileHitTest.setMenuOptions(0, null);
 		MobileHitTest.setFixedMode(false);
 		MobileHitTest.setViewportRect(null);
 	}
@@ -101,10 +108,25 @@ public class MobileInputPlugin extends Plugin
 				client.getMenuX(), client.getMenuY(),
 				client.getMenuWidth(), client.getMenuHeight(),
 				sx, sy));
+			// Submenus open on hover over their parent row. Menu bounds are documented as
+			// valid only while the menu is open, so a submenu with a size is taken as open.
+			List<Rectangle> subs = new ArrayList<>(2);
+			for (MenuEntry entry : client.getMenu().getMenuEntries())
+			{
+				Menu sub = entry.getSubMenu();
+				if (sub != null && sub.getMenuWidth() > 0 && sub.getMenuHeight() > 0)
+				{
+					subs.add(scaleRect(sub.getMenuX(), sub.getMenuY(),
+						sub.getMenuWidth(), sub.getMenuHeight(), sx, sy));
+				}
+			}
+			MobileHitTest.setMenuOptions((int) Math.round(MENU_HEADER_HEIGHT * sy),
+				subs.toArray(new Rectangle[0]));
 		}
 		else
 		{
 			MobileHitTest.setMenuRect(null);
+			MobileHitTest.setMenuOptions(0, null);
 		}
 
 		if (client.getGameState() == GameState.LOGGED_IN) {
@@ -168,7 +190,8 @@ public class MobileInputPlugin extends Plugin
 	 */
 	private static void collect(Widget w, List<Rectangle> out, int canvasW, int canvasH)
 	{
-		if (w == null || w.isSelfHidden())
+		// isHidden also covers a hidden ancestor, so a hidden subtree is skipped whole.
+		if (w == null || w.isHidden())
 		{
 			return;
 		}
@@ -227,27 +250,26 @@ public class MobileInputPlugin extends Plugin
 			&& width >= canvasW - 10 && height >= canvasH - 10;
 
 		// LAYER widgets are RS's transparent group containers (HUD trim, viewport
-		// background, etc.). Only block when they explicitly intercept clicks or
-		// are genuinely scrollable (e.g. the bank item container).
+		// background, etc.) and draw nothing themselves; whatever is visible in them is
+		// a child, collected on its own. Only a genuinely scrollable one (e.g. the bank
+		// item container) blocks, so a drag in it scrolls instead of turning the camera.
+		// noClickThrough alone doesn't count: in resizable mode such layers span empty
+		// screen, and a drag there is meant to turn the camera.
 		if (w.getType() == WidgetType.LAYER)
 		{
-			if (isFullScreen)
-			{
-				return false;
-			}
-			if (w.getNoClickThrough())
-			{
-				return true;
-			}
-			if (height > 0 && w.getScrollHeight() > height)
-			{
-				return true;
-			}
-			return false;
+			return !isFullScreen && height > 0 && w.getScrollHeight() > height;
 		}
 
 		// Full-screen non-layer containers → never block (preserves camera)
 		if (isFullScreen)
+		{
+			return false;
+		}
+
+		// Nothing drawn here → nothing the user can see to grab. Invisible hotspots
+		// (listeners or actions on an empty widget) would otherwise turn a camera drag
+		// over empty scene into a BUTTON1 click-drag.
+		if (!drawsSomething(w) && !(height > 0 && w.getScrollHeight() > height))
 		{
 			return false;
 		}
@@ -295,5 +317,25 @@ public class MobileInputPlugin extends Plugin
 		}
 
 		return w.getClickMask() != 0;
+	}
+
+	/** True if the widget itself puts pixels on screen: a sprite or item icon, non-empty
+	 *  text, a rectangle that isn't fully transparent (opacity 255), a model or a line. */
+	private static boolean drawsSomething(Widget w)
+	{
+		switch (w.getType())
+		{
+			case WidgetType.GRAPHIC:
+				return (w.getSpriteId() >= 0 || w.getItemId() >= 0) && w.getOpacity() < 255;
+			case WidgetType.TEXT:
+				String text = w.getText();
+				return text != null && !text.isEmpty() && w.getOpacity() < 255;
+			case WidgetType.RECTANGLE:
+				return w.getOpacity() < 255;
+			case WidgetType.MODEL:
+				return w.getModelId() >= 0 || w.getModelType() != 1;
+			default:
+				return true;
+		}
 	}
 }

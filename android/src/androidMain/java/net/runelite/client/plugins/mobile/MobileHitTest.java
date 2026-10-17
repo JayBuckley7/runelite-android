@@ -20,6 +20,10 @@ public final class MobileHitTest
 	private static volatile Rectangle[] interfaceRects = EMPTY;
 	/** Right-click menu rect in canvas space, or null when no menu is open. */
 	private static volatile Rectangle menuRect;
+	/** Height of the root menu's header row in canvas space. */
+	private static volatile int menuHeaderHeight;
+	/** Open submenu rects in canvas space; empty while none is open. */
+	private static volatile Rectangle[] submenuRects = EMPTY;
 	/** True iff the OSRS client is in fixed (765×503) mode this frame. Drives the
 	 *  short-circuit in {@link #isInterfaceAt}: in fixed mode the chrome layout is
 	 *  static, so "is this touch on UI" reduces to "is it outside the 3D viewport". */
@@ -41,6 +45,40 @@ public final class MobileHitTest
 	static void setMenuRect(Rectangle rect)
 	{
 		menuRect = rect;
+	}
+
+	/** Called by {@link MobileInputPlugin} on the client thread once per frame: the height
+	 *  of the root menu's "Choose Option" header, and the rects of the open submenus. */
+	static void setMenuOptions(int headerHeight, Rectangle[] submenus)
+	{
+		menuHeaderHeight = headerHeight;
+		submenuRects = (submenus == null || submenus.length == 0) ? EMPTY : submenus;
+	}
+
+	/** True if (canvasX, canvasY) lies on an option of the open menu: a row of the root
+	 *  menu below its header, or anywhere in an open submenu. The header is not an option;
+	 *  clicking it closes the menu, so a long-press lifted there must leave the menu open. */
+	public static boolean isMenuOptionAt(int canvasX, int canvasY)
+	{
+		Rectangle r = menuRect;
+		if (r == null)
+		{
+			return false;
+		}
+		if (canvasX >= r.x && canvasY >= r.y + menuHeaderHeight
+			&& canvasX < r.x + r.width && canvasY < r.y + r.height)
+		{
+			return true;
+		}
+		for (Rectangle s : submenuRects)
+		{
+			if (canvasX >= s.x && canvasY >= s.y
+				&& canvasX < s.x + s.width && canvasY < s.y + s.height)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Called by {@link MobileInputPlugin} on the client thread once per frame. */
