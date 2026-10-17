@@ -92,6 +92,15 @@ import static rs117.hd.utils.MathUtils.*;
 public class ZoneRenderer implements Renderer {
 	public static final int FRAMES_IN_FLIGHT = 3;
 
+	// Android: attachments discarded after use (see draw()).
+	private static final int[] DISCARD_SCENE_DEPTH = { GL_DEPTH_ATTACHMENT };
+	private static final int[] DISCARD_WINDOW_DEPTH = { GL_DEPTH };
+
+	// Per-frame scratch, reused instead of allocated every frame (client thread only).
+	private final float[] sceneCenter = new float[3];
+	private final float[] lightPosition = new float[4];
+	private final float[] lightColor = new float[4];
+
 	private static int TEXTURE_UNIT_COUNT = HdPlugin.TEXTURE_UNIT_COUNT;
 	public static final int TEXTURE_UNIT_TEXTURED_FACES = GL_TEXTURE0 + TEXTURE_UNIT_COUNT++;
 
@@ -447,7 +456,8 @@ public class ZoneRenderer implements Renderer {
 				final float[][] volumeCorners = directionalShadowCasterVolume
 					.build(sceneCamera, drawDistance * LOCAL_TILE_SIZE, shadowDrawDistance);
 
-				final float[] sceneCenter = new float[3];
+				final float[] sceneCenter = this.sceneCenter;
+				Arrays.fill(sceneCenter, 0);
 				for (float[] corner : volumeCorners)
 					add(sceneCenter, sceneCenter, corner);
 				divide(sceneCenter, sceneCenter, (float) volumeCorners.length);
@@ -524,8 +534,8 @@ public class ZoneRenderer implements Renderer {
 				assert ctx.sceneContext.numVisibleLights <= UBOLights.MAX_LIGHTS;
 
 				frameTimer.begin(Timer.UPDATE_LIGHTS);
-				final float[] lightPosition = new float[4];
-				final float[] lightColor = new float[4];
+				final float[] lightPosition = this.lightPosition;
+				final float[] lightColor = this.lightColor;
 				for (int i = 0; i < ctx.sceneContext.numVisibleLights; i++) {
 					final Light light = ctx.sceneContext.lights.get(i);
 					final float lightRadiusSq = light.radius * light.radius;
@@ -1149,11 +1159,20 @@ public class ZoneRenderer implements Renderer {
 				tiledLightingPass();
 				directionalShadowPass();
 				scenePass();
+				// Android (tiled GPU): the scene depth is cleared before every use and never read
+				// after the scene pass, so discard it rather than have the GPU write the
+				// multisampled depth back to memory. The color is kept: a frame that skips the
+				// scene pass re-blits it.
+				glBindFramebuffer(GL_FRAMEBUFFER, plugin.fboScene);
+				GL43C.glInvalidateFramebuffer(GL_FRAMEBUFFER, DISCARD_SCENE_DEPTH);
 			}
 
 			if (sceneFboValid && plugin.sceneResolution != null && plugin.sceneViewport != null) {
 				glBindFramebuffer(GL_READ_FRAMEBUFFER, plugin.fboScene);
-				if (plugin.fboSceneResolve != 0) {
+				if (plugin.sceneTileResolved) {
+					// Android: the scene texture is already resolved; read it through its plain FBO
+					glBindFramebuffer(GL_READ_FRAMEBUFFER, plugin.fboSceneResolve);
+				} else if (plugin.fboSceneResolve != 0) {
 					// Blit from the scene FBO to the multisample resolve FBO
 					glBindFramebuffer(GL_DRAW_FRAMEBUFFER, plugin.fboSceneResolve);
 					glBlitFramebuffer(
@@ -1167,13 +1186,12 @@ public class ZoneRenderer implements Renderer {
 				// Blit from the resolved FBO to the default FBO
 				glBindFramebuffer(GL_DRAW_FRAMEBUFFER, plugin.awtContext.getFramebuffer(false));
 
-				if (APPLE && !client.isResized()) {
-					// On macOS, we need to ensure that the alpha channel is opaque to prevent whatever
-					// is beneath from leaking through. In fixed mode, the MSAA resolve alone is not
-					// sufficient, since the viewport only covers part of the screen.
-					glClearColor(0, 0, 0, 1);
-					glClear(GL_COLOR_BUFFER_BIT);
-				}
+				// Android (tiled GPU): clear the window surface first, so the GPU starts from a
+				// cleared tile instead of loading the previous frame from memory. Android leaves
+				// the old contents undefined after a swap anyway; the blit and the UI cover what
+				// is visible.
+				glClearColor(0, 0, 0, 1);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 				glBlitFramebuffer(
 					0,
@@ -1203,6 +1221,10 @@ public class ZoneRenderer implements Renderer {
 
 			try {
 				frameTimer.begin(Timer.SWAP_BUFFERS);
+				// Android (tiled GPU): 117 HD never uses the window's depth buffer; discard it
+				// so it isn't written back to memory at the end of the frame.
+				glBindFramebuffer(GL_FRAMEBUFFER, plugin.awtContext.getFramebuffer(false));
+				GL43C.glInvalidateFramebuffer(GL_FRAMEBUFFER, DISCARD_WINDOW_DEPTH);
 				plugin.awtContext.swapBuffers();
 				frameTimer.end(Timer.SWAP_BUFFERS);
 				drawManager.processDrawComplete(plugin::screenshot);

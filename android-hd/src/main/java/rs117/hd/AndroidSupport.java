@@ -9,6 +9,14 @@ public final class AndroidSupport {
         int contextGeneration();
         void stopped();
         void failed();
+        /**
+         * Creates the multisampled scene framebuffer with tile-memory resolve
+         * (GL_EXT_multisampled_render_to_texture), left bound. Returns {fbo, colorTexture,
+         * depthRenderbuffer, readFbo}, where readFbo is an ordinary framebuffer on the same
+         * texture to read the resolved scene from, or null to fall back to multisampled
+         * renderbuffers + blit resolve.
+         */
+        default int[] createTileResolvedFbo(int width, int height, int samples, int colorFormat, int depthFormat) { return null; }
     }
     public static Host host;
     public static final String GLSL_HEADER = "#version 320 es\n"

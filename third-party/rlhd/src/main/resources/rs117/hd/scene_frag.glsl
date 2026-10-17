@@ -49,6 +49,9 @@ flat in int fWorldViewId;
 flat in ivec3 fAlphaBiasHsl;
 flat in ivec3 fMaterialData;
 flat in ivec3 fTerrainData;
+flat in vec4 fBaseColor1;
+flat in vec4 fBaseColor2;
+flat in vec4 fBaseColor3;
 
 #if FLAT_SHADING && ZONE_RENDERER
     flat in vec3 fFlatNormal;
@@ -205,27 +208,12 @@ void main() {
             fragPos += TBN * fragDelta;
         #endif
 
-        vec3 hsl1 = unpackRawHsl(fAlphaBiasHsl[0]);
-        vec3 hsl2 = unpackRawHsl(fAlphaBiasHsl[1]);
-        vec3 hsl3 = unpackRawHsl(fAlphaBiasHsl[2]);
-
-        // Apply entity tint to HSL
         ivec4 tint = getWorldViewTint(fWorldViewId);
-        if (tint.w > 0) {
-            hsl1 += ((vec3(tint.xyz) - hsl1) * float(tint.w)) / 128.0;
-            hsl2 += ((vec3(tint.xyz) - hsl2) * float(tint.w)) / 128.0;
-            hsl3 += ((vec3(tint.xyz) - hsl3) * float(tint.w)) / 128.0;
-        }
 
-        // get vertex colors
-        vec4 baseColor1 = vec4(convertHsl(hsl1), 1.0 - float(fAlphaBiasHsl[0] >> 24 & 0xff) / 255.);
-        vec4 baseColor2 = vec4(convertHsl(hsl2), 1.0 - float(fAlphaBiasHsl[1] >> 24 & 0xff) / 255.);
-        vec4 baseColor3 = vec4(convertHsl(hsl3), 1.0 - float(fAlphaBiasHsl[2] >> 24 & 0xff) / 255.);
-
-        // Convert to linear RGB
-        baseColor1.rgb = srgbToLinear(hslToSrgb(baseColor1.xyz));
-        baseColor2.rgb = srgbToLinear(hslToSrgb(baseColor2.xyz));
-        baseColor3.rgb = srgbToLinear(hslToSrgb(baseColor3.xyz));
+        // Vertex colors: tinted and converted to linear RGB once per triangle in scene_vert
+        vec4 baseColor1 = fBaseColor1;
+        vec4 baseColor2 = fBaseColor2;
+        vec4 baseColor3 = fBaseColor3;
 
         #if DISPLAY_BASE_COLOR
         if (DISPLAY_BASE_COLOR == 1) { // Redundant, used for syntax highlighting in IntelliJ
@@ -236,10 +224,17 @@ void main() {
         }
         #endif
 
+        // Android: most faces (all model faces) use one material at all three vertices. Its UVs
+        // then come out identical (they depend only on the material), so the 2nd and 3rd
+        // texture samples equal the 1st and are reused instead of fetched again.
+        int materialIndex1 = fMaterialData[0] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK;
+        bool sameMaterial2 = (fMaterialData[1] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
+        bool sameMaterial3 = (fMaterialData[2] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
+
         // get diffuse textures
         vec4 texColor1 = colorMap1 == -1 ? vec4(1) : texture(textureArray, vec3(uv1, colorMap1), mipBias);
-        vec4 texColor2 = colorMap2 == -1 ? vec4(1) : texture(textureArray, vec3(uv2, colorMap2), mipBias);
-        vec4 texColor3 = colorMap3 == -1 ? vec4(1) : texture(textureArray, vec3(uv3, colorMap3), mipBias);
+        vec4 texColor2 = sameMaterial2 ? texColor1 : colorMap2 == -1 ? vec4(1) : texture(textureArray, vec3(uv2, colorMap2), mipBias);
+        vec4 texColor3 = sameMaterial3 ? texColor1 : colorMap3 == -1 ? vec4(1) : texture(textureArray, vec3(uv3, colorMap3), mipBias);
         texColor1.rgb *= material1.brightness;
         texColor2.rgb *= material2.brightness;
         texColor3.rgb *= material3.brightness;
@@ -319,8 +314,8 @@ void main() {
             normals = vec3(0, -1, 0);
         } else {
             vec3 n1 = sampleNormalMap(material1, uv1, TBN);
-            vec3 n2 = sampleNormalMap(material2, uv2, TBN);
-            vec3 n3 = sampleNormalMap(material3, uv3, TBN);
+            vec3 n2 = sameMaterial2 ? n1 : sampleNormalMap(material2, uv2, TBN);
+            vec3 n3 = sameMaterial3 ? n1 : sampleNormalMap(material3, uv3, TBN);
             normals = normalize(n1 * IN.texBlend.x + n2 * IN.texBlend.y + n3 * IN.texBlend.z);
         }
 
@@ -346,10 +341,11 @@ void main() {
         // specular
         vec3 vSpecularGloss = vec3(material1.specularGloss, material2.specularGloss, material3.specularGloss);
         vec3 vSpecularStrength = vec3(material1.specularStrength, material2.specularStrength, material3.specularStrength);
+        float roughness1 = material1.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv1, material1.roughnessMap)).r);
         vSpecularStrength *= vec3(
-            material1.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv1, material1.roughnessMap)).r),
-            material2.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv2, material2.roughnessMap)).r),
-            material3.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv3, material3.roughnessMap)).r)
+            roughness1,
+            sameMaterial2 ? roughness1 : material2.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv2, material2.roughnessMap)).r),
+            sameMaterial3 ? roughness1 : material3.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv3, material3.roughnessMap)).r)
         );
 
         // apply specular highlights to anything semi-transparent
@@ -371,10 +367,11 @@ void main() {
         // ambient light
         vec3 ambientLightOut = ambientColor * ambientStrength;
 
+        float ao1 = material1.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv1, material1.ambientOcclusionMap)).r;
         float aoFactor =
-            IN.texBlend.x * (material1.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv1, material1.ambientOcclusionMap)).r) +
-            IN.texBlend.y * (material2.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv2, material2.ambientOcclusionMap)).r) +
-            IN.texBlend.z * (material3.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv3, material3.ambientOcclusionMap)).r);
+            IN.texBlend.x * ao1 +
+            IN.texBlend.y * (sameMaterial2 ? ao1 : material2.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv2, material2.ambientOcclusionMap)).r) +
+            IN.texBlend.z * (sameMaterial3 ? ao1 : material3.ambientOcclusionMap == -1 ? 1.0 : texture(textureArray, vec3(uv3, material3.ambientOcclusionMap)).r);
         ambientLightOut *= aoFactor;
 
         // directional light

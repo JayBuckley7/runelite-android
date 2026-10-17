@@ -368,7 +368,10 @@ public class HdPlugin extends Plugin {
 	private int[] uiResolution;
 	private final int[] actualUiResolution = { 0, 0 }; // Includes stretched mode and DPI scaling
 	private final GLBuffer[] pboUi = new GLBuffer[3];
-	private int texUi;
+	// Android: three UI textures, rotated like the PBOs. Overwriting one texture every frame
+	// while earlier frames still sample it makes a tiled GPU driver stall or copy it.
+	private final int[] texUi = new int[3];
+	private int texUiCurrent; // the most recently uploaded one, which is what gets drawn
 	private int uiWidth;
 	private int uiHeight;
 	private GenericJob uiCopyJob;
@@ -381,6 +384,10 @@ public class HdPlugin extends Plugin {
 	public int[] sceneResolution;
 	public int fboScene;
 	private int rboSceneColor;
+	private int texSceneColor; // Android: tile-resolved MSAA color target, instead of rboSceneColor
+	// Android: fboScene renders with tile-resolved MSAA and fboSceneResolve reads the same texture,
+	// so the frame reads fboSceneResolve directly instead of blitting fboScene into it.
+	public boolean sceneTileResolved;
 	private int rboSceneDepth;
 	public int fboSceneResolve;
 	private int rboSceneResolveColor;
@@ -514,7 +521,6 @@ public class HdPlugin extends Plugin {
 
 	@Override
 	protected void startUp() {
-		log.info("Starting 117 HD Android GLES renderer");
 		// Lazily inject members into our singletons
 		for (var clazz : LAZY_SINGLETONS)
 			injector.injectMembers(injector.getInstance(clazz));
@@ -1189,13 +1195,16 @@ public class HdPlugin extends Plugin {
 			pboUi[i].initialize();
 		}
 
-		texUi = glGenTextures();
 		glActiveTexture(TEXTURE_UNIT_UI);
-		glBindTexture(GL_TEXTURE_2D, texUi);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		for (int i = 0; i < texUi.length; i++) {
+			texUi[i] = glGenTextures();
+			glBindTexture(GL_TEXTURE_2D, texUi[i]);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		}
+		texUiCurrent = 0;
 
 		checkGLErrors();
 	}
@@ -1209,9 +1218,11 @@ public class HdPlugin extends Plugin {
 			pboUi[i] = null;
 		}
 
-		if (texUi != 0)
-			glDeleteTextures(texUi);
-		texUi = 0;
+		for (int i = 0; i < texUi.length; i++) {
+			if (texUi[i] != 0)
+				glDeleteTextures(texUi[i]);
+			texUi[i] = 0;
+		}
 	}
 
 	public void updateTiledLightingFbo() {
@@ -1336,6 +1347,25 @@ public class HdPlugin extends Plugin {
 		uboGlobal.sceneResolution.set(sceneResolution);
 		uboGlobal.upload(); // Ensure this is up to date with rendering
 
+		// Android: with MSAA, render the scene through GL_EXT_multisampled_render_to_texture so the
+		// samples are resolved in tile memory into a single-sample texture. The desktop path below
+		// (multisampled renderbuffers, then a blit to resolve) stores and reloads every sample each
+		// frame. No resolve FBO is needed; the frame blits straight from the scene texture.
+		if (msaaSamples > 1) {
+			int[] ids = AndroidSupport.host.createTileResolvedFbo(
+				sceneResolution[0], sceneResolution[1], msaaSamples, desiredFormats[0], GL_DEPTH_COMPONENT32F);
+			if (ids != null) {
+				fboScene = ids[0];
+				texSceneColor = ids[1];
+				rboSceneDepth = ids[2];
+				fboSceneResolve = ids[3];
+				sceneTileResolved = true;
+				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+				glBindRenderbuffer(GL_RENDERBUFFER, 0);
+				return;
+			}
+		}
+
 		// Create and bind the FBO
 		fboScene = glGenFramebuffers();
 		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
@@ -1389,6 +1419,7 @@ public class HdPlugin extends Plugin {
 
 	private void destroySceneFbo() {
 		sceneViewport = null;
+		sceneTileResolved = false;
 
 		if (fboScene != 0)
 			glDeleteFramebuffers(fboScene);
@@ -1397,6 +1428,10 @@ public class HdPlugin extends Plugin {
 		if (rboSceneColor != 0)
 			glDeleteRenderbuffers(rboSceneColor);
 		rboSceneColor = 0;
+
+		if (texSceneColor != 0)
+			glDeleteTextures(texSceneColor);
+		texSceneColor = 0;
 
 		if (rboSceneDepth != 0)
 			glDeleteRenderbuffers(rboSceneDepth);
@@ -1506,8 +1541,10 @@ public class HdPlugin extends Plugin {
 			uiResolution = resolution;
 
 			glActiveTexture(TEXTURE_UNIT_UI);
-			glBindTexture(GL_TEXTURE_2D, texUi);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uiResolution[0], uiResolution[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+			for (int tex : texUi) {
+				glBindTexture(GL_TEXTURE_2D, tex);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uiResolution[0], uiResolution[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+			}
 		}
 
 		if (client.isStretchedEnabled()) {
@@ -1566,6 +1603,10 @@ public class HdPlugin extends Plugin {
 		glViewport(0, 0, actualUiResolution[0], actualUiResolution[1]);
 
 		tiledLightingOverlay.render();
+		// Android (tiled GPU): a partial color mask makes every UI pixel a read-modify-write.
+		// The UI draw keeps dst alpha anyway (alpha blend factors ZERO, ONE over a surface
+		// cleared to alpha 1), so it runs unmasked; the debug overlays below keep the mask.
+		glColorMask(true, true, true, true);
 
 		uiProgram.use();
 		uboUI.sourceDimensions.set(uiResolution);
@@ -1579,9 +1620,10 @@ public class HdPlugin extends Plugin {
 		// GL_NEAREST makes sampling for bicubic/xBR simpler, so it should be used whenever linear/pixel isn't
 		final int function = config.uiScalingMode().glSamplingFunction;
 		glActiveTexture(TEXTURE_UNIT_UI);
-		glBindTexture(GL_TEXTURE_2D, texUi);
 
 		if (uiCopyJob != null) {
+			texUiCurrent = (texUiCurrent + 1) % texUi.length;
+			glBindTexture(GL_TEXTURE_2D, texUi[texUiCurrent]);
 			frameTimer.begin(Timer.COPY_UI);
 			uiCopyJob.waitForCompletion(true);
 			uiCopyJob = null;
@@ -1597,6 +1639,7 @@ public class HdPlugin extends Plugin {
 			frameTimer.end(Timer.UPLOAD_UI);
 		}
 
+		glBindTexture(GL_TEXTURE_2D, texUi[texUiCurrent]);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, function);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, function);
 
@@ -1605,6 +1648,7 @@ public class HdPlugin extends Plugin {
 		glBindVertexArray(vaoTri);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
+		glColorMask(true, true, true, false);
 		shadowMapOverlay.render();
 		gammaCalibrationOverlay.render();
 

@@ -37,12 +37,18 @@ public class AWTContext
 
 	public int getBufferMode() { return GLES32.GL_BACK; }
 
-	/** EGL swap interval. Returns the value actually applied (we don't have a way
-	 *  to probe that on Android, so we trust the caller's request). */
+	/** EGL swap interval. Returns the value actually applied.
+	 *
+	 *  Android's EGL has no adaptive vsync: a negative interval is clamped to 0. Reporting
+	 *  the request back (-1) told 117 HD that adaptive sync was active, so it set no fps
+	 *  target, and with no vsync either the GPU ran flat out into thermal throttling. Apply
+	 *  and report 0 instead; 117 HD then caps at its fps target, as GPU (GLES) does when
+	 *  unlocked. */
 	public int setSwapInterval(int interval)
 	{
-		GlesHost.get().setSwapInterval(interval);
-		return interval;
+		int applied = Math.max(0, interval);
+		GlesHost.get().setSwapInterval(applied);
+		return applied;
 	}
 
 	public void destroy() { /* GlesHost lives for the process; nothing to tear down here */ }

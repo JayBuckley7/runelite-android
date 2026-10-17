@@ -16,6 +16,10 @@ object AndroidHdHost : AndroidSupport.Host {
     fun configure(pm: PluginManager, config: ConfigManager) {
         manager = pm
         AndroidSupport.host = this
+        // 117 HD logs a lot at INFO/WARN during normal play (startup system info, swap-interval
+        // notices, per-zone upload warnings). Keep only errors on Android.
+        (org.slf4j.LoggerFactory.getLogger("rs117") as? ch.qos.logback.classic.Logger)?.level =
+            ch.qos.logback.classic.Level.ERROR
         val hd = pm.plugins.firstOrNull { it is HdPlugin }
         if (hd == null) {
             Log.e("AndroidHdHost", "117 HD was not registered; keeping the existing renderer")
@@ -24,9 +28,9 @@ object AndroidHdHost : AndroidSupport.Host {
         // Once-only mobile defaults. Further launches retain the user's settings.
         if (config.getConfiguration("runelite-mp", "hdPrototypeDefaults") == null) {
             val group = HdPluginConfig.CONFIG_GROUP
-            mapOf("drawDistance" to "35", "shadowMode" to "OFF", "shadowResolution" to "RES_1024",
+            mapOf("drawDistance" to "35", "shadowMode" to "DETAILED", "shadowResolution" to "RES_2048",
                 "dynamicLights" to "NONE", "tiledLighting" to "false", "sceneResolutionScale" to "75",
-                "legacyRenderer2" to "false").forEach { (key, value) -> config.setConfiguration(group, key, value) }
+                "legacyRenderer2" to "false", "anisotropicFilteringLevel" to "2").forEach { (key, value) -> config.setConfiguration(group, key, value) }
             config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "1")
         }
         if (config.getConfiguration("runelite-mp", "hdPrototypeDefaults") == "1") {
@@ -35,16 +39,28 @@ object AndroidHdHost : AndroidSupport.Host {
                 .forEach { (key, value) -> config.setConfiguration(HdPluginConfig.CONFIG_GROUP, key, value) }
             config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "2")
         }
-        Log.i("AndroidHdHost", "117 HD registered, enabled=${pm.isPluginEnabled(hd)}")
+        // Tiled lighting was off because its shader didn't compile on GLES (117 HD also
+        // saves it off after a failed compile). It compiles now; without it every scene
+        // fragment loops over every visible point light. 117 HD still turns it off by
+        // itself if the compile ever fails.
+        if (config.getConfiguration("runelite-mp", "hdPrototypeDefaults") == "2") {
+            config.setConfiguration(HdPluginConfig.CONFIG_GROUP, "tiledLighting", "true")
+            config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "3")
+        }
     }
     override fun makeCurrent(): Boolean {
         Canvas.setRenderedByGles(true)
-        return GlesHost.get().makeCurrent()
+        // Surfaceless while backgrounded, so a frame that mapped buffers can still unmap them.
+        return GlesHost.get().makeCurrentAllowSurfaceless()
     }
     override fun width() = GlesHost.get().width
     override fun height() = GlesHost.get().height
     override fun contextGeneration() = GlesHost.get().contextGeneration()
     override fun stopped() { Canvas.setRenderedByGles(false) }
+    override fun createTileResolvedFbo(width: Int, height: Int, samples: Int, colorFormat: Int, depthFormat: Int): IntArray? {
+        val ids = IntArray(4)
+        return if (GlesExt.createTileResolvedFbo(width, height, samples, colorFormat, depthFormat, ids)) ids else null
+    }
     override fun failed() {
         Log.e("AndroidHdHost", "117 HD stopped after a renderer error; restoring GPU (GLES)")
         SwingUtilities.invokeLater {

@@ -244,6 +244,50 @@ public final class GlesHost
 		}
 	}
 
+	/**
+	 * Like {@link #makeCurrent}, but while there's no window surface (app in the background,
+	 * or between surfaceDestroyed and surfaceCreated) binds the context surfaceless
+	 * (EGL_KHR_surfaceless_context) instead of failing. GL objects stay usable, so a renderer
+	 * that maps buffers early in a frame still unmaps them later in the same frame; only
+	 * drawing to framebuffer 0 and {@link #swapBuffers} do nothing until the surface returns.
+	 *
+	 * 117 HD needs this: a frame interrupted between mapping and unmapping its buffers left
+	 * them mapped, so every map after resume failed and the plugin shut down.
+	 */
+	public boolean makeCurrentAllowSurfaceless()
+	{
+		synchronized (lock)
+		{
+			if (makeCurrent()) return true;
+			if (display == EGL14.EGL_NO_DISPLAY || context == EGL14.EGL_NO_CONTEXT) return false;
+			if (androidSurface != null && androidSurface.isValid()) return false; // a real failure
+			if (!surfacelessSupported()) return false;
+			// Drop the window surface for the destroyed Android surface while keeping the
+			// context, then bind the context without any surface.
+			if (eglSurface != EGL14.EGL_NO_SURFACE)
+			{
+				EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, context);
+				EGL14.eglDestroySurface(display, eglSurface);
+				eglSurface = EGL14.EGL_NO_SURFACE;
+				surfaceDirty = false;
+			}
+			return EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, context);
+		}
+	}
+
+	private Boolean surfacelessSupported;
+
+	private boolean surfacelessSupported()
+	{
+		if (surfacelessSupported == null)
+		{
+			String ext = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS);
+			surfacelessSupported = ext != null && ext.contains("EGL_KHR_surfaceless_context");
+			Log.i(TAG, "EGL_KHR_surfaceless_context: " + surfacelessSupported);
+		}
+		return surfacelessSupported;
+	}
+
 	/** Present the current frame. Must be called after the caller has finished
 	 *  GLES draws on the current thread. */
 	public boolean swapBuffers()

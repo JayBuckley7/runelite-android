@@ -29,6 +29,7 @@
 #include <uniforms/world_views.glsl>
 
 #include <utils/constants.glsl>
+#include <utils/color_utils.glsl>
 #include <utils/uvs.glsl>
 
 layout (location = 0) in vec3 vPosition;
@@ -54,10 +55,25 @@ layout (location = 0) in vec3 vPosition;
     flat out ivec3 fAlphaBiasHsl;
     flat out ivec3 fMaterialData;
     flat out ivec3 fTerrainData;
+    // Android: the three vertex colors (tinted, linear RGB + alpha), converted once per
+    // triangle here instead of three times per fragment. Inputs are flat, so the result is
+    // the same for every fragment of the triangle.
+    flat out vec4 fBaseColor1;
+    flat out vec4 fBaseColor2;
+    flat out vec4 fBaseColor3;
 
     #if FLAT_SHADING
         flat out vec3 fFlatNormal;
     #endif
+
+    vec4 vertexBaseColor(int alphaBiasHsl, ivec4 tint) {
+        vec3 hsl = unpackRawHsl(alphaBiasHsl);
+        if (tint.w > 0)
+            hsl += ((vec3(tint.xyz) - hsl) * float(tint.w)) / 128.0;
+        vec4 color = vec4(convertHsl(hsl), 1.0 - float(alphaBiasHsl >> 24 & 0xff) / 255.);
+        color.rgb = srgbToLinear(hslToSrgb(color.xyz));
+        return color;
+    }
 
     out FragmentData {
         vec3 position;
@@ -84,11 +100,18 @@ layout (location = 0) in vec3 vPosition;
             fWorldViewId = vWorldViewId;
             alphaBiasHsl = fAlphaBiasHsl[vertex];
             materialData = fMaterialData[vertex];
+            ivec4 tint = getWorldViewTint(vWorldViewId);
+            fBaseColor1 = vertexBaseColor(fAlphaBiasHsl[0], tint);
+            fBaseColor2 = vertexBaseColor(fAlphaBiasHsl[1], tint);
+            fBaseColor3 = vertexBaseColor(fAlphaBiasHsl[2], tint);
         } else {
             // All outputs must be written to for macOS compatibility
             fAlphaBiasHsl = ivec3(0);
             fMaterialData = ivec3(0);
             fWorldViewId  = 0;
+            fBaseColor1 = vec4(0);
+            fBaseColor2 = vec4(0);
+            fBaseColor3 = vec4(0);
             alphaBiasHsl = texelFetch(textureFaces, faceIdx)[vertex];
             materialData = texelFetch(textureFaces, faceIdx + 1)[vertex];
         }

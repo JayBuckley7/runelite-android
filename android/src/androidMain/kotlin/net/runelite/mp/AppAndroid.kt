@@ -190,6 +190,8 @@ private fun GameViewport(modifier: Modifier = Modifier) {
     var frameSize by remember { mutableStateOf(IntSize.Zero) }
 
     LaunchedEffect(Unit) {
+        var lastChromePixels: IntArray? = null
+        var nextChromePaintAt = 0L
         var nextDumpAt = 0L
         var nextSwDiagAt = 0L
         var lastWindow: java.awt.Window? = null
@@ -233,7 +235,13 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                 lastWindow = window
                 nextDumpAt = now + 8_000
             }
-            val src = window?.renderToBackbuffer()
+            // While a GLES renderer draws the game, this frame only carries the chrome around
+            // it (sidebar, panels), and repainting the whole AWT tree every vsync (120 Hz) is
+            // the main thread's largest cost. Repaint it at CHROME_GLES_INTERVAL_MS then, and
+            // immediately on a renderer toggle. The software renderer repaints every frame.
+            val paintChrome = !gles || gles != glesActive || now >= nextChromePaintAt
+            if (gles && paintChrome) nextChromePaintAt = now + CHROME_GLES_INTERVAL_MS
+            val src = if (!paintChrome) null else window?.renderToBackbuffer()
                 ?: java.awt.Canvas.latest()?.backbuffer
             // `gles` was read at the top of the loop. A change forces the bitmap to be
             // recreated below (hasAlpha differs between renderers), and the Compose
@@ -280,6 +288,7 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                 val w = src.width
                 val h = src.height
                 var bmp = bitmap
+                var recreated = false
                 if (bmp == null || bmp.width != w || bmp.height != h) {
                     bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     // OSRS rasterizer writes RGB ints with alpha=0. Telling the Bitmap
@@ -289,9 +298,25 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                     // so the SurfaceView shows through the punched hole.
                     if (!gles) bmp.setHasAlpha(false)
                     bitmap = bmp
+                    recreated = true
                 }
-                bmp.setPixels(src.backingArray(), 0, w, 0, 0, w, h)
-                imageBitmap = bmp.asImageBitmap()
+                val pixels = src.backingArray()
+                // While a GLES renderer draws the game, this frame is only the chrome around
+                // it (the game area is a transparent hole) and is usually identical to the
+                // last one. Skip the bitmap conversion, the recomposition and RenderThread's
+                // texture upload — which competes with the game for the GPU — when nothing
+                // changed. The software renderer changes every frame, so it isn't compared.
+                val prev = lastChromePixels
+                val unchanged = gles && !recreated && prev != null && prev.size == pixels.size &&
+                    java.util.Arrays.equals(prev, pixels)
+                if (!unchanged) {
+                    bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+                    imageBitmap = bmp.asImageBitmap()
+                    lastChromePixels = if (gles) {
+                        (if (prev != null && prev.size == pixels.size) prev else IntArray(pixels.size))
+                            .also { System.arraycopy(pixels, 0, it, 0, pixels.size) }
+                    } else null
+                }
                 if (frameSize.width != w || frameSize.height != h) {
                     frameSize = IntSize(w, h)
                 }
@@ -845,6 +870,9 @@ private fun centroid(event: PointerEvent): Offset {
     for (p in ps) { x += p.position.x; y += p.position.y }
     return Offset(x / ps.size, y / ps.size)
 }
+
+/** Chrome repaint interval while a GLES renderer owns the game area (~30 Hz). */
+private const val CHROME_GLES_INTERVAL_MS = 33L
 
 private const val BUTTON1 = java.awt.event.MouseEvent.BUTTON1
 private const val BUTTON2 = java.awt.event.MouseEvent.BUTTON2
