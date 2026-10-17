@@ -1,5 +1,7 @@
 package net.runelite.client.plugins.mobile;
 
+import com.google.inject.Provides;
+import net.runelite.client.config.ConfigManager;
 import java.awt.Dimension;
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -27,12 +29,18 @@ import net.runelite.client.plugins.PluginDescriptor;
 @Slf4j
 @PluginDescriptor(
 	name = "Mobile Input Bridge",
-	description = "Provides interface-vs-scene hit-testing for the Android touch driver",
+	description = "Configures touch menus and provides interface-vs-scene hit-testing",
 	hidden = true
 )
 public class MobileInputPlugin extends Plugin
 {
 	@Inject private Client client;
+
+	@Provides
+	MobileInputConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(MobileInputConfig.class);
+	}
 
 	private long lastLogMs;
 	private int lastLoggedCount = -1;

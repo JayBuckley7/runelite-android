@@ -360,6 +360,11 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                     if (down.type == PointerType.Mouse) return@awaitEachGesture
                     val downId = down.id
                     val downTime = System.currentTimeMillis()
+                    // Snapshot the preference so changing settings cannot alter a held gesture.
+                    val keepMenuOpen = net.runelite.mp.ui.bridge.RuneLiteAccess
+                        .instance(net.runelite.client.config.ConfigManager::class.java)
+                        ?.getConfig(net.runelite.client.plugins.mobile.MobileInputConfig::class.java)
+                        ?.keepMenuOpen() ?: false
                     var lastPos: Offset = down.position
                     var totalMoved = 0f
                     var session: DragSession? = null
@@ -390,7 +395,7 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                             // Long-press deadline expired without movement → right-click to
                             // open the OSRS menu. Then track finger motion so MOUSE_MOVED
                             // dispatches highlight the hovered option, and on release fire
-                            // a left-click at the final position — that's how desktop OSRS
+                            // an optional left-click at the final position — that's how desktop OSRS
                             // selects a menu entry (right-click → move → left-click), and
                             // the touchscreen has to fold all three into one held gesture.
                             fired = true
@@ -410,10 +415,10 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                                     dispatchMove(menuPos, boxSize)
                                 }
                             }
-                            // Only commit the selection if the lift lands ON the open menu.
+                            // In slide-to-select mode, commit only if the lift lands ON the open menu.
                             // Releasing in the world (the user changed their mind) cancels
                             // — a stray BUTTON1 there would walk-here or attack instead.
-                            if (releaseHitsOpenMenu(menuPos, boxSize)) {
+                            if (!keepMenuOpen && sawUp && releaseHitsOpenMenu(menuPos, boxSize)) {
                                 dispatchClick(menuPos, boxSize, BUTTON1)
                             }
                             break
