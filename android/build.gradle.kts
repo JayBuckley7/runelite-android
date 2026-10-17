@@ -377,9 +377,11 @@ if (androidSdkAvailable) {
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
             val versionMajor = 1
             val versionMinor = 0
-            val versionPatch = 37
+            val versionPatch = 38
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
+            // Same tag CI publishes releases under; UpdateChecker compares against it.
+            buildConfigField("String", "RELEASE_TAG", "\"$versionMajor.$versionMinor.${versionPatch}_${project.version}\"")
             // Anti-tamper hook. SignatureGuard reads this field at MainActivity init and
             // refuses to run when the on-device APK's signing SHA-256 doesn't match.
             // Default is empty (= skip), so debug builds and release-with-debug-fallback
