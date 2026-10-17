@@ -354,7 +354,7 @@ if (androidSdkAvailable) {
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
             val versionMajor = 1
             val versionMinor = 0
-            val versionPatch = 32
+            val versionPatch = 33
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
             // Anti-tamper hook. SignatureGuard reads this field at MainActivity init and
@@ -495,10 +495,10 @@ if (androidSdkAvailable) {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
-                // AGP 9 no longer ships proguard-android.txt. The -optimize file is the same
-                // default set without -dontoptimize; proguard-rules.pro adds -dontoptimize back, so
-                // the optimizer stays off for the reason above.
-                getDefaultProguardFile("proguard-android-optimize.txt"),
+                // AGP 9 no longer ships proguard-android.txt. proguard-android-defaults.pro is its
+                // -optimize file without -allowaccessmodification (see that file for why);
+                // proguard-rules.pro adds -dontoptimize, so the optimizer stays off for the reason above.
+                "proguard-android-defaults.pro",
                 "proguard-rules.pro"
             )
             signingConfig = if (haveReleaseSigning) {

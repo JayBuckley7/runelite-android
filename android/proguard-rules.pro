@@ -169,6 +169,19 @@
 -keep class net.runelite.mp.** { *; }
 
 # ----------------------------------------------------------------------------
+# 117 HD (android-hd / third-party/rlhd). Only HdPlugin itself matched the plugin
+# keeps above, so R8 renamed the rest and moved them out of rs117.hd. ResourcePath
+# builds resource paths from clazz.getPackage().getName(); a renamed class in the
+# default package has a null Package on ART, so HdPlugin's static init threw and the
+# plugin was never registered. Its shaders and JSON resources are also looked up by
+# the original package path, Gson binds its DTO fields by name, and configure()
+# instantiates singletons reflectively. Keep the whole tree, plus the LWJGL shim
+# whose native methods are bound by JNI symbol name (hd_memory.c).
+# ----------------------------------------------------------------------------
+-keep class rs117.** { *; }
+-keep class org.lwjgl.** { *; }
+
+# ----------------------------------------------------------------------------
 # Firebase / Crashlytics. The SDK installs ContentProviders and reflects on
 # its own classes. Standard recommended config from Firebase docs.
 # ----------------------------------------------------------------------------
