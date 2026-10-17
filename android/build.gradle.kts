@@ -1226,6 +1226,19 @@ abstract class DesugarLambdasTask : org.gradle.api.DefaultTask() {
         // we can prepend a StringShim.stripNul prologue and stop login from crashing
         // with "error_game_crash" when a machine-info string picks up a NUL.
         val privatesToWiden = mutableSetOf<Triple<String, String, String>>()
+        // Generated lambdas live in another package. Public methods alone are not
+        // sufficient: their owner and any cast/signature types must be accessible too.
+        val classesToWiden = mutableSetOf<String>()
+        fun collectType(type: Type) {
+            when (type.sort) {
+                Type.OBJECT -> classesToWiden.add(type.internalName)
+                Type.ARRAY -> collectType(type.elementType)
+                Type.METHOD -> {
+                    type.argumentTypes.forEach { collectType(it) }
+                    collectType(type.returnType)
+                }
+            }
+        }
         val nulRejectMethods = mutableSetOf<Triple<String, String, String>>()
         JarFile(inFile).use { input ->
             val entries = input.entries()
@@ -1250,6 +1263,10 @@ abstract class DesugarLambdasTask : org.gradle.api.DefaultTask() {
                                 if (bsm.owner == "java/lang/invoke/LambdaMetafactory" && bsm.name == "metafactory") {
                                     val impl = args[1] as Handle
                                     privatesToWiden.add(Triple(impl.owner, impl.name, impl.desc))
+                                    classesToWiden.add(impl.owner)
+                                    collectType(Type.getMethodType(impl.desc))
+                                    collectType(Type.getMethodType(d))
+                                    args.filterIsInstance<Type>().forEach { collectType(it) }
                                 }
                             }
                             override fun visitMethodInsn(opc: Int, owner: String, n: String, d: String, itf: Boolean) {
@@ -1285,7 +1302,7 @@ abstract class DesugarLambdasTask : org.gradle.api.DefaultTask() {
                     val bytes = input.getInputStream(entry).use { it.readBytes() }
                     output.putNextEntry(JarEntry(entry.name))
                     if (entry.name.endsWith(".class")) {
-                        val (rewritten, newSynthetics) = rewriteClass(bytes, privatesToWiden, nulRejectMethods, lambdaCount)
+                        val (rewritten, newSynthetics) = rewriteClass(bytes, privatesToWiden, classesToWiden, nulRejectMethods, lambdaCount)
                         lambdaCount += newSynthetics.size
                         synthetics.addAll(newSynthetics)
                         output.write(rewritten)
@@ -1305,7 +1322,7 @@ abstract class DesugarLambdasTask : org.gradle.api.DefaultTask() {
         nulRejectMethods.forEach { (o, n, d) -> logger.lifecycle("  nulPatched: $o.$n$d") }
     }
 
-    private fun rewriteClass(bytes: ByteArray, privatesToWiden: Set<Triple<String, String, String>>, nulRejectMethods: Set<Triple<String, String, String>>, startCounter: Int): Pair<ByteArray, List<Pair<String, ByteArray>>> {
+    private fun rewriteClass(bytes: ByteArray, privatesToWiden: Set<Triple<String, String, String>>, classesToWiden: Set<String>, nulRejectMethods: Set<Triple<String, String, String>>, startCounter: Int): Pair<ByteArray, List<Pair<String, ByteArray>>> {
         val cr = ClassReader(bytes)
         val cw = object : ClassWriter(cr, ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS) {
             override fun getCommonSuperClass(t1: String, t2: String): String {
@@ -1320,7 +1337,15 @@ abstract class DesugarLambdasTask : org.gradle.api.DefaultTask() {
         cr.accept(object : ClassVisitor(Opcodes.ASM9, cw) {
             override fun visit(version: Int, access: Int, name: String, sig: String?, superName: String?, ifaces: Array<out String>?) {
                 ownerName = name
-                super.visit(version, access, name, sig, superName, ifaces)
+                val effectiveAccess = if (name in classesToWiden)
+                    (access and (Opcodes.ACC_PRIVATE or Opcodes.ACC_PROTECTED).inv()) or Opcodes.ACC_PUBLIC else access
+                super.visit(version, effectiveAccess, name, sig, superName, ifaces)
+            }
+
+            override fun visitInnerClass(name: String, outerName: String?, innerName: String?, access: Int) {
+                val effectiveAccess = if (name in classesToWiden)
+                    (access and (Opcodes.ACC_PRIVATE or Opcodes.ACC_PROTECTED).inv()) or Opcodes.ACC_PUBLIC else access
+                super.visitInnerClass(name, outerName, innerName, effectiveAccess)
             }
 
             override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?): MethodVisitor {
