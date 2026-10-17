@@ -252,25 +252,8 @@ public class HiscorePlugin extends Plugin
 		localHiscoreEndpoint = findHiscoreEndpointFromLocalPlayer();
 	}
 
-	/**
-	 * Fires every time the right-click "Lookup" menu (or any other in-game shortcut)
-	 * decides to look up a player. The Swing path always runs; this just lets an
-	 * external UI (runelite-mp's Compose HiScore panel) latch onto the same intent
-	 * without us hard-wiring it into the desktop plugin's logic.
-	 */
-	public static volatile java.util.function.BiConsumer<String, HiscoreEndpoint> externalLookupListener;
-
 	void lookupPlayer(String playerName, HiscoreEndpoint endpoint)
 	{
-		java.util.function.BiConsumer<String, HiscoreEndpoint> ext = externalLookupListener;
-		if (ext != null)
-		{
-			// Swallow throwables — the desktop client must keep functioning even if
-			// the external listener (Compose mp bridge) blows up. No SLF4J logger
-			// available on this class.
-			try { ext.accept(playerName, endpoint); }
-			catch (Throwable ignored) {}
-		}
 		SwingUtilities.invokeLater(() ->
 		{
 			clientToolbar.openPanel(navButton);

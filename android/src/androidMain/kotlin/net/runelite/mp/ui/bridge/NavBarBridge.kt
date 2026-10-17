@@ -150,10 +150,32 @@ internal object NavBarBridge
                     selectedKey = key
                     val method = ui.javaClass.getDeclaredMethod("openPanel", NavigationButton::class.java, Boolean::class.javaPrimitiveType)
                     method.isAccessible = true
-                    method.invoke(ui, current, true)
+                    navInitiated = true
+                    try { method.invoke(ui, current, true) } finally { navInitiated = false }
                 } else current.onClick?.run()
             } catch (_: Throwable) { /* the host falls back to its unavailable-panel message */ }
         }
+    }
+
+    /** True while [invoke] is inside ClientUI.openPanel; Compose already selected that key. */
+    private var navInitiated = false // EDT only
+
+    /**
+     * Mirror plugin-initiated ClientUI.openPanel calls (Hiscore "Lookup", loot tracker
+     * auto-show, ...) into the Compose sidebar. With HEADLESS_CHROME the Swing sidebar is
+     * invisible, so without this those calls would silently no-op. Called once at boot.
+     */
+    fun installPanelOpenHook()
+    {
+        net.runelite.client.ui.ClientUI.externalPanelOpenListener =
+            java.util.function.Consumer { btn ->
+                if (navInitiated) return@Consumer
+                val tt = btn.tooltip
+                val key = if (tt == "Configuration") net.runelite.mp.ui.NAV_KEY_PLUGINS else identityKey(btn)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    net.runelite.mp.ui.WindowImpl.showPanel(key)
+                }
+            }
     }
 
     private fun identityKey(btn: NavigationButton): String =

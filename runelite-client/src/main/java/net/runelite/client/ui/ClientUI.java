@@ -168,7 +168,7 @@ public class ClientUI
 	 * When set, every call to {@link #openPanel(NavigationButton, boolean)} also fires
 	 * this listener. The runelite-mp Compose chrome registers one here at boot so
 	 * programmatic panel-opens (Hiscore "Lookup" from the player right-click menu,
-	 * loot tracker's auto-open on drop, etc.) can switch the *Compose* panel to the
+	 * loot tracker's auto-open on drop, etc.) can switch the Compose sidebar to the
 	 * matching tooltip instead of dead-ending at a hidden Swing tab.
 	 *
 	 * Volatile because the listener is set from the Compose-host thread but openPanel
@@ -1101,7 +1101,7 @@ public class ClientUI
 
 		// Forward the panel-open intent to whoever is listening. Used by runelite-mp to
 		// route Swing-only panel hooks (Hiscore "Lookup", Loot Tracker auto-show, etc.)
-		// to their Compose replacements when the AWT sidebar is suppressed via
+		// to the Compose-hosted panel when the AWT sidebar is suppressed via
 		// HEADLESS_CHROME. Fires before the Swing index/visibility swap so the listener
 		// can decide whether the Swing side should still react.
 		java.util.function.Consumer<NavigationButton> hook = externalPanelOpenListener;

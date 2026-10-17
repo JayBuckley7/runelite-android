@@ -91,10 +91,9 @@ object PluginBootstrap {
             // Hook in the Compose-side listeners for the desktop plugins' "open the
             // sidebar panel for X" callbacks. With HEADLESS_CHROME the Swing sidebar
             // is invisible, so without these the right-click "Lookup", loot-tracker's
-            // auto-show, etc. would silently no-op. See HiscoresBridge.installExternalHooks
-            // for the wiring.
-            try { net.runelite.mp.ui.panels.HiscoresBridge.installExternalHooks() }
-            catch (t: Throwable) { Log.w(TAG, "installExternalHooks failed", t) }
+            // auto-show, etc. would silently no-op. See NavBarBridge.installPanelOpenHook.
+            try { net.runelite.mp.ui.bridge.NavBarBridge.installPanelOpenHook() }
+            catch (t: Throwable) { Log.w(TAG, "installPanelOpenHook failed", t) }
         } catch (t: Throwable) {
             Log.e(TAG, "bootstrap failed", t)
             try {

@@ -11,12 +11,10 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.HapticFeedbackConstants
 import android.widget.EditText
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import net.runelite.client.ui.PluginPanel
 import net.runelite.client.util.SwingUtil
@@ -33,20 +31,8 @@ import javax.swing.text.JTextComponent
 @Composable
 internal fun PluginPanelHost(key: String)
 {
-    var androidView by remember(key) { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize()) {
-        if (PanelRegistry.hasPanel(key)) {
-            Text(
-                if (androidView) "Android view · switch to Original" else "Original · switch to Android view",
-                modifier = Modifier.fillMaxWidth().clickable { androidView = !androidView }.padding(8.dp),
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (androidView) PanelRegistry.render(key)
-            else key(key) {
-                AndroidView(factory = { SwingPanelView(it, key) }, modifier = Modifier.fillMaxSize())
-            }
-        }
+    key(key) {
+        AndroidView(factory = { SwingPanelView(it, key) }, modifier = Modifier.fillMaxSize())
     }
 }
 
