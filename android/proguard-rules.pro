@@ -62,6 +62,9 @@
 -keep class net.runelite.mp.util.** { *; }
 -keep class runelite.desugar.** { *; }
 
+# Downloaded hub plugins reach H2 through the parent loader after APK shrinking.
+-keep class org.h2.** { *; }
+
 # ----------------------------------------------------------------------------
 # RuneLite client + API + cache. Lombok generates equals/hashCode/toString
 # that reflect on field names, plugins reach into client internals via
