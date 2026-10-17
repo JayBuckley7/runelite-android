@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.launch
+import net.runelite.mp.update.UpdateState
 import net.runelite.mp.ui.AccountManagerOverlay
 
 // Fixed logical height; the width is derived from the device aspect ratio so the AWT
@@ -130,8 +132,11 @@ fun AndroidApp() {
             launcher.credentials = selection?.credentials
             launcher.accountFile = selection?.credentialsFile
         }
-        launcher.launch(scope)
         true
+    }
+    // Updates are offered before anything loads; the boot waits for the answer.
+    LaunchedEffect(Unit) {
+        net.runelite.mp.update.UpdateGate.checkThenBoot(scope) { launcher.launch(scope) }
     }
 
     // Once booted, swallow hardware/gesture back so an accidental press at the edge of
@@ -614,17 +619,32 @@ private val DarkerGray = Color(0xFF1E1E1E)            // DARKER_GRAY_COLOR
 @Composable
 private fun ComposeSplash() {
     val logo = remember { loadSplashLogo() }
-    var visible by remember { mutableStateOf(true) }
-    var actionText by remember { mutableStateOf("Loading…") }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val gate = net.runelite.mp.update.UpdateGate
+    val update = gate.state
+    var bootDone by remember { mutableStateOf(false) }
+    var actionText by remember { mutableStateOf("Checking for updates…") }
     var subActionText by remember { mutableStateOf("") }
     var progressText by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf(0f) }
+    var contributors by remember { mutableStateOf<List<String>>(emptyList()) }
 
     LaunchedEffect(Unit) {
+        contributors = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            net.runelite.mp.update.UpdateChecker.contributors(context)
+        }
+    }
+
+    // Boot starts once UpdateGate's check answers (or times out); only then does the AWT
+    // splash have anything to mirror, and only then does the safety timeout start.
+    LaunchedEffect(gate.bootStarted) {
+        if (!gate.bootStarted) return@LaunchedEffect
+        actionText = "Loading…"
         val started = System.currentTimeMillis()
         var hasBeenOpen = false
         var lastSeen = ""
-        while (visible) {
+        while (!bootDone) {
             withFrameNanos { }
             val open = try {
                 net.runelite.client.ui.SplashScreen.isOpen()
@@ -649,15 +669,17 @@ private fun ComposeSplash() {
                 }
             }
             // Dismiss once the AWT splash has come and gone, or after a safety timeout.
-            if (hasBeenOpen && !open) visible = false
-            if (System.currentTimeMillis() - started > 30_000) visible = false
+            if (hasBeenOpen && !open) bootDone = true
+            if (System.currentTimeMillis() - started > 30_000) bootDone = true
         }
         // Whichever path dismissed us, signal the Compose chrome it's safe to
         // render its sidebar/icon strip now.
         net.runelite.mp.ui.WindowImpl.bootComplete.value = true
+        gate.onBootComplete()
     }
 
-    if (!visible) return
+    // An update the user started keeps the splash up; an ignored prompt left with boot.
+    if (bootDone && update == UpdateState.None) return
 
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize().background(DarkerGray),
@@ -666,9 +688,28 @@ private fun ComposeSplash() {
         // Scale to whatever we're given rather than assuming a tall portrait window. The
         // game runs landscape, where height is the tight axis and a fixed 280.dp logo left
         // no room for the text and bar beneath it — so take a fraction of each axis and
-        // use the smaller, which keeps the mark square and always on screen.
-        val logoSize = minOf(maxWidth * 0.42f, maxHeight * 0.40f).coerceAtMost(280.dp)
+        // use the smaller, which keeps the mark square and always on screen. The update
+        // card needs some of that height, so the logo shrinks while it's showing.
+        val logoShare = if (update == UpdateState.None) 0.40f else 0.26f
+        val logoSize = minOf(maxWidth * 0.42f, maxHeight * logoShare).coerceAtMost(280.dp)
         val gap = minOf(maxHeight * 0.04f, 28.dp)
+
+        // Footer: this build's version and credits. Bottom-left, clear of the Accounts
+        // button (bottom-center) and the update card.
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            androidx.compose.material3.Text(
+                text = "RuneLite Android ${net.runelite.mp.update.UpdateChecker.currentTag}",
+                color = BrandOrange,
+                fontSize = 11.sp,
+            )
+            androidx.compose.material3.Text(
+                text = (listOf("RuneLite") + contributors).joinToString(" · "),
+                color = BrandOrange,
+                fontSize = 11.sp,
+            )
+        }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -723,6 +764,103 @@ private fun ComposeSplash() {
                         color = Color.White,
                         fontSize = 12.sp,
                         modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+            val pending = update
+            if (pending != UpdateState.None) {
+                Spacer(Modifier.height(gap))
+                UpdateCard(
+                    state = pending,
+                    onUpdate = { release ->
+                        gate.state = UpdateState.Downloading(release, 0f)
+                        scope.launch {
+                            try {
+                                val apk = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    net.runelite.mp.update.UpdateChecker.download(context, release) { p ->
+                                        scope.launch { gate.state = UpdateState.Downloading(release, p) }
+                                    }
+                                }
+                                gate.state = UpdateState.Ready(release, apk)
+                                net.runelite.mp.update.UpdateChecker.install(context, apk)
+                            } catch (t: Throwable) {
+                                android.util.Log.w("ComposeSplash", "update download failed", t)
+                                gate.state = UpdateState.Failed(release, t.message ?: t.javaClass.simpleName)
+                            }
+                        }
+                    },
+                    onInstall = { apk -> net.runelite.mp.update.UpdateChecker.install(context, apk) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateCard(
+    state: UpdateState,
+    onUpdate: (net.runelite.mp.update.UpdateChecker.Release) -> Unit,
+    onInstall: (java.io.File) -> Unit,
+) {
+    val release = when (state) {
+        is UpdateState.Available -> state.release
+        is UpdateState.Downloading -> state.release
+        is UpdateState.Ready -> state.release
+        is UpdateState.Failed -> state.release
+        UpdateState.None -> return
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth(0.6f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF2B2B2B))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        androidx.compose.material3.Text(
+            text = "Update available: ${net.runelite.mp.update.UpdateChecker.currentTag} → ${release.tag}",
+            color = Color.White,
+            fontSize = 14.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Spacer(Modifier.height(8.dp))
+        when (state) {
+            is UpdateState.Downloading -> {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(BrandOrangeBg),
+                ) {
+                    if (state.progress >= 0f) Box(
+                        Modifier.fillMaxWidth(state.progress.coerceIn(0f, 1f)).fillMaxHeight().background(BrandOrange),
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                androidx.compose.material3.Text(
+                    text = if (state.progress >= 0f) "Downloading… ${(state.progress * 100).toInt()}%" else "Downloading…",
+                    color = Color(0xFFE0E0E0),
+                    fontSize = 12.sp,
+                )
+            }
+            else -> {
+                if (state is UpdateState.Failed) {
+                    androidx.compose.material3.Text(
+                        text = "Download failed: ${state.message}",
+                        color = Color(0xFFFF8A80),
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+                androidx.compose.material3.Button(
+                    onClick = { if (state is UpdateState.Ready) onInstall(state.apk) else onUpdate(release) },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                ) {
+                    androidx.compose.material3.Text(
+                        when (state) {
+                            is UpdateState.Ready -> "Install"
+                            is UpdateState.Failed -> "Retry"
+                            else -> "Update"
+                        },
+                        color = Color.White,
                     )
                 }
             }
