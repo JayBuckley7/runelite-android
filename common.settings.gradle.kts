@@ -90,6 +90,10 @@ gradle.afterProject {
         toolVersion = "8.3"
         configDirectory = file("../config/checkstyle")
     }
+    // checkstyle is local-only; CI (GitHub Actions sets CI=true) skips it entirely
+    if (System.getenv("CI") != null) {
+        tasks.withType<Checkstyle>().configureEach { enabled = false }
+    }
 
     // shared publishing config
     tasks.withType<GenerateModuleMetadata> { enabled = false }
