@@ -57,8 +57,8 @@ public class BoxLayout implements LayoutManager2, Serializable {
     public void layoutContainer(Container t) {
         Insets ins = t.getInsets();
         int x = ins.left, y = ins.top;
-        int innerH = t.getHeight() - ins.top - ins.bottom;
-        int innerW = t.getWidth() - ins.left - ins.right;
+        int innerH = Math.max(0, t.getHeight() - ins.top - ins.bottom);
+        int innerW = Math.max(0, t.getWidth() - ins.left - ins.right);
         if (isXAxis()) {
             for (Component c : t.getComponents()) {
                 if (!c.isVisible()) continue;
@@ -70,6 +70,8 @@ public class BoxLayout implements LayoutManager2, Serializable {
         } else {
             for (Component c : t.getComponents()) {
                 if (!c.isVisible()) continue;
+                // Wrapped controls must measure their height at the assigned width.
+                c.setSize(innerW, Math.max(0, c.getHeight()));
                 Dimension d = c.getPreferredSize();
                 int h = d.height;
                 c.setBounds(x, y, innerW, h);

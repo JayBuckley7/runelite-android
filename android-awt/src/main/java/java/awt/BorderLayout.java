@@ -91,23 +91,25 @@ public class BorderLayout implements LayoutManager2, Serializable {
         int right = target.getWidth() - ins.right;
 
         if (north != null && north.isVisible()) {
+            north.setSize(Math.max(0, right - left), Math.max(0, north.getHeight()));
             int h = north.getPreferredSize().height;
-            north.setBounds(left, top, right - left, h);
+            north.setBounds(left, top, Math.max(0, right - left), h);
             top += h + vgap;
         }
         if (south != null && south.isVisible()) {
+            south.setSize(Math.max(0, right - left), Math.max(0, south.getHeight()));
             int h = south.getPreferredSize().height;
-            south.setBounds(left, bottom - h, right - left, h);
+            south.setBounds(left, bottom - h, Math.max(0, right - left), h);
             bottom -= h + vgap;
         }
         if (east != null && east.isVisible()) {
             int w = east.getPreferredSize().width;
-            east.setBounds(right - w, top, w, bottom - top);
+            east.setBounds(right - w, top, w, Math.max(0, bottom - top));
             right -= w + hgap;
         }
         if (west != null && west.isVisible()) {
             int w = west.getPreferredSize().width;
-            west.setBounds(left, top, w, bottom - top);
+            west.setBounds(left, top, w, Math.max(0, bottom - top));
             left += w + hgap;
         }
         if (center != null && center.isVisible()) {
