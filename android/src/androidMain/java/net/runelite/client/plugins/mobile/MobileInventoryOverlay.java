@@ -19,11 +19,13 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 /** Composites independently sized panels after widget overlays and before menus. */
 public final class MobileInventoryOverlay extends Overlay
 {
-    private static final String[] KEYS = {"inventoryScale", "chatScale", "minimapScale"};
+    private static final String[] KEYS = {"inventoryScale", "chatScale", "minimapScale", "staticTabsScale", "movableTabsScale"};
     private static final int[][] IDS = {
         {InterfaceID.ToplevelOsrsStretch.SIDE_MENU, InterfaceID.ToplevelPreEoc.SIDE_CONTAINER},
         {InterfaceID.ToplevelOsrsStretch.CHAT_CONTAINER, InterfaceID.ToplevelPreEoc.CHAT_CONTAINER},
-        {InterfaceID.ToplevelOsrsStretch.MAP_CONTAINER, InterfaceID.ToplevelPreEoc.MAP_CONTAINER}
+        {InterfaceID.ToplevelOsrsStretch.MAP_CONTAINER, InterfaceID.ToplevelPreEoc.MAP_CONTAINER},
+        {InterfaceID.ToplevelPreEoc.SIDE_STATIC_LAYER},
+        {InterfaceID.ToplevelPreEoc.SIDE_MOVABLE_LAYER}
     };
     private final Client client;
     private final MobileConfig config;
@@ -87,7 +89,7 @@ public final class MobileInventoryOverlay extends Overlay
         for (Panel panel : displayed) if (widget(panel.id) != null) visible.add(panel);
         displayed = visible;
         Resize current = gesture;
-        if (current != null && widget(current.panel.id) == null) gesture = null;
+        if (current != null && widget(current.panel.id) == null) current.end();
     }
     @Override
     public Dimension render(Graphics2D graphics)
@@ -96,7 +98,7 @@ public final class MobileInventoryOverlay extends Overlay
         if (!client.isGpu() || !client.isResized()) return null;
         BufferProvider buffer = client.getBufferProvider();
         int w = buffer.getWidth(), h = buffer.getHeight();
-        int[] scales = {config.inventoryScale(), config.chatScale(), config.minimapScale()};
+        int[] scales = {config.inventoryScale(), config.chatScale(), config.minimapScale(), config.staticTabsScale(), config.movableTabsScale()};
         Resize current = gesture;
         if (current != null) scales[current.panel.id] = current.percent;
         List<Panel> panels = new ArrayList<>();
@@ -106,15 +108,7 @@ public final class MobileInventoryOverlay extends Overlay
             if (widget == null) continue;
             Rectangle bounds = widget.getBounds();
             if (bounds.width <= 0 || bounds.height <= 0 || !new Rectangle(0, 0, w, h).contains(bounds)) continue;
-            if (id == 0 && widget.getId() == InterfaceID.ToplevelPreEoc.SIDE_CONTAINER)
-            {
-                Rectangle first = visibleBounds(InterfaceID.ToplevelPreEoc.SIDE_STATIC_LAYER, w, h);
-                Rectangle second = visibleBounds(InterfaceID.ToplevelPreEoc.SIDE_MOVABLE_LAYER, w, h);
-                InventoryScaleGeometry[] group = InventoryScaleGeometry.modernGroup(bounds, first, second, scales[id], w, h);
-                for (int part = 0; part < group.length; part++)
-                    if (group[part] != null) panels.add(new Panel(id, scales[id], group[part], this, part == 0 ? 0 : part + 2));
-            }
-            else panels.add(new Panel(id, scales[id], new InventoryScaleGeometry(bounds, scales[id], w, h), this, id));
+            panels.add(new Panel(id, scales[id], new InventoryScaleGeometry(bounds, scales[id], w, h), this, id));
         }
         // Capture every piece before clearing any source, including detached tab rows.
         for (Panel panel : panels)
@@ -128,18 +122,15 @@ public final class MobileInventoryOverlay extends Overlay
         displayed = panels;
         return null;
     }
-    private Rectangle visibleBounds(int widgetId, int width, int height)
-    {
-        Widget widget = client.getWidget(widgetId);
-        if (widget == null || widget.isHidden()) return null;
-        Rectangle bounds = widget.getBounds();
-        return bounds.width > 0 && bounds.height > 0 && new Rectangle(0, 0, width, height).contains(bounds) ? bounds : null;
-    }
     private Widget widget(int id)
     {
-        Widget panel = client.getWidget(IDS[id][0]);
-        if (panel == null || panel.isHidden()) panel = client.getWidget(IDS[id][1]);
-        return panel == null || panel.isHidden() ? null : panel;
+        // Each piece has its own visibility. Tab rows remain scalable when the inventory is closed.
+        for (int widgetId : IDS[id])
+        {
+            Widget panel = client.getWidget(widgetId);
+            if (panel != null && !panel.isHidden()) return panel;
+        }
+        return null;
     }
     private static Panel hit(int x, int y, int canvasWidth, int canvasHeight)
     {
@@ -164,7 +155,7 @@ public final class MobileInventoryOverlay extends Overlay
         return resize;
     }
     /** Canvas/stretched coordinates in, original canvas coordinates out. */
-    public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight, boolean altHeld)
+    public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight)
     {
         Panel panel = hit(x, y, canvasWidth, canvasHeight);
         if (panel == null)
@@ -177,16 +168,6 @@ public final class MobileInventoryOverlay extends Overlay
             return new int[]{x, y};
         }
         InventoryScaleGeometry g = panel.geometry;
-        // Alt-dragging either attached tab row moves the inventory anchor, keeping the group together.
-        if (altHeld && panel.bufferIndex >= 3)
-            for (Panel body : displayed)
-                if (body.id == 0 && body.bufferIndex == 0)
-                {
-                    int px = (int)((long)x * g.width / canvasWidth) - g.destination.x;
-                    int py = (int)((long)y * g.height / canvasHeight) - g.destination.y;
-                    return new int[]{(int)((long)(body.geometry.source.x + px * body.geometry.source.width / g.destination.width) * canvasWidth / g.width),
-                        (int)((long)(body.geometry.source.y + py * Math.min(g.source.height, body.geometry.source.height) / g.destination.height) * canvasHeight / g.height)};
-                }
         int px = (int)((long)x * g.width / canvasWidth), py = (int)((long)y * g.height / canvasHeight);
         return new int[]{(int)((long)g.sourceX(px) * canvasWidth / g.width),
             (int)((long)g.sourceY(py) * canvasHeight / g.height)};

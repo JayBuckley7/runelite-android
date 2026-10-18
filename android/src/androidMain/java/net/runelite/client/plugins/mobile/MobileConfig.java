@@ -23,6 +23,12 @@ public interface MobileConfig extends Config
 	@ConfigItem(keyName = "minimapScale", name = "Minimap scale", description = "Saved pinch size", hidden = true)
 	default int minimapScale() { return 100; }
 
+	@ConfigItem(keyName = "staticTabsScale", name = "Static tabs scale", description = "Saved pinch size", hidden = true)
+	default int staticTabsScale() { return 100; }
+
+	@ConfigItem(keyName = "movableTabsScale", name = "Movable tabs scale", description = "Saved pinch size", hidden = true)
+	default int movableTabsScale() { return 100; }
+
 	// No Lombok here: SwingPanelHost (Kotlin) reads getScale(), and Kotlin compiles
 	// against these sources before Lombok has generated anything.
 	enum SidebarScale

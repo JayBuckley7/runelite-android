@@ -45,28 +45,6 @@ public final class VerifyInventoryScale {
                 if (g.destination.contains(x, y)) expected = original[g.sourceY(y) * 100 + g.sourceX(x)];
             check(pixels[y * 100 + x] == expected, "overlapping panels contaminated their pixel sources");
         }
-        for (boolean singleRow : new boolean[]{false, true}) for (int scale : new int[]{100, 150, 200}) {
-            Rectangle body = new Rectangle(220, 220, 80, 140);
-            Rectangle top = new Rectangle(220, 540, 80, 20);
-            Rectangle bottom = singleRow ? new Rectangle(140, 540, 80, 20) : new Rectangle(220, 560, 80, 20);
-            InventoryScaleGeometry[] group = InventoryScaleGeometry.modernGroup(body, top, bottom, scale, 320, 600);
-            Rectangle union = new Rectangle(group[0].destination);
-            for (InventoryScaleGeometry g : group) {
-                union.add(g.destination);
-                check(new Rectangle(0, 0, 320, 600).contains(g.destination), "modern piece offscreen");
-                int[] data = new int[320 * 600];
-                for (int n = 0; n < data.length; n++) data[n] = n + 1;
-                g.composite(data, new int[g.source.width * g.source.height]);
-                for (int y = g.destination.y; y < g.destination.y + g.destination.height; y++)
-                    for (int x = g.destination.x; x < g.destination.x + g.destination.width; x++)
-                        check(data[y * 320 + x] == g.sourceY(y) * 320 + g.sourceX(x) + 1, "modern tab click/pixel mismatch");
-            }
-            int bodyBottom = group[0].destination.y + group[0].destination.height;
-            check(Math.min(group[1].destination.y, group[2].destination.y) == bodyBottom, "tabs detached from inventory");
-            if (singleRow) check(group[1].destination.y == group[2].destination.y, "horizontal tabs stacked");
-            else check(group[1].destination.y + group[1].destination.height == group[2].destination.y, "tab rows detached");
-            check(union.height <= 360, "detached source gap was scaled");
-        }
-        System.out.println("PASS: 12 scale/anchor combinations, full pixel/input agreement, unrelated UI preservation, 100% identity small viewport fit, and modern inventory/tab grouping");
+        System.out.println("PASS: 12 scale/anchor combinations, full pixel/input agreement, unrelated UI preservation, 100% identity small viewport fit");
     }
 }
