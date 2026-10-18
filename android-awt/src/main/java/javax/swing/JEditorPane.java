@@ -29,6 +29,27 @@ public class JEditorPane extends JTextComponent {
     public void removeHyperlinkListener(HyperlinkListener listener) {}
     public void fireHyperlinkUpdate(javax.swing.event.HyperlinkEvent e) {}
 
+    private boolean html() { return "text/html".equalsIgnoreCase(contentType); }
+    @Override public java.awt.Dimension getPreferredSize() {
+        if (isPreferredSizeSet()) return super.getPreferredSize();
+        if (!html()) return plainPreferredSize(true, true, 8);
+        java.awt.Insets in = getInsets();
+        HtmlTextRenderer.Layout layout = HtmlTextRenderer.measure(getText(), getFontMetrics(getFont()), textWidth());
+        return new java.awt.Dimension(layout.width + in.left + in.right, layout.height + in.top + in.bottom);
+    }
+    @Override protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        if (!html()) { paintPlainText(g, true, true, 8); return; }
+        java.awt.Graphics copy = g.create();
+        try {
+            java.awt.Insets in = getInsets();
+            copy.clipRect(in.left, in.top, textWidth(), Math.max(0, getHeight() - in.top - in.bottom));
+            copy.setFont(getFont());
+            java.awt.FontMetrics fm = getFontMetrics(getFont());
+            HtmlTextRenderer.paint(copy, HtmlTextRenderer.measure(getText(), fm, textWidth()), fm, in.left, in.top, getForeground());
+        } finally { copy.dispose(); }
+    }
+
     public EditorKit getEditorKitForContentType(String type) { return null; }
     public void setEditorKitForContentType(String type, EditorKit k) {}
     public static EditorKit createEditorKitForContentType(String type) { return null; }
