@@ -54,7 +54,6 @@ public class MobilePlugin extends Plugin
 		if (MobileConfig.GROUP.equals(event.getGroup()))
 		{
 			MobileDisplaySettings.setPortrait(config.forceVertical());
-			MobileInventoryOverlay.clear();
 		}
 	}
 

@@ -26,6 +26,25 @@ public final class VerifyInventoryScale {
         }
         InventoryScaleGeometry small = new InventoryScaleGeometry(new Rectangle(5, 5, 80, 140), 200, 100, 150);
         check(new Rectangle(0, 0, 100, 150).contains(small.destination), "small viewport overflow");
+        // A later panel's source overlaps an earlier panel's enlarged destination.
+        // Capturing every source first prevents that later panel sampling scaled pixels.
+        InventoryScaleGeometry[] panels = {
+            new InventoryScaleGeometry(new Rectangle(60, 60, 30, 30), 200, 100, 100),
+            new InventoryScaleGeometry(new Rectangle(35, 35, 20, 20), 150, 100, 100)
+        };
+        int[] pixels = new int[10000];
+        for (int i = 0; i < pixels.length; i++) pixels[i] = i + 1;
+        int[] original = pixels.clone();
+        int[][] snapshots = {new int[900], new int[400]};
+        for (int i = 0; i < 2; i++) panels[i].capture(pixels, snapshots[i]);
+        for (InventoryScaleGeometry g : panels) g.clearSource(pixels);
+        for (int i = 0; i < 2; i++) panels[i].paint(pixels, snapshots[i]);
+        for (int y = 0; y < 100; y++) for (int x = 0; x < 100; x++) {
+            int expected = original[y * 100 + x];
+            for (InventoryScaleGeometry g : panels)
+                if (g.destination.contains(x, y)) expected = original[g.sourceY(y) * 100 + g.sourceX(x)];
+            check(pixels[y * 100 + x] == expected, "overlapping panels contaminated their pixel sources");
+        }
         System.out.println("PASS: 12 scale/anchor combinations, full pixel/input agreement, unrelated UI preservation, 100% identity and small viewport fit");
     }
 }

@@ -3,75 +3,157 @@ package net.runelite.client.plugins.mobile;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.util.ArrayList;
+import java.util.List;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.BufferProvider;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
-
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
-/** Runs after widget overlays, before menus: attached status bars scale with the inventory. */
+/** Composites independently sized panels after widget overlays and before menus. */
 public final class MobileInventoryOverlay extends Overlay
 {
-	private final Client client;
-	private final MobileConfig config;
-	private int[] scratch = new int[0];
-	private static volatile InventoryScaleGeometry displayed;
-	@Inject
-	public MobileInventoryOverlay(Client client, MobileConfig config)
-	{
-		this.client = client;
-		this.config = config;
-		setPosition(OverlayPosition.DYNAMIC);
-		setLayer(OverlayLayer.ABOVE_WIDGETS);
-		setPriority(10000f);
+    private static final String[] KEYS = {"inventoryScale", "chatScale", "minimapScale"};
+    private static final int[][] IDS = {
+        {InterfaceID.ToplevelOsrsStretch.SIDE_MENU, InterfaceID.ToplevelPreEoc.SIDE_CONTAINER},
+        {InterfaceID.ToplevelOsrsStretch.CHAT_CONTAINER, InterfaceID.ToplevelPreEoc.CHAT_CONTAINER},
+        {InterfaceID.ToplevelOsrsStretch.MAP_CONTAINER, InterfaceID.ToplevelPreEoc.MAP_CONTAINER}
+    };
+    private final Client client;
+    private final MobileConfig config;
+    private final ClientThread clientThread;
+    private final ConfigManager configManager;
+    private final int[][] scratch = {new int[0], new int[0], new int[0]};
+    private static volatile List<Panel> displayed = java.util.Collections.emptyList();
+    private static volatile Resize gesture;
 
-	}
-	public static void clear() { displayed = null; }
-	public void validateVisibility()
-	{
-		Widget panel = inventoryPanel();
-		if (config.inventoryScale() <= 100 || !client.isGpu() || !client.isResized()
-			|| panel == null) clear();
-	}
-	@Override
-	public Dimension render(Graphics2D graphics)
-	{
-		validateVisibility();
-		Widget panel = inventoryPanel();
-		if (config.inventoryScale() <= 100 || !client.isGpu() || !client.isResized()
-			|| panel == null) return null;
-		BufferProvider buffer = client.getBufferProvider();
-		Rectangle bounds = panel.getBounds();
-		int w = buffer.getWidth(), h = buffer.getHeight();
-		// Refuse partial/offscreen panels rather than sample unrelated UI or invalid memory.
-		if (bounds.width <= 0 || bounds.height <= 0 || !new Rectangle(0, 0, w, h).contains(bounds))
-		{ clear(); return null; }
-		InventoryScaleGeometry transform = new InventoryScaleGeometry(bounds, config.inventoryScale(), w, h);
-		int count = bounds.width * bounds.height;
-		if (scratch.length < count) scratch = new int[count];
-		transform.composite(buffer.getPixels(), scratch);
-		displayed = transform;
-		return null;
-	}
-	private Widget inventoryPanel()
-	{
-		Widget panel = client.getWidget(InterfaceID.ToplevelOsrsStretch.SIDE_MENU);
-		if (panel == null || panel.isHidden()) panel = client.getWidget(InterfaceID.ToplevelPreEoc.SIDE_CONTAINER);
-		return panel == null || panel.isHidden() ? null : panel;
-	}
-	/** Canvas/stretched coordinates in, original canvas coordinates out. */
-	public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight)
-	{
-		InventoryScaleGeometry g = displayed;
-		if (g == null || canvasWidth <= 0 || canvasHeight <= 0
-			|| MobileHitTest.isMenuAt(x, y) || MobileHitTest.isMenuOptionAt(x, y)) return new int[]{x, y};
-		int px = (int) ((long) x * g.width / canvasWidth), py = (int) ((long) y * g.height / canvasHeight);
-		if (!g.destination.contains(px, py)) return new int[]{x, y};
-		return new int[]{(int) ((long) g.sourceX(px) * canvasWidth / g.width),
-			(int) ((long) g.sourceY(py) * canvasHeight / g.height)};
-	}
+    private static final class Panel
+    {
+        final int id, percent;
+        final InventoryScaleGeometry geometry;
+        final MobileInventoryOverlay owner;
+        Panel(int id, int percent, InventoryScaleGeometry geometry, MobileInventoryOverlay owner)
+        { this.id = id; this.percent = percent; this.geometry = geometry; this.owner = owner; }
+    }
+
+    /** A gesture latches one panel; moving fingers never switches the target. */
+    public static final class Resize
+    {
+        private final Panel panel;
+        private volatile int percent;
+        private boolean ended;
+        private Resize(Panel panel) { this.panel = panel; percent = panel.percent; }
+        public void update(float ratio)
+        {
+            if (!ended && gesture == this && Float.isFinite(ratio))
+                percent = Math.max(100, Math.min(200, Math.round(panel.percent * ratio)));
+        }
+        public void end()
+        {
+            if (ended) return;
+            ended = true;
+            if (gesture != this) return;
+            final int saved = percent;
+            panel.owner.clientThread.invokeLater(() -> {
+                panel.owner.configManager.setConfiguration(MobileConfig.GROUP, KEYS[panel.id], saved);
+                if (gesture == this) gesture = null;
+            });
+        }
+    }
+
+    @Inject
+    public MobileInventoryOverlay(Client client, MobileConfig config, ClientThread clientThread, ConfigManager configManager)
+    {
+        this.client = client;
+        this.config = config;
+        this.clientThread = clientThread;
+        this.configManager = configManager;
+        setPosition(OverlayPosition.DYNAMIC);
+        setLayer(OverlayLayer.ABOVE_WIDGETS);
+        setPriority(10000f);
+    }
+    public static void clear() { displayed = java.util.Collections.emptyList(); gesture = null; }
+    public void validateVisibility()
+    {
+        if (!client.isGpu() || !client.isResized()) { clear(); return; }
+        // Remove hidden panels before input can use the preceding frame's geometry.
+        List<Panel> visible = new ArrayList<>();
+        for (Panel panel : displayed) if (widget(panel.id) != null) visible.add(panel);
+        displayed = visible;
+        Resize current = gesture;
+        if (current != null && widget(current.panel.id) == null) gesture = null;
+    }
+    @Override
+    public Dimension render(Graphics2D graphics)
+    {
+        validateVisibility();
+        if (!client.isGpu() || !client.isResized()) return null;
+        BufferProvider buffer = client.getBufferProvider();
+        int w = buffer.getWidth(), h = buffer.getHeight();
+        int[] scales = {config.inventoryScale(), config.chatScale(), config.minimapScale()};
+        Resize current = gesture;
+        if (current != null) scales[current.panel.id] = current.percent;
+        List<Panel> panels = new ArrayList<>();
+        for (int id = 0; id < IDS.length; id++)
+        {
+            Widget widget = widget(id);
+            if (widget == null) continue;
+            Rectangle bounds = widget.getBounds();
+            if (bounds.width <= 0 || bounds.height <= 0 || !new Rectangle(0, 0, w, h).contains(bounds)) continue;
+            InventoryScaleGeometry g = new InventoryScaleGeometry(bounds, scales[id], w, h);
+            panels.add(new Panel(id, scales[id], g, this));
+            int count = bounds.width * bounds.height;
+            if (scratch[id].length < count) scratch[id] = new int[count];
+            // Capture ALL sources before modifying any region, including overlapping destinations.
+            g.capture(buffer.getPixels(), scratch[id]);
+        }
+        for (Panel panel : panels) panel.geometry.clearSource(buffer.getPixels());
+        for (Panel panel : panels) panel.geometry.paint(buffer.getPixels(), scratch[panel.id]);
+        displayed = panels;
+        return null;
+    }
+    private Widget widget(int id)
+    {
+        Widget panel = client.getWidget(IDS[id][0]);
+        if (panel == null || panel.isHidden()) panel = client.getWidget(IDS[id][1]);
+        return panel == null || panel.isHidden() ? null : panel;
+    }
+    private static Panel hit(int x, int y, int canvasWidth, int canvasHeight)
+    {
+        if (canvasWidth <= 0 || canvasHeight <= 0 || MobileHitTest.isMenuAt(x, y)
+            || MobileHitTest.isMenuOptionAt(x, y)) return null;
+        List<Panel> panels = displayed;
+        for (int i = panels.size() - 1; i >= 0; i--)
+        {
+            Panel panel = panels.get(i);
+            InventoryScaleGeometry g = panel.geometry;
+            if (g.destination.contains((int)((long)x * g.width / canvasWidth),
+                (int)((long)y * g.height / canvasHeight))) return panel;
+        }
+        return null;
+    }
+    public static Resize beginResize(int x, int y, int canvasWidth, int canvasHeight)
+    {
+        Panel panel = hit(x, y, canvasWidth, canvasHeight);
+        if (panel == null) return null;
+        Resize resize = new Resize(panel);
+        gesture = resize;
+        return resize;
+    }
+    /** Canvas/stretched coordinates in, original canvas coordinates out. */
+    public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight)
+    {
+        Panel panel = hit(x, y, canvasWidth, canvasHeight);
+        if (panel == null) return new int[]{x, y};
+        InventoryScaleGeometry g = panel.geometry;
+        int px = (int)((long)x * g.width / canvasWidth), py = (int)((long)y * g.height / canvasHeight);
+        return new int[]{(int)((long)g.sourceX(px) * canvasWidth / g.width),
+            (int)((long)g.sourceY(py) * canvasHeight / g.height)};
+    }
 }

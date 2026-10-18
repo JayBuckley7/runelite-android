@@ -414,6 +414,7 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                     // Park the cursor at the down location so the next press is at the right spot.
                     dispatchMove(down.position, boxSize)
 
+                    try {
                     while (true) {
                         // Until we've committed to a gesture, race the next pointer event
                         // against the long-press deadline. Compose only emits events on touch
@@ -479,7 +480,7 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                             session?.end()
                             session = null
                             fired = true
-                            pinch = PinchSession(pressed[0].position, pressed[1].position)
+                            pinch = PinchSession(pressed[0].position, pressed[1].position, boxSize)
                             pressed.forEach { it.consume() }
                             continue
                         }
@@ -527,11 +528,11 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                         change.consume()
                     }
 
-                    if (pinch != null) {
-                        pinch!!.end()
-                    } else if (session != null) {
-                        session.end()
-                    } else if (!fired) {
+                    } finally {
+                        pinch?.end()
+                        session?.end()
+                    }
+                    if (!fired) {
                         // Quick tap with little movement → left click in normal mode.
                         // When Alt is engaged we're in OverlayRenderer's "managing"
                         // mode and there's no useful left-click action over the
@@ -1036,6 +1037,7 @@ private fun composeToWindow(
     boxSize: IntSize,
     window: java.awt.Window,
     clamp: Boolean = false,
+    mapInterfaces: Boolean = true,
 ): Pair<Int, Int>? {
     if (boxSize.width <= 0 || boxSize.height <= 0) return null
     val winW = window.width
@@ -1057,7 +1059,7 @@ private fun composeToWindow(
     val cy = if (clamp) y.coerceIn(0, winH - 1) else y
     val canvas = java.awt.Canvas.latest()
     val bounds = canvas?.boundsInWindow
-    if (bounds != null && bounds.contains(cx, cy)) {
+    if (mapInterfaces && bounds != null && bounds.contains(cx, cy)) {
         val mapped = net.runelite.client.plugins.mobile.MobileInventoryOverlay.mapInput(
             cx - bounds.x, cy - bounds.y, bounds.width, bounds.height)
         return mapped[0] + bounds.x to mapped[1] + bounds.y
@@ -1255,7 +1257,10 @@ private class ScrollDragSession(
  *
  *  Sign convention: pinch OUT (fingers apart) → negative rotation = wheel-up = OSRS
  *  zoom in. Pinch IN (fingers together) → positive rotation = wheel-down = zoom out. */
-private class PinchSession(initialA: Offset, initialB: Offset) {
+private class PinchSession(initialA: Offset, initialB: Offset, boxSize: IntSize) {
+    private val editInterface = net.runelite.mp.ui.bridge.ModifierState.altActive.value
+    private val initialDistance = distance(initialA, initialB).coerceAtLeast(1f)
+    private val resize = if (editInterface) beginInterfaceResize((initialA + initialB) / 2f, boxSize) else null
     private var lastDistance = distance(initialA, initialB)
     private var accumulated = 0f
     private var ended = false
@@ -1263,6 +1268,10 @@ private class PinchSession(initialA: Offset, initialB: Offset) {
     fun update(a: Offset, b: Offset, boxSize: IntSize) {
         if (ended) return
         val newDist = distance(a, b)
+        if (editInterface) {
+            resize?.update(newDist / initialDistance)
+            return
+        }
         val delta = newDist - lastDistance
         lastDistance = newDist
         // pinch OUT = positive delta = wheel up (negative rotation).
@@ -1275,7 +1284,7 @@ private class PinchSession(initialA: Offset, initialB: Offset) {
         }
     }
 
-    fun end() { ended = true }
+    fun end() { if (!ended) { ended = true; resize?.end() } }
 
     companion object {
         /** Pixels of pinch-distance change per wheel notch. Tuned so a "comfortable"
@@ -1289,6 +1298,16 @@ private class PinchSession(initialA: Offset, initialB: Offset) {
             return kotlin.math.sqrt(dx * dx + dy * dy)
         }
     }
+}
+
+/** Use displayed panel coordinates, before the normal inverse touch transform. */
+private fun beginInterfaceResize(pos: Offset, boxSize: IntSize): net.runelite.client.plugins.mobile.MobileInventoryOverlay.Resize? {
+    val window = java.awt.Window.primaryFrame() ?: return null
+    val (x, y) = composeToWindow(pos, boxSize, window, mapInterfaces = false) ?: return null
+    val bounds = java.awt.Canvas.latest()?.boundsInWindow ?: return null
+    if (!bounds.contains(x, y)) return null
+    return net.runelite.client.plugins.mobile.MobileInventoryOverlay.beginResize(
+        x - bounds.x, y - bounds.y, bounds.width, bounds.height)
 }
 
 /** Send one MouseWheelEvent at the given Compose position. Targets the first Canvas in

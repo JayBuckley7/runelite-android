@@ -3,8 +3,6 @@ package net.runelite.client.plugins.mobile;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
-import net.runelite.client.config.Range;
-import net.runelite.client.config.Units;
 
 @ConfigGroup(MobileConfig.GROUP)
 public interface MobileConfig extends Config
@@ -16,11 +14,14 @@ public interface MobileConfig extends Config
 		description = "Keep the app in portrait orientation. Disable to return to landscape.", position = 2)
 	default boolean forceVertical() { return false; }
 
-	@Range(min = 100, max = 200)
-	@Units(Units.PERCENT)
-	@ConfigItem(keyName = "inventoryScale", name = "Inventory scale",
-		description = "Enlarge only the open inventory panel in resizable mode with GPU or 117 HD. 100% restores normal size.", position = 3)
+	@ConfigItem(keyName = "inventoryScale", name = "Inventory scale", description = "Saved pinch size", hidden = true)
 	default int inventoryScale() { return 100; }
+
+	@ConfigItem(keyName = "chatScale", name = "Chat scale", description = "Saved pinch size", hidden = true)
+	default int chatScale() { return 100; }
+
+	@ConfigItem(keyName = "minimapScale", name = "Minimap scale", description = "Saved pinch size", hidden = true)
+	default int minimapScale() { return 100; }
 
 	// No Lombok here: SwingPanelHost (Kotlin) reads getScale(), and Kotlin compiles
 	// against these sources before Lombok has generated anything.
