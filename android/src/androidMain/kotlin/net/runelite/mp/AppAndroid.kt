@@ -1052,8 +1052,17 @@ private fun composeToWindow(
     val x = (((offset.x - padX) / scale) * (winW / ww)).toInt()
     val y = (((offset.y - padY) / scale) * (winH / wh)).toInt()
     // A held mouse button keeps reporting past the window edge, like a desktop drag does.
-    if (clamp) return x.coerceIn(0, winW - 1) to y.coerceIn(0, winH - 1)
-    if (x < 0 || y < 0 || x >= winW || y >= winH) return null
+    if (!clamp && (x < 0 || y < 0 || x >= winW || y >= winH)) return null
+    val cx = if (clamp) x.coerceIn(0, winW - 1) else x
+    val cy = if (clamp) y.coerceIn(0, winH - 1) else y
+    val canvas = java.awt.Canvas.latest()
+    val bounds = canvas?.boundsInWindow
+    if (bounds != null && bounds.contains(cx, cy)) {
+        val mapped = net.runelite.client.plugins.mobile.MobileInventoryOverlay.mapInput(
+            cx - bounds.x, cy - bounds.y, bounds.width, bounds.height)
+        return mapped[0] + bounds.x to mapped[1] + bounds.y
+    }
+    if (clamp) return cx to cy
     return x to y
 }
 

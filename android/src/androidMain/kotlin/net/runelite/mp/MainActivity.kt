@@ -32,12 +32,28 @@ class MainActivity : ComponentActivity() {
     private lateinit var swingDialogs: net.runelite.mp.ui.bridge.SwingDialogs
 
     override fun onDestroy() {
+        net.runelite.client.plugins.mobile.MobileDisplaySettings.detach()
         if (::swingDialogs.isInitialized) swingDialogs.close()
         super.onDestroy()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val displayPrefs = getSharedPreferences("mobile-display", MODE_PRIVATE)
+        fun applyPortrait(portrait: Boolean) {
+            val orientation = if (portrait) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (requestedOrientation != orientation) requestedOrientation = orientation
+        }
+        applyPortrait(displayPrefs.getBoolean("forceVertical", false))
+        net.runelite.client.plugins.mobile.MobileDisplaySettings.attach { portrait ->
+            runOnUiThread {
+                if (!isDestroyed) {
+                    displayPrefs.edit().putBoolean("forceVertical", portrait).apply()
+                    applyPortrait(portrait)
+                }
+            }
+        }
 
         // Install before any other init so a crash inside the System.setProperty calls
         // below (or anything else this activity touches) still reaches Crashlytics. The
