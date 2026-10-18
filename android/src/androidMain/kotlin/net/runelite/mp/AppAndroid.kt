@@ -1061,7 +1061,8 @@ private fun composeToWindow(
     val bounds = canvas?.boundsInWindow
     if (mapInterfaces && bounds != null && bounds.contains(cx, cy)) {
         val mapped = net.runelite.client.plugins.mobile.MobileInventoryOverlay.mapInput(
-            cx - bounds.x, cy - bounds.y, bounds.width, bounds.height)
+            cx - bounds.x, cy - bounds.y, bounds.width, bounds.height,
+            net.runelite.mp.ui.bridge.ModifierState.altActive.value)
         return mapped[0] + bounds.x to mapped[1] + bounds.y
     }
     if (clamp) return cx to cy

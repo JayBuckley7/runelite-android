@@ -29,17 +29,17 @@ public final class MobileInventoryOverlay extends Overlay
     private final MobileConfig config;
     private final ClientThread clientThread;
     private final ConfigManager configManager;
-    private final int[][] scratch = {new int[0], new int[0], new int[0]};
+    private final int[][] scratch = {new int[0], new int[0], new int[0], new int[0], new int[0]};
     private static volatile List<Panel> displayed = java.util.Collections.emptyList();
     private static volatile Resize gesture;
 
     private static final class Panel
     {
-        final int id, percent;
+        final int id, percent, bufferIndex;
         final InventoryScaleGeometry geometry;
         final MobileInventoryOverlay owner;
-        Panel(int id, int percent, InventoryScaleGeometry geometry, MobileInventoryOverlay owner)
-        { this.id = id; this.percent = percent; this.geometry = geometry; this.owner = owner; }
+        Panel(int id, int percent, InventoryScaleGeometry geometry, MobileInventoryOverlay owner, int bufferIndex)
+        { this.id = id; this.percent = percent; this.geometry = geometry; this.owner = owner; this.bufferIndex = bufferIndex; }
     }
 
     /** A gesture latches one panel; moving fingers never switches the target. */
@@ -106,17 +106,34 @@ public final class MobileInventoryOverlay extends Overlay
             if (widget == null) continue;
             Rectangle bounds = widget.getBounds();
             if (bounds.width <= 0 || bounds.height <= 0 || !new Rectangle(0, 0, w, h).contains(bounds)) continue;
-            InventoryScaleGeometry g = new InventoryScaleGeometry(bounds, scales[id], w, h);
-            panels.add(new Panel(id, scales[id], g, this));
-            int count = bounds.width * bounds.height;
-            if (scratch[id].length < count) scratch[id] = new int[count];
-            // Capture ALL sources before modifying any region, including overlapping destinations.
-            g.capture(buffer.getPixels(), scratch[id]);
+            if (id == 0 && widget.getId() == InterfaceID.ToplevelPreEoc.SIDE_CONTAINER)
+            {
+                Rectangle first = visibleBounds(InterfaceID.ToplevelPreEoc.SIDE_STATIC_LAYER, w, h);
+                Rectangle second = visibleBounds(InterfaceID.ToplevelPreEoc.SIDE_MOVABLE_LAYER, w, h);
+                InventoryScaleGeometry[] group = InventoryScaleGeometry.modernGroup(bounds, first, second, scales[id], w, h);
+                for (int part = 0; part < group.length; part++)
+                    if (group[part] != null) panels.add(new Panel(id, scales[id], group[part], this, part == 0 ? 0 : part + 2));
+            }
+            else panels.add(new Panel(id, scales[id], new InventoryScaleGeometry(bounds, scales[id], w, h), this, id));
+        }
+        // Capture every piece before clearing any source, including detached tab rows.
+        for (Panel panel : panels)
+        {
+            int count = panel.geometry.source.width * panel.geometry.source.height;
+            if (scratch[panel.bufferIndex].length < count) scratch[panel.bufferIndex] = new int[count];
+            panel.geometry.capture(buffer.getPixels(), scratch[panel.bufferIndex]);
         }
         for (Panel panel : panels) panel.geometry.clearSource(buffer.getPixels());
-        for (Panel panel : panels) panel.geometry.paint(buffer.getPixels(), scratch[panel.id]);
+        for (Panel panel : panels) panel.geometry.paint(buffer.getPixels(), scratch[panel.bufferIndex]);
         displayed = panels;
         return null;
+    }
+    private Rectangle visibleBounds(int widgetId, int width, int height)
+    {
+        Widget widget = client.getWidget(widgetId);
+        if (widget == null || widget.isHidden()) return null;
+        Rectangle bounds = widget.getBounds();
+        return bounds.width > 0 && bounds.height > 0 && new Rectangle(0, 0, width, height).contains(bounds) ? bounds : null;
     }
     private Widget widget(int id)
     {
@@ -147,11 +164,29 @@ public final class MobileInventoryOverlay extends Overlay
         return resize;
     }
     /** Canvas/stretched coordinates in, original canvas coordinates out. */
-    public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight)
+    public static int[] mapInput(int x, int y, int canvasWidth, int canvasHeight, boolean altHeld)
     {
         Panel panel = hit(x, y, canvasWidth, canvasHeight);
-        if (panel == null) return new int[]{x, y};
+        if (panel == null)
+        {
+            // Relocated pieces must not leave invisible clickable tabs at the old position.
+            if (canvasWidth > 0 && canvasHeight > 0 && !MobileHitTest.isMenuAt(x, y) && !MobileHitTest.isMenuOptionAt(x, y))
+                for (Panel old : displayed)
+                    if (old.geometry.source.contains((int)((long)x * old.geometry.width / canvasWidth),
+                        (int)((long)y * old.geometry.height / canvasHeight))) return new int[]{-1, -1};
+            return new int[]{x, y};
+        }
         InventoryScaleGeometry g = panel.geometry;
+        // Alt-dragging either attached tab row moves the inventory anchor, keeping the group together.
+        if (altHeld && panel.bufferIndex >= 3)
+            for (Panel body : displayed)
+                if (body.id == 0 && body.bufferIndex == 0)
+                {
+                    int px = (int)((long)x * g.width / canvasWidth) - g.destination.x;
+                    int py = (int)((long)y * g.height / canvasHeight) - g.destination.y;
+                    return new int[]{(int)((long)(body.geometry.source.x + px * body.geometry.source.width / g.destination.width) * canvasWidth / g.width),
+                        (int)((long)(body.geometry.source.y + py * Math.min(g.source.height, body.geometry.source.height) / g.destination.height) * canvasHeight / g.height)};
+                }
         int px = (int)((long)x * g.width / canvasWidth), py = (int)((long)y * g.height / canvasHeight);
         return new int[]{(int)((long)g.sourceX(px) * canvasWidth / g.width),
             (int)((long)g.sourceY(py) * canvasHeight / g.height)};
