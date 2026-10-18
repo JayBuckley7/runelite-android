@@ -638,11 +638,10 @@ private fun ComposeSplash() {
     }
 
     // Boot starts once UpdateGate's check answers (or times out); only then does the AWT
-    // splash have anything to mirror, and only then does the safety timeout start.
+    // splash have anything to mirror.
     LaunchedEffect(gate.bootStarted) {
         if (!gate.bootStarted) return@LaunchedEffect
         actionText = "Loading…"
-        val started = System.currentTimeMillis()
         var hasBeenOpen = false
         var lastSeen = ""
         while (!bootDone) {
@@ -669,12 +668,13 @@ private fun ComposeSplash() {
                             (progressText?.let { " [$it]" } ?: ""))
                 }
             }
-            // Dismiss once the AWT splash has come and gone, or after a safety timeout.
+            // Dismiss only once the AWT splash has come and gone. No timeout: a slow device
+            // that took 30s+ got the chrome early, before plugins had registered their nav
+            // buttons, and the nav strip hit a null reading them.
             if (hasBeenOpen && !open) bootDone = true
-            if (System.currentTimeMillis() - started > 30_000) bootDone = true
         }
-        // Whichever path dismissed us, signal the Compose chrome it's safe to
-        // render its sidebar/icon strip now.
+        // The client has finished starting; the Compose chrome can render its sidebar and
+        // icon strip now.
         net.runelite.mp.ui.WindowImpl.bootComplete.value = true
         gate.onBootComplete()
     }
