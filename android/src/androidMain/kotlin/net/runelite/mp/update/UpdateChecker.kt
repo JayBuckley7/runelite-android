@@ -28,7 +28,9 @@ internal object UpdateChecker
 
     /** GitHub login → name shown on the splash, for contributors who'd rather not be a handle. */
     private val DISPLAY_NAMES = mapOf(
+        "zeruth" to "Zeruth",
         "JayBuckley7" to "Jay",
+        "torkkotravis-creator" to "Torkko",
     )
 
     /** Used until the first successful fetch (eg. first launch offline). */
