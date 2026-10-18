@@ -37,6 +37,8 @@ public class MobileInputPlugin extends Plugin
 	/** Height of the root menu's "Choose Option" header in real (unstretched) pixels;
 	 *  the first option row starts below it. */
 	private static final int MENU_HEADER_HEIGHT = 19;
+	/** Widget content type the client uses for the 3D scene viewport. */
+	private static final int CONTENT_TYPE_VIEWPORT = 1337;
 
 	@Inject private Client client;
 
@@ -248,6 +250,17 @@ public class MobileInputPlugin extends Plugin
 
 		boolean isFullScreen = canvasW > 0 && canvasH > 0
 			&& width >= canvasW - 10 && height >= canvasH - 10;
+
+		// Engine-drawn content (world map view, minimap): the client renders it itself, so
+		// the widget has no sprite or text and is often a LAYER. The rules below would see
+		// an empty container and let a drag through to the camera, so the world map turned
+		// the camera instead of panning. The 3D viewport is the one engine-drawn area a
+		// drag must reach as camera.
+		int contentType = w.getContentType();
+		if (contentType != 0)
+		{
+			return contentType != CONTENT_TYPE_VIEWPORT && !isFullScreen;
+		}
 
 		// LAYER widgets are RS's transparent group containers (HUD trim, viewport
 		// background, etc.) and draw nothing themselves; whatever is visible in them is
