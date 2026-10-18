@@ -101,8 +101,9 @@ internal fun AccountPicker(onSelect: (AccountSelection) -> Unit)
         onAddAccount = {
             context.startActivity(Intent(context, JagexLoginActivity::class.java))
         },
-        onReauthorize = { account ->
-            context.startActivity(JagexLoginActivity.reauthIntent(context, account))
+        // A full sign-in: the new tokens overwrite this account's file, clearing needsReauth.
+        onReauthorize = {
+            context.startActivity(Intent(context, JagexLoginActivity::class.java))
         },
         onSelect = onSelect,
     )
@@ -426,8 +427,7 @@ private fun JagexAccountCard(
                     Text(JagexAuth.REAUTH_MESSAGE, color = Color(0xFFF2A0A0), fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "If your browser is still signed in to Jagex this happens automatically; " +
-                            "otherwise you'll be asked to sign in once.",
+                        "You'll be asked to sign in to this Jagex account again.",
                         color = TextSecondary,
                         fontSize = 11.sp,
                     )

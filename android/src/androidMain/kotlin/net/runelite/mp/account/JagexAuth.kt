@@ -71,9 +71,10 @@ internal object JagexAuth
     ) : IOException(message, cause)
 
     /**
-     * The token endpoint answered `invalid_grant` to a refresh: the stored refresh token is
-     * dead (expired, revoked, or already redeemed by a refresh whose result was lost). Nothing short of a
-     * new authorization brings the account back, so callers prompt for one instead of retrying.
+     * The token endpoint rejected a refresh with an OAuth error (usually `invalid_grant`): the
+     * stored refresh token is dead (expired, revoked, or already redeemed by a refresh whose
+     * result was lost). Only a full sign-in brings the account back, so callers prompt for one
+     * instead of retrying.
      */
     class TokenRevokedException : AuthException(REAUTH_MESSAGE)
 
@@ -104,20 +105,17 @@ internal object JagexAuth
     /**
      * `prompt=login` forces a fresh credential entry rather than silently reusing the
      * browser's existing Jagex session. That is deliberate: without it, adding a *second*
-     * Jagex account would just hand back the one already signed in.
-     *
-     * Re-authorizing an existing account passes [forceLogin] = false for exactly that reuse:
-     * while the browser's Jagex session is alive the authorize step completes by itself and
-     * redirects straight back, so a dead refresh token is replaced with no credentials typed.
+     * Jagex account would just hand back the one already signed in. Re-authorizing an
+     * expired account goes through the same full sign-in.
      */
-    fun buildLoginUrl(pkce: Pkce, forceLogin: Boolean = true): String = "$ORIGIN/oauth2/auth?" + query(
+    fun buildLoginUrl(pkce: Pkce): String = "$ORIGIN/oauth2/auth?" + query(
         "response_type" to "code",
         "client_id" to CLIENT_ID,
         "redirect_uri" to REDIRECT_URI,
         "scope" to SCOPE,
         "code_challenge" to pkce.challenge,
         "code_challenge_method" to "S256",
-        *(if (forceLogin) arrayOf("prompt" to "login") else emptyArray<Pair<String, String>>()),
+        "prompt" to "login",
         "state" to pkce.state,
     )
 
@@ -175,7 +173,9 @@ internal object JagexAuth
     }
     catch (e: AuthException)
     {
-        throw if (e.reason == "invalid_grant") TokenRevokedException() else e
+        // Any OAuth error means Jagex refused this refresh token; only a fresh sign-in fixes
+        // it. Failures without one (network, 5xx with no body) stay retryable.
+        throw if (!e.reason.isNullOrEmpty()) TokenRevokedException() else e
     }
 
     /** Best-effort token revocation on sign-out; failures are logged, never thrown. */
