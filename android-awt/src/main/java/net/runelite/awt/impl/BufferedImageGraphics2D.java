@@ -57,6 +57,12 @@ public class BufferedImageGraphics2D extends Graphics2D {
     private Stroke stroke = DEFAULT_STROKE;
     private Paint paint = Color.BLACK;
     private final RenderingHints renderingHints = new RenderingHints(null);
+    /** Uniform user→device multiplier applied on top of {@link #transform}. Lets a host lay a
+     *  Swing tree out in logical pixels but rasterize it at the display's real density
+     *  (text, fills, borders and shapes are all drawn at device resolution instead of
+     *  being painted small and stretched). 1 for every graphics that doesn't opt in, and
+     *  every scaled branch below is gated on that so the default paths are unchanged. */
+    private float deviceScale = 1f;
 
     public BufferedImageGraphics2D(BufferedImage image) {
         this(image, null);
@@ -122,7 +128,30 @@ public class BufferedImageGraphics2D extends Graphics2D {
         copy.stroke = stroke;
         copy.paint = paint;
         copy.renderingHints.add(renderingHints);
+        copy.deviceScale = deviceScale;
         return copy;
+    }
+
+    /** See {@link #deviceScale}. Set before painting; the clip stays in device pixels. */
+    public void setDeviceScale(float scale) {
+        deviceScale = scale > 0f ? scale : 1f;
+    }
+
+    public float getDeviceScale() { return deviceScale; }
+
+    /** Logical x (translate-only user transform) → device pixel edge. Rect edges go through
+     *  this individually so adjacent rects still tile without gaps or overlap. */
+    private int devX(double x) {
+        return (int) Math.floor((x + transform.getTranslateX()) * deviceScale + 0.5);
+    }
+    private int devY(double y) {
+        return (int) Math.floor((y + transform.getTranslateY()) * deviceScale + 0.5);
+    }
+
+    /** Device-space rect for a logical rect, clipped. Only for deviceScale != 1. */
+    private Rectangle clippedDevice(int x, int y, int w, int h) {
+        int x0 = devX(x), y0 = devY(y);
+        return clipped(x0, y0, devX(x + (double) w) - x0, devY(y + (double) h) - y0);
     }
 
     @Override public void translate(int x, int y) { transform.translate(x, y); }
@@ -147,12 +176,12 @@ public class BufferedImageGraphics2D extends Graphics2D {
      *  entirely, which was visible as Quest Helper's minimap arrow head sitting
      *  unrotated at the line endpoint regardless of the line's direction. */
     private int transformX(double x, double y) {
-        return (int) Math.round(transform.getScaleX() * x + transform.getShearX() * y
-            + transform.getTranslateX());
+        return (int) Math.round((transform.getScaleX() * x + transform.getShearX() * y
+            + transform.getTranslateX()) * deviceScale);
     }
     private int transformY(double x, double y) {
-        return (int) Math.round(transform.getShearY() * x + transform.getScaleY() * y
-            + transform.getTranslateY());
+        return (int) Math.round((transform.getShearY() * x + transform.getScaleY() * y
+            + transform.getTranslateY()) * deviceScale);
     }
 
     @Override public Color getColor() { return foreground; }
@@ -170,6 +199,16 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override public Rectangle getClipBounds() {
         // Return clip in user space (subtract current translation).
+        if (deviceScale != 1f) {
+            // Round outward so a component's damage test never drops a partially covered
+            // logical pixel.
+            double s = deviceScale;
+            int x0 = (int) Math.floor(clip.x / s - transform.getTranslateX());
+            int y0 = (int) Math.floor(clip.y / s - transform.getTranslateY());
+            int x1 = (int) Math.ceil((clip.x + clip.width) / s - transform.getTranslateX());
+            int y1 = (int) Math.ceil((clip.y + clip.height) / s - transform.getTranslateY());
+            return new Rectangle(x0, y0, x1 - x0, y1 - y0);
+        }
         return new Rectangle(clip.x - tx(), clip.y - ty(), clip.width, clip.height);
     }
     @Override public void clipRect(int x, int y, int w, int h) {
@@ -178,11 +217,16 @@ public class BufferedImageGraphics2D extends Graphics2D {
         // every component in the tree, so killing both allocations is a meaningful per-
         // frame win when the AWT path is alive (logcat showed 40MB/s of AllocSpace churn
         // dominated by tree-walk overhead).
-        int ax = x + tx(), ay = y + ty();
+        int ax, ay, ax2, ay2;
+        if (deviceScale == 1f) {
+            ax = x + tx(); ay = y + ty(); ax2 = ax + w; ay2 = ay + h;
+        } else {
+            ax = devX(x); ay = devY(y); ax2 = devX(x + (double) w); ay2 = devY(y + (double) h);
+        }
         int x0 = Math.max(clip.x, ax);
         int y0 = Math.max(clip.y, ay);
-        int x1 = Math.min(clip.x + clip.width, ax + w);
-        int y1 = Math.min(clip.y + clip.height, ay + h);
+        int x1 = Math.min(clip.x + clip.width, ax2);
+        int y1 = Math.min(clip.y + clip.height, ay2);
         clip.setBounds(x0, y0, Math.max(0, x1 - x0), Math.max(0, y1 - y0));
     }
 
@@ -224,7 +268,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
         clip.setBounds(in[0], in[1], in[2], in[3]);
     }
     @Override public void setClip(int x, int y, int w, int h) {
-        clip = new Rectangle(x + tx(), y + ty(), w, h);
+        clip = deviceRect(x, y, w, h);
     }
     @Override public Shape getClip() { return getClipBounds(); }
     @Override public void setClip(Shape shape) {
@@ -232,22 +276,68 @@ public class BufferedImageGraphics2D extends Graphics2D {
         if (shape == null) clip = new Rectangle(0, 0, width, height);
         else {
             Rectangle b = shape.getBounds();
-            clip = new Rectangle(b.x + tx(), b.y + ty(), b.width, b.height);
+            clip = deviceRect(b.x, b.y, b.width, b.height);
         }
+    }
+
+    /** Unclipped device rect for a logical rect. */
+    private Rectangle deviceRect(int x, int y, int w, int h) {
+        if (deviceScale == 1f) return new Rectangle(x + tx(), y + ty(), w, h);
+        int x0 = devX(x), y0 = devY(y);
+        return new Rectangle(x0, y0, devX(x + (double) w) - x0, devY(y + (double) h) - y0);
     }
 
     @Override
     public void copyArea(int x, int y, int w, int h, int dx, int dy) {
         syncTarget();
-        Rectangle src = clipped(x + tx(), y + ty(), w, h);
+        Rectangle src = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         if (src.width == 0 || src.height == 0) return;
+        int ddx = deviceScale == 1f ? dx : Math.round(dx * deviceScale);
+        int ddy = deviceScale == 1f ? dy : Math.round(dy * deviceScale);
         AwtNative.copyArea(pixels, width, height,
-            src.x, src.y, src.width, src.height, src.x + dx, src.y + dy);
+            src.x, src.y, src.width, src.height, src.x + ddx, src.y + ddy);
+    }
+
+    /**
+     * A 1px Swing line at deviceScale: keep it one LOGICAL pixel thick, otherwise every
+     * border and separator turns into a hairline. Axis-aligned lines (nearly all of Swing)
+     * fill the covered logical pixel cells as a device rect; anything else becomes a quad
+     * of the same thickness through the pixel centres.
+     */
+    private void drawScaledLine(int x1, int y1, int x2, int y2) {
+        if (transformIsTranslateOnly() && (x1 == x2 || y1 == y2)) {
+            int lx = Math.min(x1, x2), ly = Math.min(y1, y2);
+            Rectangle r = clippedDevice(lx, ly, Math.max(x1, x2) - lx + 1, Math.max(y1, y2) - ly + 1);
+            if (r.width == 0 || r.height == 0) return;
+            AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
+                foreground.getRGB(), compositeRule());
+            return;
+        }
+        double s = deviceScale;
+        double ax = (transform.getScaleX() * (x1 + 0.5) + transform.getShearX() * (y1 + 0.5) + transform.getTranslateX()) * s;
+        double ay = (transform.getShearY() * (x1 + 0.5) + transform.getScaleY() * (y1 + 0.5) + transform.getTranslateY()) * s;
+        double bx = (transform.getScaleX() * (x2 + 0.5) + transform.getShearX() * (y2 + 0.5) + transform.getTranslateX()) * s;
+        double by = (transform.getShearY() * (x2 + 0.5) + transform.getScaleY() * (y2 + 0.5) + transform.getTranslateY()) * s;
+        double dx = bx - ax, dy = by - ay;
+        double len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1e-3) return;
+        double hw = s * 0.5;
+        double nx = -dy / len * hw, ny = dx / len * hw;
+        double ex = dx / len * hw, ey = dy / len * hw;
+        int[][] scratch = THICK_SCRATCH.get();
+        int[] xs = scratch[0];
+        int[] ys = scratch[1];
+        xs[0] = (int) Math.round(ax - ex + nx); ys[0] = (int) Math.round(ay - ey + ny);
+        xs[1] = (int) Math.round(ax - ex - nx); ys[1] = (int) Math.round(ay - ey - ny);
+        xs[2] = (int) Math.round(bx + ex - nx); ys[2] = (int) Math.round(by + ey - ny);
+        xs[3] = (int) Math.round(bx + ex + nx); ys[3] = (int) Math.round(by + ey + ny);
+        AwtNative.fillPolygon(pixels, width, height, xs, ys, 4, 0, 0, foreground.getRGB(), compositeRule());
     }
 
     @Override
     public void drawLine(int x1, int y1, int x2, int y2) {
         syncTarget();
+        if (deviceScale != 1f) { drawScaledLine(x1, y1, x2, y2); return; }
         int sx1, sy1, sx2, sy2;
         if (transformIsTranslateOnly()) {
             int dx = tx(), dy = ty();
@@ -263,7 +353,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override
     public void fillRect(int x, int y, int w, int h) {
         syncTarget();
-        Rectangle r = clipped(x + tx(), y + ty(), w, h);
+        Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         if (r.width == 0 || r.height == 0) return;
         AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
             foreground.getRGB(), compositeRule());
@@ -272,7 +362,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override
     public void clearRect(int x, int y, int w, int h) {
         syncTarget();
-        Rectangle r = clipped(x + tx(), y + ty(), w, h);
+        Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         if (r.width == 0 || r.height == 0) return;
         AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
             background.getRGB(), AlphaComposite.SRC);
@@ -287,7 +377,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
     @Override public void fillRoundRect(int x, int y, int w, int h, int aw, int ah) {
-        if (transformIsTranslateOnly()) {
+        if (transformIsTranslateOnly() && deviceScale == 1f) {
             syncTarget();
             AwtNative.fillRoundRect(pixels, width, height, x + tx(), y + ty(), w, h, aw, ah,
                 foreground.getRGB(), compositeRule());
@@ -297,7 +387,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
     @Override public void drawOval(int x, int y, int w, int h) {
-        if (transformIsTranslateOnly() && strokeWidthIsOne()) {
+        if (transformIsTranslateOnly() && strokeWidthIsOne() && deviceScale == 1f) {
             syncTarget();
             AwtNative.drawOval(pixels, width, height, x + tx(), y + ty(), w, h, foreground.getRGB());
             return;
@@ -306,7 +396,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), p));
     }
     @Override public void fillOval(int x, int y, int w, int h) {
-        if (transformIsTranslateOnly()) {
+        if (transformIsTranslateOnly() && deviceScale == 1f) {
             syncTarget();
             AwtNative.fillOval(pixels, width, height, x + tx(), y + ty(), w, h,
                 foreground.getRGB(), compositeRule());
@@ -363,13 +453,20 @@ public class BufferedImageGraphics2D extends Graphics2D {
         if (w <= 0 || h <= 0) return;
         syncTarget();
         float strokeW = filled ? 0f : ((stroke instanceof BasicStroke) ? ((BasicStroke) stroke).getLineWidth() : 1f);
+        // At deviceScale the shape is drawn in logical units under a canvas scale, so the
+        // bitmap, pad and stroke reach are all sized in device pixels.
+        int adx, ady, dw, dh;
+        if (deviceScale == 1f) {
+            adx = x + tx(); ady = y + ty(); dw = w; dh = h;
+        } else {
+            adx = devX(x); ady = devY(y);
+            dw = Math.max(1, devX(x + (double) w) - adx);
+            dh = Math.max(1, devY(y + (double) h) - ady);
+        }
         // +1 covers AA bleed; ceil(strokeW/2) covers the stroke's outward reach.
-        int pad = (int) Math.ceil(strokeW / 2f) + 1;
-        int bw = w + 2 * pad;
-        int bh = h + 2 * pad;
-
-        int adx = x + tx();
-        int ady = y + ty();
+        int pad = (int) Math.ceil(strokeW * deviceScale / 2f) + 1;
+        int bw = dw + 2 * pad;
+        int bh = dh + 2 * pad;
 
         ShapeScratch sc = SHAPE_SCRATCH.get();
         boolean pooled = (long) bw * bh <= MAX_SCRATCH_PIXELS;
@@ -412,6 +509,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             canvas.clipRect(0, 0, bw, bh);
             canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
             canvas.translate(pad, pad);
+            if (deviceScale != 1f) canvas.scale(dw / (float) w, dh / (float) h);
             android.graphics.Paint p = sc.paint;
             p.reset();
             p.setAntiAlias(true);
@@ -464,7 +562,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     public void fillPolygon(int[] xs, int[] ys, int n) {
         if (n < 3 || xs == null || ys == null) return;
         syncTarget();
-        if (transformIsTranslateOnly()) {
+        if (transformIsTranslateOnly() && deviceScale == 1f) {
             AwtNative.fillPolygon(pixels, width, height, xs, ys, n, tx(), ty(), foreground.getRGB(), compositeRule());
         } else {
             // Rotation/scale/shear present: must run each vertex through the full
@@ -485,9 +583,19 @@ public class BufferedImageGraphics2D extends Graphics2D {
     public void drawString(String str, int x, int y) {
         if (str == null || str.isEmpty()) return;
         syncTarget();
-        TextRender r = TextCache.get(str, font, foreground.getRGB(), textAaMode());
-        int dx = x + tx() + r.boundsLeft - TextCache.PADDING;
-        int dy = y + ty() + r.boundsTop - TextCache.PADDING;
+        int baseX, baseY;
+        if (deviceScale == 1f) {
+            baseX = x + tx(); baseY = y + ty();
+        } else {
+            baseX = devX(x); baseY = devY(y);
+            // Rows scrolled out of a viewport still get painted; skip them before the
+            // cache lookup so off-screen labels don't churn the (now larger) glyph runs.
+            float size = BufferedImageFontMetrics.pxSize(font) * deviceScale;
+            if (baseY + size < clip.y || baseY - 2 * size > clip.y + clip.height) return;
+        }
+        TextRender r = TextCache.get(str, font, foreground.getRGB(), textAaMode(), deviceScale);
+        int dx = baseX + r.boundsLeft - TextCache.PADDING;
+        int dy = baseY + r.boundsTop - TextCache.PADDING;
         // Honor the clip — text in a scrolled JViewport otherwise paints
         // outside the viewport bounds (same bug pattern as blit()). 1:1 scale
         // here so source shift == dst clip offset.
@@ -577,17 +685,19 @@ public class BufferedImageGraphics2D extends Graphics2D {
             Font font;
             int argb;
             TextAa aa;
+            float scale;
             int hash;
             Key() {}
-            Key(String s, Font f, int a, TextAa aa) {
-                set(s, f, a, aa);
+            Key(String s, Font f, int a, TextAa aa, float scale) {
+                set(s, f, a, aa, scale);
             }
-            void set(String s, Font f, int a, TextAa aa) {
-                this.str = s; this.font = f; this.argb = a; this.aa = aa;
+            void set(String s, Font f, int a, TextAa aa, float scale) {
+                this.str = s; this.font = f; this.argb = a; this.aa = aa; this.scale = scale;
                 int h = s != null ? s.hashCode() : 0;
                 h = 31 * h + (f != null ? f.hashCode() : 0);
                 h = 31 * h + a;
                 h = 31 * h + (aa != null ? aa.ordinal() : 0);
+                h = 31 * h + Float.floatToIntBits(scale);
                 this.hash = h;
             }
             void clear() { this.str = null; this.font = null; }
@@ -595,7 +705,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             @Override public boolean equals(Object o) {
                 if (!(o instanceof Key)) return false;
                 Key k = (Key) o;
-                return argb == k.argb && aa == k.aa
+                return argb == k.argb && aa == k.aa && scale == k.scale
                     && (font == k.font || (font != null && font.equals(k.font)))
                     && (str == k.str || (str != null && str.equals(k.str)));
             }
@@ -607,19 +717,19 @@ public class BufferedImageGraphics2D extends Graphics2D {
         private static final java.util.LinkedHashMap<Key, TextRender> cache =
             new java.util.LinkedHashMap<Key, TextRender>(256, 0.75f, true);
 
-        static synchronized TextRender get(String str, Font font, int argb, TextAa aa) {
+        static synchronized TextRender get(String str, Font font, int argb, TextAa aa, float scale) {
             Key lookup = LOOKUP_KEY.get();
-            lookup.set(str, font, argb, aa);
+            lookup.set(str, font, argb, aa, scale);
             TextRender r = cache.get(lookup);
             // Don't let the thread-local probe key pin the last string + font drawn on
             // this thread until the next drawString.
             lookup.clear();
             if (r != null) return r;
 
-            r = render(str, font, argb, aa);
+            r = render(str, font, argb, aa, scale);
             if (r.pixels.length > MAX_ENTRY_PIXELS) return r;
 
-            cache.put(new Key(str, font, argb, aa), r);
+            cache.put(new Key(str, font, argb, aa, scale), r);
             cachedPixels += r.pixels.length;
             if (cache.size() > MAX || cachedPixels > MAX_PIXELS) {
                 java.util.Iterator<java.util.Map.Entry<Key, TextRender>> it =
@@ -631,7 +741,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             }
             return r;
         }
-        private static TextRender render(String str, Font font, int argb, TextAa aa) {
+        private static TextRender render(String str, Font font, int argb, TextAa aa, float scale) {
             android.graphics.Paint p = new android.graphics.Paint();
             p.setColor(argb);
             applyAa(p, aa);
@@ -639,7 +749,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
             // even glyph-interior pixels with alpha < 255 at small sizes — body pixels
             // then look "see-through" because src_over blends bg through them.
             p.setHinting(android.graphics.Paint.HINTING_ON);
-            p.setTextSize(BufferedImageFontMetrics.pxSize(font));
+            float textSize = BufferedImageFontMetrics.pxSize(font) * scale;
+            p.setTextSize(textSize);
             p.setTypeface(BufferedImageFontMetrics.typefaceFor(font));
             android.graphics.Rect bounds = new android.graphics.Rect();
             p.getTextBounds(str, 0, str.length(), bounds);
@@ -658,8 +769,10 @@ public class BufferedImageGraphics2D extends Graphics2D {
             // `text·α + dst·(1-α)`, leaking the bg through "opaque" text (the red-bar
             // /white-text "see-through" symptom). Saturate any near-opaque pixel to
             // 255 while preserving the AA gradient on edges so the silhouette stays
-            // smooth and blends cleanly with the destination.
-            for (int i = 0; i < pixels.length; i++) {
+            // smooth and blends cleanly with the destination. Device-scaled runs are large
+            // enough that interiors are already opaque; boosting them would only harden
+            // the AA edges we rendered at full resolution to get.
+            if (scale == 1f || textSize < 20f) for (int i = 0; i < pixels.length; i++) {
                 int px = pixels[i];
                 int a = (px >>> 24) & 0xFF;
                 if (a == 0 || a == 255) continue;
@@ -762,10 +875,15 @@ public class BufferedImageGraphics2D extends Graphics2D {
         // destination rect to the current clip, then shift the source rect
         // proportionally so the same source pixels map to the same world
         // positions.
-        int adx = dx + tx();
-        int ady = dy + ty();
-        int adx2 = adx + dw;
-        int ady2 = ady + dh;
+        int adx, ady, adx2, ady2;
+        if (deviceScale == 1f) {
+            adx = dx + tx(); ady = dy + ty(); adx2 = adx + dw; ady2 = ady + dh;
+        } else {
+            adx = devX(dx); ady = devY(dy);
+            adx2 = devX(dx + (double) dw); ady2 = devY(dy + (double) dh);
+            dw = adx2 - adx; dh = ady2 - ady;
+            if (dw <= 0 || dh <= 0) return;
+        }
         int cx0 = clip.x, cy0 = clip.y;
         int cx1 = clip.x + clip.width, cy1 = clip.y + clip.height;
         int ndx = Math.max(adx, cx0);

@@ -44,7 +44,12 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
     @Volatile private var mountSerial = 0L
     @Volatile private var attachmentSerial = 0L // Android writes, EDT reads
     private var frame: Bitmap? = null // Android thread only
-    private val paint = Paint()
+    // Device-resolution raster + two bitmaps it's copied into, reused across the 10Hz
+    // repaint. Ping-pong so the EDT never rewrites the bitmap Android is still drawing.
+    private var raster: BufferedImage? = null // AWT thread only
+    private val bitmaps = arrayOfNulls<Bitmap>(2) // AWT thread only
+    private var backBitmap = 0 // AWT thread only
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     @Volatile private var running = false
     private var busy = false
     private var downX = 0f
@@ -72,7 +77,12 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
             if (!busy && width > 0 && height > 0) {
                 busy = true
                 val attachment = attachmentSerial
-                val h = (height * logicalWidth / width).coerceAtLeast(1)
+                // Layout stays in logical px (so the panel keeps its size on screen); the
+                // raster is the view's real pixel size and the graphics' device scale maps
+                // between them, so text and borders are rasterized at native density.
+                val pw = width
+                val ph = height
+                val h = (ph * logicalWidth / pw).coerceAtLeast(1)
                 SwingUtilities.invokeLater {
                     var bitmap: Bitmap? = null
                     var failure: String? = null
@@ -95,15 +105,21 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                                             if (c is Container && depth < 5) c.components.joinToString("") { describe(it, depth + 1) } else ""
                                     android.util.Log.i("SwingPanelHost", "$panelKey host=${width}x${height}\n${describe(component, 0)}")
                                 }
-                                val image = BufferedImage(logicalWidth, h, BufferedImage.TYPE_INT_ARGB)
+                                val image = raster?.takeIf { it.width == pw && it.height == ph }
+                                    ?: BufferedImage(pw, ph, BufferedImage.TYPE_INT_ARGB).also { raster = it }
                                 val graphics = image.createGraphics()
                                 try {
                                     graphics.color = java.awt.Color(30, 30, 30)
-                                    graphics.fillRect(0, 0, logicalWidth, h)
+                                    graphics.fillRect(0, 0, pw, ph)
+                                    (graphics as? net.runelite.awt.impl.BufferedImageGraphics2D)
+                                        ?.setDeviceScale(pw.toFloat() / logicalWidth)
                                     java.awt.Window.hostPaint(graphics, component)
                                 } finally { graphics.dispose() }
-                                val pixels = image.getRGB(0, 0, logicalWidth, h, null, 0, logicalWidth)
-                                bitmap = Bitmap.createBitmap(pixels, logicalWidth, h, Bitmap.Config.ARGB_8888)
+                                val target = bitmaps[backBitmap]?.takeIf { it.width == pw && it.height == ph }
+                                    ?: Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888).also { bitmaps[backBitmap] = it }
+                                target.setPixels(image.backingArray(), 0, pw, 0, 0, pw, ph)
+                                backBitmap = backBitmap xor 1
+                                bitmap = target
                             }
                         }
                     } catch (t: Throwable) {
@@ -132,7 +148,12 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
         attachmentSerial++
         removeCallbacks(render)
         clearAndroidState(mountSerial)
-        SwingUtilities.invokeLater { mountPanel(null, -1L) }
+        SwingUtilities.invokeLater {
+            mountPanel(null, -1L)
+            // Full-res buffers are several MB each; don't park them while the sidebar is shut.
+            raster = null
+            bitmaps.fill(null)
+        }
         super.onDetachedFromWindow()
     }
 
