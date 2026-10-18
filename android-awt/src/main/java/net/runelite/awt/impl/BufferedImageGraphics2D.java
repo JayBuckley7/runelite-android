@@ -894,6 +894,11 @@ public class BufferedImageGraphics2D extends Graphics2D {
         int ndh = ndy2 - ndy;
         if (ndw <= 0 || ndh <= 0) return;
 
+        if (deviceScale != 1f && (dw != sw || dh != sh)) {
+            blitFiltered(src, srcPixels, sx, sy, sw, sh, adx, ady, dw, dh, ndx, ndy, ndw, ndh);
+            return;
+        }
+
         // Source shift in destination-pixel units. With non-1:1 scaling the
         // source advance per dest pixel is sw/dw, so multiply the dst clip
         // offset by that ratio. Use long to avoid intermediate overflow.
@@ -934,6 +939,75 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     private static long lastSwBlitLog = 0;
+
+    private static final ThreadLocal<int[]> FILTER_SCRATCH = new ThreadLocal<>();
+
+    /**
+     * Bilinear resample for device-scaled hosts. The native blit is nearest-neighbour, which
+     * at 2–3x turns every 16px icon into visible blocks next to text rasterized at full
+     * density. Interpolates premultiplied so transparent edge texels (usually 0x00000000)
+     * don't bleed a dark fringe, then blits the visible part 1:1 with the usual composite.
+     * Only the clipped destination region is computed.
+     */
+    private void blitFiltered(BufferedImage src, int[] srcPixels, int sx, int sy, int sw, int sh,
+                              int adx, int ady, int dw, int dh, int ndx, int ndy, int ndw, int ndh) {
+        int srcW = src.getWidth(), srcH = src.getHeight();
+        int minX = Math.max(0, sx), maxX = Math.min(srcW, sx + sw) - 1;
+        int minY = Math.max(0, sy), maxY = Math.min(srcH, sy + sh) - 1;
+        if (maxX < minX || maxY < minY) return;
+        boolean opaque = isOpaqueSource(src);
+
+        int n = ndw * ndh;
+        boolean pooled = n <= MAX_SCRATCH_PIXELS;
+        int[] out = pooled ? FILTER_SCRATCH.get() : null;
+        if (out == null || out.length < n) {
+            out = new int[n];
+            if (pooled) FILTER_SCRATCH.set(out);
+        }
+
+        double stepX = (double) sw / dw, stepY = (double) sh / dh;
+        int o = 0;
+        for (int j = 0; j < ndh; j++) {
+            double fy = sy + (ndy - ady + j + 0.5) * stepY - 0.5;
+            if (fy < minY) fy = minY;
+            if (fy > maxY) fy = maxY;
+            int y0 = (int) fy;
+            int y1 = Math.min(y0 + 1, maxY);
+            int wy = (int) ((fy - y0) * 256);
+            int row0 = y0 * srcW, row1 = y1 * srcW;
+            for (int i = 0; i < ndw; i++) {
+                double fx = sx + (ndx - adx + i + 0.5) * stepX - 0.5;
+                if (fx < minX) fx = minX;
+                if (fx > maxX) fx = maxX;
+                int x0 = (int) fx;
+                int x1 = Math.min(x0 + 1, maxX);
+                int wx = (int) ((fx - x0) * 256);
+                int w00 = (256 - wx) * (256 - wy), w10 = wx * (256 - wy);
+                int w01 = (256 - wx) * wy, w11 = wx * wy;
+                int p00 = srcPixels[row0 + x0], p10 = srcPixels[row0 + x1];
+                int p01 = srcPixels[row1 + x0], p11 = srcPixels[row1 + x1];
+                int a00 = opaque ? 255 : p00 >>> 24, a10 = opaque ? 255 : p10 >>> 24;
+                int a01 = opaque ? 255 : p01 >>> 24, a11 = opaque ? 255 : p11 >>> 24;
+                // Weights sum to 65536; alpha-weighted so colour is effectively premultiplied.
+                long ka00 = (long) w00 * a00, ka10 = (long) w10 * a10;
+                long ka01 = (long) w01 * a01, ka11 = (long) w11 * a11;
+                long asum = ka00 + ka10 + ka01 + ka11;
+                if (asum == 0) { out[o++] = 0; continue; }
+                long r = ka00 * ((p00 >> 16) & 0xFF) + ka10 * ((p10 >> 16) & 0xFF)
+                    + ka01 * ((p01 >> 16) & 0xFF) + ka11 * ((p11 >> 16) & 0xFF);
+                long g = ka00 * ((p00 >> 8) & 0xFF) + ka10 * ((p10 >> 8) & 0xFF)
+                    + ka01 * ((p01 >> 8) & 0xFF) + ka11 * ((p11 >> 8) & 0xFF);
+                long b = ka00 * (p00 & 0xFF) + ka10 * (p10 & 0xFF)
+                    + ka01 * (p01 & 0xFF) + ka11 * (p11 & 0xFF);
+                int a = (int) ((asum + 32768) >> 16);
+                out[o++] = (a << 24) | ((int) (r / asum) << 16) | ((int) (g / asum) << 8) | (int) (b / asum);
+            }
+        }
+        // The resampled run carries real alpha (opaque sources come out 0xFF), so the
+        // opaque-source SRC promotion isn't needed; a SRC_OVER of an opaque pixel is a copy.
+        AwtNative.blit(out, ndw, ndh, 0, 0, ndw, ndh,
+            pixels, width, height, ndx, ndy, ndw, ndh, compositeRule(), compositeAlpha());
+    }
 
     /**
      * Pick the composite for blitting from this source image. For opaque source images

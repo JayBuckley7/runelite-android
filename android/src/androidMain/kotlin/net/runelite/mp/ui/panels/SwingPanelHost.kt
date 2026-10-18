@@ -16,9 +16,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import net.runelite.client.config.ConfigManager
+import net.runelite.client.plugins.mobile.MobileConfig
 import net.runelite.client.ui.PluginPanel
 import net.runelite.client.util.SwingUtil
 import net.runelite.mp.ui.bridge.NavBarBridge
+import net.runelite.mp.ui.bridge.RuneLiteAccess
 import java.awt.Component
 import java.awt.Container
 import java.awt.event.MouseEvent
@@ -69,7 +72,10 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
         }
     }
     private var error: String? = null
-    private val logicalWidth = 240
+    /** Swing layout width in logical px: 240 at 100%, wider (so everything draws smaller
+     *  and more fits vertically) as the user lowers Mobile → Sidebar scale. Written by
+     *  the UI thread when it schedules a render; touch mapping reads the same value. */
+    @Volatile private var logicalWidth = BASE_LOGICAL_WIDTH
     private var diagnosed = false
     private val render = object : Runnable {
         override fun run() {
@@ -82,7 +88,9 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                 // between them, so text and borders are rasterized at native density.
                 val pw = width
                 val ph = height
-                val h = (ph * logicalWidth / pw).coerceAtLeast(1)
+                val lw = Math.round(BASE_LOGICAL_WIDTH / sidebarScale())
+                logicalWidth = lw
+                val h = (ph * lw / pw).coerceAtLeast(1)
                 SwingUtilities.invokeLater {
                     var bitmap: Bitmap? = null
                     var failure: String? = null
@@ -95,7 +103,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                             if (component == null) failure = "Panel unavailable: $panelKey"
                             else {
                                 component.isVisible = true
-                                component.setBounds(0, 0, logicalWidth, h)
+                                component.setBounds(0, 0, lw, h)
                                 invalidateTree(component)
                                 component.validate()
                                 if (!diagnosed) {
@@ -112,7 +120,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                                     graphics.color = java.awt.Color(30, 30, 30)
                                     graphics.fillRect(0, 0, pw, ph)
                                     (graphics as? net.runelite.awt.impl.BufferedImageGraphics2D)
-                                        ?.setDeviceScale(pw.toFloat() / logicalWidth)
+                                        ?.setDeviceScale(pw.toFloat() / lw)
                                     java.awt.Window.hostPaint(graphics, component)
                                 } finally { graphics.dispose() }
                                 val target = bitmaps[backBitmap]?.takeIf { it.width == pw && it.height == ph }
@@ -455,5 +463,26 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
     private fun invalidateTree(component: Component) {
         component.invalidate()
         if (component is Container) component.components.forEach { invalidateTree(it) }
+    }
+
+    private companion object {
+        /** Desktop sidebar width (PluginPanel.PANEL_WIDTH + scrollbar), i.e. 100% scale. */
+        const val BASE_LOGICAL_WIDTH = 240
+
+        @Volatile private var configManager: ConfigManager? = null
+
+        /** Mobile → Sidebar scale, read live so a change applies on the next repaint. */
+        fun sidebarScale(): Float {
+            val cm = configManager
+                ?: RuneLiteAccess.instance(ConfigManager::class.java)?.also { configManager = it }
+                ?: return 1f
+            return try {
+                cm.getConfiguration<MobileConfig.SidebarScale?>(
+                    MobileConfig.GROUP, MobileConfig.SIDEBAR_SCALE, MobileConfig.SidebarScale::class.java
+                )?.scale ?: 1f
+            } catch (t: Throwable) {
+                1f
+            }
+        }
     }
 }
