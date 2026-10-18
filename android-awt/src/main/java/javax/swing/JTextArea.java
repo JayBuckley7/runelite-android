@@ -29,4 +29,18 @@ public class JTextArea extends JTextComponent {
     public void append(String str) { setText(getText() + str); }
     public void insert(String str, int pos) {}
     public void replaceRange(String str, int start, int end) {}
+
+    @Override public java.awt.Dimension getPreferredSize() {
+        if (isPreferredSizeSet()) return super.getPreferredSize();
+        java.awt.Dimension size = plainPreferredSize(lineWrap, wrapStyleWord, tabSize);
+        java.awt.FontMetrics fm = getFontMetrics(getFont());
+        java.awt.Insets in = getInsets();
+        if (columns > 0) size.width = Math.max(size.width, columns * fm.charWidth('m') + in.left + in.right);
+        if (rows > 0) size.height = Math.max(size.height, rows * fm.getHeight() + in.top + in.bottom);
+        return size;
+    }
+    @Override protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        paintPlainText(g, lineWrap, wrapStyleWord, tabSize);
+    }
 }

@@ -117,5 +117,5 @@ void sampleDisplacementMap(
     #endif
 }
 #else
-#define sampleDisplacementMap(mat, viewDir, lightDir, fragDelta, selfShadowing) uv
+#define sampleDisplacementMap(mat, viewDir, lightDir, uv, fragDelta, selfShadowing)
 #endif
