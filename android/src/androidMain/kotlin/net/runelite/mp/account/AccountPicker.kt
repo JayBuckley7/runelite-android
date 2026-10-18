@@ -101,6 +101,9 @@ internal fun AccountPicker(onSelect: (AccountSelection) -> Unit)
         onAddAccount = {
             context.startActivity(Intent(context, JagexLoginActivity::class.java))
         },
+        onReauthorize = { account ->
+            context.startActivity(JagexLoginActivity.reauthIntent(context, account))
+        },
         onSelect = onSelect,
     )
 }
@@ -109,6 +112,7 @@ internal fun AccountPicker(onSelect: (AccountSelection) -> Unit)
 private fun PickerContent(
     reloadKey: Int,
     onAddAccount: () -> Unit,
+    onReauthorize: (JagexAccount) -> Unit,
     onSelect: (AccountSelection) -> Unit,
 )
 {
@@ -170,6 +174,12 @@ private fun PickerContent(
      *  usual reason a launch that worked yesterday lands back on the login screen. */
     fun launchCharacter(account: JagexAccount, character: JagexCharacter)
     {
+        // Known-dead refresh token: launching can only fail, so go straight to the fix.
+        if (account.needsReauth)
+        {
+            onReauthorize(account)
+            return
+        }
         busyId = account.sub
         status = "Preparing ${character.displayName}…"
         scope.launch {
@@ -260,6 +270,7 @@ private fun PickerContent(
                     onToggle = { expanded = if (expanded == account.sub) null else account.sub },
                     onLaunch = { launchCharacter(account, it) },
                     onRefresh = { refreshAccount(account) },
+                    onReauthorize = { onReauthorize(account) },
                     onSignOut = { signOut(account) },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -358,6 +369,7 @@ private fun JagexAccountCard(
     onToggle: () -> Unit,
     onLaunch: (JagexCharacter) -> Unit,
     onRefresh: () -> Unit,
+    onReauthorize: () -> Unit,
     onSignOut: () -> Unit,
 )
 {
@@ -398,6 +410,38 @@ private fun JagexAccountCard(
                     color = TextSecondary,
                     fontSize = 16.sp,
                 )
+            }
+
+            // Shown collapsed too: this is the one state where nothing on the card works.
+            if (account.needsReauth)
+            {
+                Spacer(Modifier.height(10.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF3A1F1F))
+                        .padding(10.dp),
+                ) {
+                    Text(JagexAuth.REAUTH_MESSAGE, color = Color(0xFFF2A0A0), fontSize = 12.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "If your browser is still signed in to Jagex this happens automatically; " +
+                            "otherwise you'll be asked to sign in once.",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(BrandOrange)
+                            .clickable(enabled = !busy, onClick = onReauthorize)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text("Re-authorize", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
 
             if (expanded)

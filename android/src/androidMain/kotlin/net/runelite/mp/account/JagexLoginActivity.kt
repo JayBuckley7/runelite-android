@@ -30,13 +30,23 @@ import kotlinx.coroutines.withContext
  */
 internal class JagexLoginActivity : ComponentActivity()
 {
-    private companion object
+    companion object
     {
-        const val TAG = "JagexLogin"
-        const val PREFS = "runelite_mp_jagex_login"
-        const val KEY_VERIFIER = "pkce_verifier"
-        const val KEY_STATE = "pkce_state"
-        const val KEY_URL = "pending_url"
+        private const val TAG = "JagexLogin"
+        private const val PREFS = "runelite_mp_jagex_login"
+        private const val KEY_VERIFIER = "pkce_verifier"
+        private const val KEY_STATE = "pkce_state"
+        private const val KEY_URL = "pending_url"
+        private const val KEY_REAUTH_SUB = "reauth_sub"
+
+        /**
+         * `sub` of a stored account whose refresh token Jagex rejected. Re-authorizing skips
+         * `prompt=login`, so a live browser session completes it with no credentials typed.
+         */
+        private const val EXTRA_REAUTH_SUB = "net.runelite.mp.jagex.reauth_sub"
+
+        fun reauthIntent(context: Context, account: JagexAccount): Intent =
+            Intent(context, JagexLoginActivity::class.java).putExtra(EXTRA_REAUTH_SUB, account.sub)
     }
 
     /**
@@ -52,6 +62,9 @@ internal class JagexLoginActivity : ComponentActivity()
     private val state = LoginUiState()
     private var work: Job? = null
 
+    /** Set when a re-authorize came back as the wrong account; the retry forces the login prompt. */
+    private var forceLoginReauthSub: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?)
     {
         super.onCreate(savedInstanceState)
@@ -66,14 +79,15 @@ internal class JagexLoginActivity : ComponentActivity()
         val returned = consumeRedirect(intent)
         // A cold start that isn't a redirect is the user asking to sign in; go straight to
         // the browser rather than making them tap through a screen that can only do that.
-        if (!returned && savedInstanceState == null) launchLogin()
+        if (!returned && savedInstanceState == null) launchLogin(intent.getStringExtra(EXTRA_REAUTH_SUB))
     }
 
     override fun onNewIntent(intent: Intent)
     {
         super.onNewIntent(intent)
         setIntent(intent)
-        consumeRedirect(intent)
+        // singleTask: a re-authorize request can land on an instance that's already up.
+        if (!consumeRedirect(intent)) intent.getStringExtra(EXTRA_REAUTH_SUB)?.let { launchLogin(it) }
     }
 
     override fun onDestroy()
@@ -90,21 +104,28 @@ internal class JagexLoginActivity : ComponentActivity()
         finish()
     }
 
-    /** Arms a fresh attempt and hands its URL to the browser. */
-    private fun launchLogin()
+    /**
+     * Arms a fresh attempt and hands its URL to the browser. With [reauthSub] set it
+     * re-authorizes that stored account, letting the browser's existing Jagex session answer
+     * unless [forceLogin] asks for the credential prompt anyway.
+     */
+    private fun launchLogin(reauthSub: String? = null, forceLogin: Boolean = reauthSub == null)
     {
         work?.cancel()
         val pkce = JagexAuth.generatePkce()
-        val url = JagexAuth.buildLoginUrl(pkce)
+        val url = JagexAuth.buildLoginUrl(pkce, forceLogin)
         pending.edit {
             clear()
             putString(KEY_VERIFIER, pkce.verifier)
             putString(KEY_STATE, pkce.state)
             putString(KEY_URL, url)
+            if (reauthSub != null) putString(KEY_REAUTH_SUB, reauthSub)
         }
-        Log.i(TAG, "opening browser for sign-in")
+        Log.i(TAG, if (reauthSub != null) "opening browser to re-authorize" else "opening browser for sign-in")
         state.error = null
-        state.status = "Waiting for sign-in in your browser…"
+        state.status =
+            if (reauthSub != null && !forceLogin) "Re-authorizing… if your browser is still signed in to Jagex, this finishes by itself."
+            else "Waiting for sign-in in your browser…"
         openInBrowser(url)
     }
 
@@ -118,7 +139,8 @@ internal class JagexLoginActivity : ComponentActivity()
         val url = pending.getString(KEY_URL, null)
         if (url == null)
         {
-            launchLogin()
+            val sub = forceLoginReauthSub
+            if (sub != null) launchLogin(sub, forceLogin = true) else launchLogin()
             return
         }
         Log.i(TAG, "reopening browser for the in-flight sign-in")
@@ -153,6 +175,7 @@ internal class JagexLoginActivity : ComponentActivity()
         val uri = data.toString()
         val verifier = pending.getString(KEY_VERIFIER, null)
         val expectedState = pending.getString(KEY_STATE, null)
+        val reauthSub = pending.getString(KEY_REAUTH_SUB, null)
         if (verifier == null || expectedState == null)
         {
             Log.w(TAG, "redirect with no attempt in flight; ignoring")
@@ -170,8 +193,24 @@ internal class JagexLoginActivity : ComponentActivity()
                 val code = JagexAuth.authCodeFromRedirect(uri, expectedState)
                 val account = withContext(Dispatchers.IO) {
                     val tokens = JagexAuth.exchangeCode(code, verifier)
-                    state.status = "Loading your characters…"
-                    buildAccount(tokens)
+                    if (reauthSub != null && tokens.sub != reauthSub) null
+                    else
+                    {
+                        state.status = "Loading your characters…"
+                        buildAccount(tokens)
+                    }
+                }
+                if (account == null)
+                {
+                    // The browser's live session belongs to another Jagex account. Don't add
+                    // it; the next attempt asks for credentials so the right one can sign in.
+                    Log.i(TAG, "re-authorize returned a different Jagex account")
+                    pending.edit { remove(KEY_URL) }
+                    forceLoginReauthSub = reauthSub
+                    state.status = null
+                    state.error = "Your browser is signed in to a different Jagex account. " +
+                        "Tap Try again to sign in to the account you're re-authorizing."
+                    return@launch
                 }
                 JagexAccountStore.save(this@JagexLoginActivity, account)
                 Log.i(TAG, "signed in; ${account.characters.size} character(s)")

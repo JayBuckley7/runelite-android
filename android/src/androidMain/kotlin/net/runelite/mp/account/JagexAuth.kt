@@ -63,7 +63,22 @@ internal object JagexAuth
     private val secureRandom = SecureRandom()
 
     /** Thrown for any expected failure in the flow; the message is user-presentable. */
-    class AuthException(message: String, cause: Throwable? = null) : IOException(message, cause)
+    open class AuthException(
+        message: String,
+        cause: Throwable? = null,
+        /** The OAuth `error` code from a failed response, when there was one. */
+        val reason: String? = null,
+    ) : IOException(message, cause)
+
+    /**
+     * The token endpoint answered `invalid_grant` to a refresh: the stored refresh token is
+     * dead (expired, revoked, or already redeemed by a refresh whose result was lost). Nothing short of a
+     * new authorization brings the account back, so callers prompt for one instead of retrying.
+     */
+    class TokenRevokedException : AuthException(REAUTH_MESSAGE)
+
+    const val REAUTH_MESSAGE =
+        "This account's Jagex sign-in has expired. Re-authorize it before it will work again."
 
     // ------------------------------------------------------------------
     // PKCE
@@ -90,15 +105,19 @@ internal object JagexAuth
      * `prompt=login` forces a fresh credential entry rather than silently reusing the
      * browser's existing Jagex session. That is deliberate: without it, adding a *second*
      * Jagex account would just hand back the one already signed in.
+     *
+     * Re-authorizing an existing account passes [forceLogin] = false for exactly that reuse:
+     * while the browser's Jagex session is alive the authorize step completes by itself and
+     * redirects straight back, so a dead refresh token is replaced with no credentials typed.
      */
-    fun buildLoginUrl(pkce: Pkce): String = "$ORIGIN/oauth2/auth?" + query(
+    fun buildLoginUrl(pkce: Pkce, forceLogin: Boolean = true): String = "$ORIGIN/oauth2/auth?" + query(
         "response_type" to "code",
         "client_id" to CLIENT_ID,
         "redirect_uri" to REDIRECT_URI,
         "scope" to SCOPE,
         "code_challenge" to pkce.challenge,
         "code_challenge_method" to "S256",
-        "prompt" to "login",
+        *(if (forceLogin) arrayOf("prompt" to "login") else emptyArray<Pair<String, String>>()),
         "state" to pkce.state,
     )
 
@@ -146,11 +165,18 @@ internal object JagexAuth
         "redirect_uri" to REDIRECT_URI,
     )
 
-    fun refreshTokens(refreshToken: String): Tokens = tokenRequest(
-        "grant_type" to "refresh_token",
-        "client_id" to CLIENT_ID,
-        "refresh_token" to refreshToken,
-    )
+    fun refreshTokens(refreshToken: String): Tokens = try
+    {
+        tokenRequest(
+            "grant_type" to "refresh_token",
+            "client_id" to CLIENT_ID,
+            "refresh_token" to refreshToken,
+        )
+    }
+    catch (e: AuthException)
+    {
+        throw if (e.reason == "invalid_grant") TokenRevokedException() else e
+    }
 
     /** Best-effort token revocation on sign-out; failures are logged, never thrown. */
     fun revokeToken(accessToken: String)
@@ -286,7 +312,8 @@ internal object JagexAuth
                 val reason = runCatching { JSONObject(err).optString("error") }.getOrNull().orEmpty()
                 Log.w(TAG, "HTTP $code from ${URL(url).path}${if (reason.isEmpty()) "" else " ($reason)"}")
                 throw AuthException(
-                    "Jagex returned HTTP $code" + if (reason.isEmpty()) "." else " ($reason)."
+                    "Jagex returned HTTP $code" + if (reason.isEmpty()) "." else " ($reason).",
+                    reason = reason,
                 )
             }
             return conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }

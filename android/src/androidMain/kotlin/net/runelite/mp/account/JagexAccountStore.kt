@@ -36,6 +36,8 @@ internal data class JagexAccount(
     val accessTokenExpiryEpochMs: Long,
     val characters: List<JagexCharacter>,
     val lastRefreshedEpochMs: Long,
+    /** Set when Jagex rejected [refreshToken]; the account is unusable until re-authorized. */
+    val needsReauth: Boolean = false,
 )
 
 /**
@@ -61,6 +63,9 @@ internal object JagexAccountStore
 
     /** Refresh the access token when it's this close to expiring. Mirrors the desktop launcher. */
     private const val REFRESH_SKEW_MS = 5 * 60 * 1000L
+
+    /** Serializes [prepare]: two refreshes racing on one refresh token burn it. */
+    private val prepareLock = Any()
 
     fun list(context: Context): List<JagexAccount>
     {
@@ -118,23 +123,39 @@ internal object JagexAccountStore
      * Each step degrades rather than failing outright where it can — a session that can't
      * be renewed falls back to the stored one, and a character list that won't load keeps
      * the cached one — so a flaky network doesn't cost you a working account. Only a
-     * failed token refresh is fatal, since nothing downstream can work without it.
+     * failed token refresh is fatal, since nothing downstream can work without it. A refresh
+     * Jagex rejects outright marks the account [JagexAccount.needsReauth] and throws
+     * [JagexAuth.TokenRevokedException], so the picker can offer to re-authorize it.
      *
      * Network-blocking; call from [kotlinx.coroutines.Dispatchers.IO].
      */
-    fun prepare(context: Context, account: JagexAccount): JagexAccount
+    fun prepare(context: Context, account: JagexAccount): JagexAccount = synchronized(prepareLock)
     {
-        var current = account
+        // The stored copy, not the caller's: a refresh that ran since the caller read the
+        // list has already rotated the refresh token, and the old one is dead.
+        var current = File(dir(context), fileName(account.sub)).takeIf { it.isFile }?.let { read(it) } ?: account
+        if (current.needsReauth) throw JagexAuth.TokenRevokedException()
 
         if (System.currentTimeMillis() > current.accessTokenExpiryEpochMs - REFRESH_SKEW_MS)
         {
-            val tokens = JagexAuth.refreshTokens(current.refreshToken)
+            val tokens = try
+            {
+                JagexAuth.refreshTokens(current.refreshToken)
+            }
+            catch (e: JagexAuth.TokenRevokedException)
+            {
+                save(context, current.copy(needsReauth = true))
+                throw e
+            }
             current = current.copy(
                 accessToken = tokens.accessToken,
-                refreshToken = tokens.refreshToken,
+                refreshToken = tokens.refreshToken.ifEmpty { current.refreshToken },
                 idToken = tokens.idToken,
                 accessTokenExpiryEpochMs = tokens.expiryEpochMs,
             )
+            // Persist right away: the old refresh token may already be spent, so losing these
+            // to a later step throwing would leave the account unrecoverable.
+            save(context, current)
         }
 
         // A failure here is survivable — the stored session may still be live — so it is
@@ -167,7 +188,7 @@ internal object JagexAccountStore
 
         current = current.copy(lastRefreshedEpochMs = System.currentTimeMillis())
         save(context, current)
-        return current
+        current
     }
 
     /**
@@ -206,6 +227,7 @@ internal object JagexAccountStore
         put("sessionId", a.sessionId ?: JSONObject.NULL)
         put("accessTokenExpiryEpochMs", a.accessTokenExpiryEpochMs)
         put("lastRefreshedEpochMs", a.lastRefreshedEpochMs)
+        put("needsReauth", a.needsReauth)
         put("characters", JSONArray().apply {
             for (c in a.characters)
             {
@@ -245,6 +267,7 @@ internal object JagexAccountStore
                 accessTokenExpiryEpochMs = o.optLong("accessTokenExpiryEpochMs"),
                 characters = characters,
                 lastRefreshedEpochMs = o.optLong("lastRefreshedEpochMs"),
+                needsReauth = o.optBoolean("needsReauth"),
             )
         }
         catch (t: Throwable)
