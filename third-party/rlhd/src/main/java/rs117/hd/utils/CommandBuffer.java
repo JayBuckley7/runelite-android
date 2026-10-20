@@ -13,6 +13,7 @@ import rs117.hd.overlays.FrameTimer;
 import rs117.hd.overlays.Timer;
 import rs117.hd.utils.buffer.GLBuffer;
 import rs117.hd.utils.buffer.GpuIntBuffer;
+import rs117.hd.vulkan.Vk;
 
 import static org.lwjgl.opengl.GL33C.*;
 import static org.lwjgl.opengl.GL40.glDrawArraysIndirect;
@@ -321,6 +322,14 @@ public class CommandBuffer {
 						int texUnit = (int) (packed >> 32);
 						int texId = (int) packed;
 
+						if (Vk.ACTIVE) {
+							if (texType == GL_TEXTURE_BUFFER) {
+								Vk.bindStorage(texId);
+							} else {
+								Vk.bindTexture(texUnit - GL_TEXTURE0, texId);
+							}
+							break;
+						}
 						glActiveTexture(texUnit);
 						glBindTexture(texType, texId);
 						break;
@@ -352,7 +361,11 @@ public class CommandBuffer {
 						int offset = (int) (packed >> 32);
 						int count = (int) packed;
 
-						glDrawArrays(mode, offset, count);
+						if (Vk.ACTIVE) {
+							Vk.drawArrays(offset, count);
+						} else {
+							glDrawArrays(mode, offset, count);
+						}
 						break;
 					}
 					case GL_DRAW_ELEMENTS_TYPE: {
@@ -360,7 +373,11 @@ public class CommandBuffer {
 						int vertexCount = (int) (data >> 32);
 						long byteOffset = cmd[readHead++];
 
-						glDrawElements(mode, vertexCount, GL_UNSIGNED_INT, byteOffset);
+						if (Vk.ACTIVE) {
+							Vk.drawElements(vertexCount, byteOffset);
+						} else {
+							glDrawElements(mode, vertexCount, GL_UNSIGNED_INT, byteOffset);
+						}
 						break;
 					}
 					case GL_MULTI_DRAW_ARRAYS_TYPE: {
@@ -381,7 +398,11 @@ public class CommandBuffer {
 						offsets.flip();
 						counts.flip();
 
-						glMultiDrawArrays(mode, offsets, counts);
+						if (Vk.ACTIVE) {
+							Vk.multiDrawArrays(offsets, counts);
+						} else {
+							glMultiDrawArrays(mode, offsets, counts);
+						}
 
 						offsets.clear();
 						counts.clear();

@@ -56,7 +56,19 @@ object AndroidHdHost : AndroidSupport.Host {
     override fun width() = GlesHost.get().width
     override fun height() = GlesHost.get().height
     override fun contextGeneration() = GlesHost.get().contextGeneration()
-    override fun stopped() { Canvas.setRenderedByGles(false) }
+    override fun stopped() {
+        GlesHost.get().setVulkanOwnsSurface(false)
+        Canvas.setRenderedByGles(false)
+    }
+    override fun setVulkanMode(vulkan: Boolean) {
+        GlesHost.get().setVulkanOwnsSurface(vulkan)
+        if (vulkan) Canvas.setRenderedByGles(true)
+    }
+    override fun vulkanSurface(): Any? {
+        Canvas.setRenderedByGles(true)
+        return GlesHost.get().surfaceForVulkan()
+    }
+    override fun vulkanCapabilities(): org.lwjgl.opengl.GLCapabilities = org.lwjgl.opengl.GLCapabilities.forVulkan()
     override fun createTileResolvedFbo(width: Int, height: Int, samples: Int, colorFormat: Int, depthFormat: Int): IntArray? {
         val ids = IntArray(4)
         return if (GlesExt.createTileResolvedFbo(width, height, samples, colorFormat, depthFormat, ids)) ids else null

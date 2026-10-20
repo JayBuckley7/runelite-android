@@ -38,6 +38,8 @@ import static org.lwjgl.opengl.GL44.GL_DYNAMIC_STORAGE_BIT;
 import static org.lwjgl.opengl.GL44.GL_MAP_PERSISTENT_BIT;
 import static org.lwjgl.opengl.GL44.glBufferStorage;
 import static rs117.hd.HdPlugin.GL_CAPS;
+import rs117.hd.vulkan.Vk;
+import rs117.hd.vulkan.VkNative;
 import static rs117.hd.HdPlugin.SUPPORTS_STORAGE_BUFFERS;
 import static rs117.hd.HdPlugin.checkGLErrors;
 import static rs117.hd.utils.MathUtils.*;
@@ -112,6 +114,13 @@ public class GLBuffer implements Destructible {
 		int count
 	) {
 		assert count > 0;
+
+		if (Vk.ACTIVE) {
+			count = sortAndMergeRanges(srcOffsetBytes, dstOffsetBytes, numBytes, count);
+			for (int i = 0; i < count; i++)
+				Vk.bufferCopy(srcId, dstId, srcOffsetBytes[i], dstOffsetBytes[i], numBytes[i]);
+			return;
+		}
 
 		glBindBuffer(GL_COPY_READ_BUFFER, srcId);
 		glBindBuffer(GL_COPY_WRITE_BUFFER, dstId);
@@ -355,7 +364,27 @@ public class GLBuffer implements Destructible {
 		return initialize(0);
 	}
 
+	/** Vulkan buffer usage implied by the GL target this buffer is bound to. */
+	private int vkUsage() {
+		switch (target) {
+			case GL_ARRAY_BUFFER: return VkNative.BUF_VERTEX;
+			case GL_ELEMENT_ARRAY_BUFFER: return VkNative.BUF_INDEX;
+			case GL_UNIFORM_BUFFER: return VkNative.BUF_UNIFORM;
+			case GL_TEXTURE_BUFFER: return VkNative.BUF_STORAGE;
+			case 0x8F3F: return VkNative.BUF_INDIRECT; // GL_DRAW_INDIRECT_BUFFER
+			default: return VkNative.BUF_TRANSFER;
+		}
+	}
+
 	public GLBuffer initialize(long initialCapacity) {
+		if (Vk.ACTIVE) {
+			long initial = ceilPow2(max(1, initialCapacity));
+			id = Vk.bufferCreate(initial, vkUsage());
+			if (id == 0)
+				throw new RuntimeException("Unable to create Vulkan buffer " + name + " (" + initial + " bytes)");
+			size = initial;
+			return this;
+		}
 		id = glGenBuffers();
 		// Initialize both GL and CL buffers to buffers of a single byte or more,
 		// to ensure that valid buffers are given to compute dispatches.
@@ -380,7 +409,11 @@ public class GLBuffer implements Destructible {
 		mappedBuffer = null;
 
 		if (id != 0) {
-			glDeleteBuffers(id);
+			if (Vk.ACTIVE) {
+				Vk.bufferDestroy(id);
+			} else {
+				glDeleteBuffers(id);
+			}
 			id = 0;
 		}
 
@@ -403,17 +436,25 @@ public class GLBuffer implements Destructible {
 		if (isStorageBuffer())
 			throw new IllegalStateException("Not implemented for storage buffers. Perhaps via glInvalidateBufferData?");
 
+		if (Vk.ACTIVE) {
+			// Switch to an allocation the GPU isn't reading; the contents become undefined
+			Vk.bufferMap(id, VkNative.MAP_DISCARD);
+			return;
+		}
+
 		bind();
 		glBufferData(target, size, usage);
 		unbind();
 	}
 
 	public void bind() {
-		glBindBuffer(target, id);
+		if (!Vk.ACTIVE)
+			glBindBuffer(target, id);
 	}
 
 	public void unbind() {
-		glBindBuffer(target, 0);
+		if (!Vk.ACTIVE)
+			glBindBuffer(target, 0);
 	}
 
 	public boolean ensureCapacity(long numBytes) {
@@ -428,6 +469,15 @@ public class GLBuffer implements Destructible {
 		}
 
 		numBytes = ceilPow2(numBytes);
+		if (Vk.ACTIVE) {
+			// Same buffer handle, new storage; bytes below byteOffset survive like GL's copy does
+			final int vkMappedFlags = mappedBuffer != null && mappedBuffer.isMapped() ? mappedBuffer.getMappedFlags() : 0;
+			Vk.bufferResize(id, numBytes, byteOffset);
+			size = numBytes;
+			if (vkMappedFlags != 0)
+				mappedBuffer.vkRemap();
+			return true;
+		}
 		if (log.isTraceEnabled()) {
 			log.trace(
 				"{} buffer '{}'\t{}",
@@ -535,6 +585,11 @@ public class GLBuffer implements Destructible {
 	public void upload(ByteBuffer data, long byteOffset) {
 		long numBytes = data.remaining();
 		ensureCapacity(byteOffset, numBytes);
+		if (Vk.ACTIVE) {
+			var m = Vk.bufferMap(id, VkNative.MAP_PRESERVE);
+			m.position((int) byteOffset); m.put(data);
+			return;
+		}
 		if (isStorageBuffer()) {
 			mappedBuffer.byteView()
 				.position((int) byteOffset)
@@ -562,6 +617,11 @@ public class GLBuffer implements Destructible {
 	public void upload(IntBuffer data, long byteOffset) {
 		long numBytes = 4L * data.remaining();
 		ensureCapacity(byteOffset, numBytes);
+		if (Vk.ACTIVE) {
+			var m = Vk.bufferMap(id, VkNative.MAP_PRESERVE);
+			m.position((int) byteOffset); m.asIntBuffer().put(data);
+			return;
+		}
 		if (isStorageBuffer()) {
 			mappedBuffer.intView()
 				.position((int) (byteOffset / 4))
@@ -589,6 +649,11 @@ public class GLBuffer implements Destructible {
 	public void upload(FloatBuffer data, long byteOffset) {
 		long numBytes = 4L * data.remaining();
 		ensureCapacity(byteOffset, numBytes);
+		if (Vk.ACTIVE) {
+			var m = Vk.bufferMap(id, VkNative.MAP_PRESERVE);
+			m.position((int) byteOffset); m.asFloatBuffer().put(data);
+			return;
+		}
 		if (isStorageBuffer()) {
 			mappedBuffer.floatView()
 				.position((int) (byteOffset / 4))

@@ -340,6 +340,10 @@ public abstract class UniformBuffer<GLBUFFER extends GLBuffer> {
 
 	public void bind(int bindingIndex) {
 		this.bindingIndex = bindingIndex;
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			rs117.hd.vulkan.Vk.bindUniformBuffer(bindingIndex, glBuffer.id);
+			return;
+		}
 		glBindBufferBase(GL_UNIFORM_BUFFER, bindingIndex, glBuffer.id);
 	}
 
@@ -357,6 +361,18 @@ public abstract class UniformBuffer<GLBUFFER extends GLBuffer> {
 
 		if (!isDirty())
 			return;
+
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			// Rewriting a UBO the GPU may still read moves it to an idle allocation, which
+			// starts out with undefined contents, so always write the whole block.
+			var m = rs117.hd.vulkan.Vk.bufferMap(glBuffer.id, rs117.hd.vulkan.VkNative.MAP_DISCARD);
+			data.clear();
+			m.put(data);
+			data.clear();
+			dirtyLowTide = Integer.MAX_VALUE;
+			dirtyHighTide = 0;
+			return;
+		}
 
 		data.position(dirtyLowTide);
 		data.limit(dirtyHighTide);

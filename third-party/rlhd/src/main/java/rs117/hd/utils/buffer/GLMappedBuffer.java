@@ -8,6 +8,9 @@ import lombok.experimental.Accessors;
 
 import static org.lwjgl.opengl.GL33C.*;
 import static rs117.hd.HdPlugin.GL_CAPS;
+import java.nio.ByteOrder;
+import rs117.hd.vulkan.Vk;
+import rs117.hd.vulkan.VkNative;
 import static rs117.hd.HdPlugin.checkGLErrors;
 import static rs117.hd.utils.MathUtils.*;
 import static rs117.hd.utils.buffer.GLBuffer.MAP_INVALIDATE;
@@ -65,6 +68,9 @@ public final class GLMappedBuffer {
 
 		if (mapped || owner.isStorageBuffer())
 			return this;
+
+		if (Vk.ACTIVE)
+			return vkMap(flags, offsetBytes, sizeBytes);
 
 		owner.bind();
 
@@ -126,6 +132,58 @@ public final class GLMappedBuffer {
 		return this;
 	}
 
+	private GLMappedBuffer vkMap(int flags, long offsetBytes, long sizeBytes) {
+		long mapSize = clamp(owner.size - offsetBytes, 0, sizeBytes);
+		if (mapSize <= 0)
+			return this;
+
+		// Invalidating the whole buffer lets the driver orphan it, which is what makes GL's
+		// unsynchronized + invalidate maps safe while earlier frames still read the old contents.
+		int mode;
+		if ((flags & MAP_INVALIDATE) != 0 && offsetBytes == 0 && mapSize == owner.size) {
+			mode = VkNative.MAP_DISCARD;
+		} else if ((flags & MAP_UNSYNCHRONIZED) != 0) {
+			mode = VkNative.MAP_UNSYNCHRONIZED;
+		} else {
+			mode = VkNative.MAP_PRESERVE;
+		}
+		ByteBuffer whole = Vk.bufferMap(owner.id, mode);
+		if (whole == null)
+			throw new RuntimeException("Failed to map buffer " + owner.id);
+
+		// Like glMapBufferRange, the returned view starts at the requested offset. The native
+		// side hands back the same ByteBuffer object for an allocation every time, so the views
+		// are rebuilt on every map: int/float views keep the size they were created with, and a
+		// larger map of the same allocation (the UI growing within its power-of-two buffer)
+		// would otherwise overflow them.
+		whole.position((int) offsetBytes).limit((int) (offsetBytes + mapSize));
+		ByteBuffer buf = whole.slice().order(ByteOrder.nativeOrder());
+		byteView = buf;
+		intView = buf.asIntBuffer();
+		floatView = buf.asFloatBuffer();
+		byteView.clear();
+		intView.clear();
+		floatView.clear();
+
+		this.mappedOffset = offsetBytes;
+		this.mappedFlags = flags;
+		mapped = true;
+		return this;
+	}
+
+	/** Vulkan: the owner was resized; point the views at the new storage, keeping the write position. */
+	void vkRemap() {
+		if (!mapped)
+			return;
+		int pos = getPositionBytes();
+		long offset = mappedOffset;
+		int flags = mappedFlags;
+		mapped = false;
+		vkMap(flags | MAP_UNSYNCHRONIZED, offset, owner.size - offset);
+		mappedFlags = flags;
+		setPositionBytes(pos);
+	}
+
 	public int getPositionBytes() {
 		int bytesPos = byteView.position();
 		if (intView.position() * 4 > bytesPos)
@@ -155,6 +213,12 @@ public final class GLMappedBuffer {
 			return;
 
 		syncViews();
+
+		if (Vk.ACTIVE) {
+			// Host-coherent memory: nothing to flush
+			mapped = false;
+			return;
+		}
 
 		owner.bind();
 		if (owner.target != GL_STATIC_DRAW && GL_CAPS.GL_ARB_map_buffer_range && !GLBuffer.DEBUG_MAC_OS) {

@@ -2,7 +2,9 @@ package rs117.hd.opengl.shader;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import rs117.hd.opengl.uniforms.UniformBuffer;
 import rs117.hd.utils.Destructible;
 import rs117.hd.utils.DestructibleHandler;
+import rs117.hd.vulkan.Vk;
+import rs117.hd.vulkan.VkShaders;
 
 import static org.lwjgl.opengl.GL33C.*;
 import static rs117.hd.HdPlugin.APPLE;
@@ -36,7 +40,15 @@ public class ShaderProgram implements Destructible {
 		templateConsumer.accept(shaderTemplate);
 	}
 
+	/** Vulkan: while non-null, initialize() is only being run to learn each sampler's texture unit. */
+	private static Map<String, Integer> vkRecordingUnits;
+
 	public void compile(ShaderIncludes includes) throws ShaderException, IOException {
+		if (Vk.ACTIVE) {
+			compileVulkan(includes);
+			return;
+		}
+
 		int newProgram;
 		try {
 			newProgram = shaderTemplate.compile(includes);
@@ -76,6 +88,70 @@ public class ShaderProgram implements Destructible {
 		}
 	}
 
+	private void compileVulkan(ShaderIncludes includes) throws ShaderException, IOException {
+		// Samplers get fixed descriptor bindings at their texture unit, which subclasses only
+		// reveal by assigning them in initialize(); run it once in recording mode to find out.
+		Map<String, Integer> units = new HashMap<>();
+		vkRecordingUnits = units;
+		try {
+			initialize();
+		} finally {
+			vkRecordingUnits = null;
+		}
+
+		Map<String, VkShaders.PushUniform> push = new HashMap<>();
+		int newProgram;
+		try {
+			newProgram = shaderTemplate.compileVulkan(includes, units, push);
+		} catch (ShaderException ex) {
+			viable = false;
+			throw ex;
+		}
+
+		if (isValid())
+			destroy();
+		program = newProgram;
+
+		for (var prop : uniformProperties) {
+			if (prop instanceof UniformTexture || prop instanceof UniformImage) {
+				prop.uniformIndex = units.containsKey(prop.uniformName) ? 0 : -1;
+				continue;
+			}
+			var pu = push.get(prop.uniformName);
+			prop.uniformIndex = pu != null ? pu.offset : -1;
+			if (prop.uniformIndex == -1 && !prop.ignoreMissing)
+				log.warn("{} has missing or unused {}: {}", getClass().getSimpleName(), prop.getClass().getSimpleName(), prop.uniformName);
+		}
+
+		use();
+		initialize();
+	}
+
+	/**
+	 * Vulkan: this program's loose uniforms. GL keeps uniform values per program, but push
+	 * constants are command-buffer state shared by every pipeline, so Vk re-pushes the whole
+	 * block whenever this program is used.
+	 */
+	private final int[] vkPushData = new int[Vk.PUSH_CONSTANT_WORDS];
+
+	private static void vkPushFloats(ShaderProgram p, int offset, float... values) {
+		if (offset < 0)
+			return;
+		int base = offset / 4;
+		for (int i = 0; i < values.length && base + i < p.vkPushData.length; i++)
+			p.vkPushData[base + i] = Float.floatToRawIntBits(values[i]);
+		Vk.pushDataChanged(p.vkPushData);
+	}
+
+	private static void vkPushInts(ShaderProgram p, int offset, int... values) {
+		if (offset < 0)
+			return;
+		int base = offset / 4;
+		for (int i = 0; i < values.length && base + i < p.vkPushData.length; i++)
+			p.vkPushData[base + i] = values[i];
+		Vk.pushDataChanged(p.vkPushData);
+	}
+
 	protected void initialize() {}
 
 	public boolean isValid() {
@@ -84,6 +160,8 @@ public class ShaderProgram implements Destructible {
 
 	public boolean isActive() {
 		// Meant for debugging only
+		if (Vk.ACTIVE)
+			return true;
 		return program == glGetInteger(GL_CURRENT_PROGRAM);
 	}
 
@@ -97,6 +175,10 @@ public class ShaderProgram implements Destructible {
 
 	public void use() {
 		assert program != 0;
+		if (Vk.ACTIVE) {
+			Vk.useProgram(program, vkPushData);
+			return;
+		}
 		glUseProgram(program);
 
 		for (UniformBufferBlockPair pair : uniformBlockMappings)
@@ -116,7 +198,11 @@ public class ShaderProgram implements Destructible {
 		if (program == 0)
 			return;
 
-		glDeleteProgram(program);
+		if (Vk.ACTIVE) {
+			Vk.programDestroy(program);
+		} else {
+			glDeleteProgram(program);
+		}
 		program = 0;
 
 		for (var prop : uniformProperties)
@@ -145,6 +231,10 @@ public class ShaderProgram implements Destructible {
 
 	public static class UniformBool extends UniformProperty {
 		public void set(boolean bool) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, bool ? 1 : 0);
+				return;
+			}
 			assert program.isActive();
 			glUniform1i(uniformIndex, bool ? 1 : 0);
 		}
@@ -157,6 +247,11 @@ public class ShaderProgram implements Destructible {
 	public static class UniformTexture extends UniformProperty {
 		public void set(int textureUnit) {
 			assert textureUnit >= GL_TEXTURE0 : "Did you accidentally pass in an image unit?";
+			if (Vk.ACTIVE) {
+				// Bound by unit through the descriptor set; only the mapping matters
+				if (vkRecordingUnits != null) vkRecordingUnits.put(uniformName, textureUnit - GL_TEXTURE0);
+				return;
+			}
 			assert program.isActive();
 			if (uniformIndex != -1)
 				glUniform1i(uniformIndex, textureUnit - GL_TEXTURE0);
@@ -170,6 +265,8 @@ public class ShaderProgram implements Destructible {
 	public static class UniformImage extends UniformProperty {
 		public void set(int imageUnit) {
 			assert imageUnit < GL_TEXTURE0 : "Did you accidentally pass in a texture unit?";
+			if (Vk.ACTIVE)
+				return; // image load/store isn't used by the Vulkan renderer
 			assert program.isActive();
 			glUniform1i(uniformIndex, imageUnit);
 		}
@@ -181,6 +278,10 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform1i extends UniformProperty {
 		public void set(int value) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, value);
+				return;
+			}
 			assert program.isActive();
 			glUniform1i(uniformIndex, value);
 		}
@@ -192,11 +293,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform2i extends UniformProperty {
 		public void set(int x, int y) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, x, y);
+				return;
+			}
 			assert program.isActive();
 			glUniform2i(uniformIndex, x, y);
 		}
 
 		public void set(int... ivec2) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, ivec2);
+				return;
+			}
 			assert program.isActive();
 			glUniform2iv(uniformIndex, ivec2);
 		}
@@ -208,11 +317,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform3i extends UniformProperty {
 		public void set(int x, int y, int z) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, x, y, z);
+				return;
+			}
 			assert program.isActive();
 			glUniform3i(uniformIndex, x, y, z);
 		}
 
 		public void set(int... ivec3) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, ivec3);
+				return;
+			}
 			assert program.isActive();
 			glUniform3iv(uniformIndex, ivec3);
 		}
@@ -224,11 +341,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform4i extends UniformProperty {
 		public void set(int x, int y, int z, int w) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, x, y, z, w);
+				return;
+			}
 			assert program.isActive();
 			glUniform4i(uniformIndex, x, y, z, w);
 		}
 
 		public void set(int... ivec4) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushInts(program, uniformIndex, ivec4);
+				return;
+			}
 			assert program.isActive();
 			glUniform4iv(uniformIndex, ivec4);
 		}
@@ -240,6 +365,10 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform1f extends UniformProperty {
 		public void set(float value) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, value);
+				return;
+			}
 			assert program.isActive();
 			glUniform1f(uniformIndex, value);
 		}
@@ -251,11 +380,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform2f extends UniformProperty {
 		public void set(float x, float y) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, x, y);
+				return;
+			}
 			assert program.isActive();
 			glUniform2f(uniformIndex, x, y);
 		}
 
 		public void set(float... vec2) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, vec2);
+				return;
+			}
 			assert program.isActive();
 			glUniform2fv(uniformIndex, vec2);
 		}
@@ -267,11 +404,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform3f extends UniformProperty {
 		public void set(float x, float y, float z) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, x, y, z);
+				return;
+			}
 			assert program.isActive();
 			glUniform3f(uniformIndex, x, y, z);
 		}
 
 		public void set(float... vec3) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, vec3);
+				return;
+			}
 			assert program.isActive();
 			glUniform3fv(uniformIndex, vec3);
 		}
@@ -283,11 +428,19 @@ public class ShaderProgram implements Destructible {
 
 	public static class Uniform4f extends UniformProperty {
 		public void set(float x, float y, float z, float w) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, x, y, z, w);
+				return;
+			}
 			assert program.isActive();
 			glUniform4f(uniformIndex, x, y, z, w);
 		}
 
 		public void set(float... vec4) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, vec4);
+				return;
+			}
 			assert program.isActive();
 			glUniform4fv(uniformIndex, vec4);
 		}
@@ -299,6 +452,10 @@ public class ShaderProgram implements Destructible {
 
 	public static class UniformMat4 extends UniformProperty {
 		public void set(float[] mat4) {
+			if (Vk.ACTIVE) {
+				if (vkRecordingUnits == null) vkPushFloats(program, uniformIndex, mat4);
+				return;
+			}
 			assert program.isActive();
 			glUniformMatrix4fv(uniformIndex, false, mat4);
 		}

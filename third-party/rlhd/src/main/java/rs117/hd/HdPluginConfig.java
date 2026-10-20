@@ -909,6 +909,19 @@ public interface HdPluginConfig extends Config
 		return false;
 	}
 
+	String KEY_VULKAN = "vulkanBackend";
+	@ConfigItem(
+		keyName = KEY_VULKAN,
+		name = "Vulkan renderer (experimental)",
+		description =
+			"Render through Vulkan instead of OpenGL ES.<br>" +
+			"Falls back to OpenGL ES automatically if the device can't start Vulkan.",
+		section = miscellaneousSettings
+	)
+	default boolean vulkanBackend() {
+		return false;
+	}
+
 	String KEY_COLOR_FILTER = "colorFilter";
 	@ConfigItem(
 		keyName = KEY_COLOR_FILTER,

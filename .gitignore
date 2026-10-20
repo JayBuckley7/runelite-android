@@ -67,3 +67,6 @@ vineflower/
 client-inspector/javac.*.args
 # CMake intermediates for the Android HD native bridge.
 /android/.cxx/
+
+# shaderc static libraries built from the NDK by :android:buildShaderc
+android/.shaderc/

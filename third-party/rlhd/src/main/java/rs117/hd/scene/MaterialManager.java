@@ -110,6 +110,7 @@ public class MaterialManager {
 	public static Material[] MATERIALS;
 	public static Material[] VANILLA_TEXTURE_MAPPING;
 
+	@lombok.Getter
 	private int texMaterialTextureArray;
 	private int[] textureResolution;
 	public final List<TextureLayer> textureLayers = new ArrayList<>();
@@ -125,8 +126,10 @@ public class MaterialManager {
 			fileWatcher.unregister();
 		fileWatcher = null;
 
-		if (texMaterialTextureArray != 0)
-			glDeleteTextures(texMaterialTextureArray);
+		if (texMaterialTextureArray != 0) {
+			if (rs117.hd.vulkan.Vk.ACTIVE) rs117.hd.vulkan.Vk.imageDestroy(texMaterialTextureArray);
+			else glDeleteTextures(texMaterialTextureArray);
+		}
 		texMaterialTextureArray = 0;
 		textureLayers.clear();
 
@@ -391,6 +394,22 @@ public class MaterialManager {
 
 		int textureSize = config.textureResolution().getSize();
 		int[] resolution = ivec(textureSize, textureSize);
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			if (texMaterialTextureArray == 0 || previousLayerCount != textureLayers.size() || !Arrays.equals(textureResolution, resolution)) {
+				textureResolution = resolution;
+				if (texMaterialTextureArray != 0)
+					rs117.hd.vulkan.Vk.imageDestroy(texMaterialTextureArray);
+				for (var layer : textureLayers)
+					layer.needsUpload = true;
+				int mipLevels = 1 + floor(log2(textureSize));
+				texMaterialTextureArray = rs117.hd.vulkan.Vk.imageCreate(
+					rs117.hd.vulkan.VkNative.IMG_2D_ARRAY, GL_SRGB8_ALPHA8, textureSize, textureSize,
+					max(1, textureLayers.size()), mipLevels, 1, rs117.hd.vulkan.VkNative.IMG_SAMPLED);
+				if (texMaterialTextureArray == 0)
+					throw new RuntimeException("Unable to allocate the " + textureSize + "px texture array");
+				rs117.hd.vulkan.Vk.bindTexture(TEXTURE_UNIT_GAME - GL_TEXTURE0, texMaterialTextureArray);
+			}
+		} else {
 		glActiveTexture(TEXTURE_UNIT_GAME);
 		if (texMaterialTextureArray == 0 || previousLayerCount != textureLayers.size() || !Arrays.equals(textureResolution, resolution)) {
 			textureResolution = resolution;
@@ -418,6 +437,7 @@ public class MaterialManager {
 
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		}
 		}
 		textureManager.setAnisotropicFilteringLevel();
 
@@ -496,8 +516,10 @@ public class MaterialManager {
 
 			try {
 				if (!uploadedAnything) {
-					glActiveTexture(TEXTURE_UNIT_GAME);
-					glBindTexture(GL_TEXTURE_2D_ARRAY, texMaterialTextureArray);
+					if (!rs117.hd.vulkan.Vk.ACTIVE) {
+						glActiveTexture(TEXTURE_UNIT_GAME);
+						glBindTexture(GL_TEXTURE_2D_ARRAY, texMaterialTextureArray);
+					}
 					uploadedAnything = true;
 				}
 				textureManager.uploadTexture(GL_TEXTURE_2D_ARRAY, material.textureLayer, textureResolution, image);
@@ -509,8 +531,10 @@ public class MaterialManager {
 		// Reset the texture brightness
 		textureProvider.setBrightness(vanillaBrightness);
 
-		if (uploadedAnything)
-			glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+		if (uploadedAnything) {
+			if (rs117.hd.vulkan.Vk.ACTIVE) rs117.hd.vulkan.Vk.imageGenerateMips(texMaterialTextureArray);
+			else glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+		}
 	}
 
 	private static void checkForReplacementLoops(Material[] materials) {

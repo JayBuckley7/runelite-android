@@ -218,6 +218,9 @@ public final class GlesHost
 	{
 		synchronized (lock)
 		{
+			// The window belongs to a Vulkan swapchain; an EGL surface on it would fail anyway
+			// (one producer per window) and would steal it from Vulkan if it didn't.
+			if (vulkanOwnsSurface) return false;
 			if (display == EGL14.EGL_NO_DISPLAY && !initDisplayLocked()) return false;
 			if (context == EGL14.EGL_NO_CONTEXT && !initContextLocked()) return false;
 			if (androidSurface == null) return false;
@@ -258,6 +261,7 @@ public final class GlesHost
 	{
 		synchronized (lock)
 		{
+			if (vulkanOwnsSurface) return false;
 			if (makeCurrent()) return true;
 			if (display == EGL14.EGL_NO_DISPLAY || context == EGL14.EGL_NO_CONTEXT) return false;
 			if (androidSurface != null && androidSurface.isValid()) return false; // a real failure
@@ -272,6 +276,35 @@ public final class GlesHost
 				surfaceDirty = false;
 			}
 			return EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, context);
+		}
+	}
+
+	private boolean vulkanOwnsSurface;
+
+	/**
+	 * Give the window to Vulkan (true) or back to EGL (false). Taking it releases the EGL window
+	 * surface so the native window has no producer connected; the EGL context itself survives
+	 * for whoever uses GL next.
+	 */
+	public void setVulkanOwnsSurface(boolean vulkan)
+	{
+		synchronized (lock)
+		{
+			if (vulkanOwnsSurface == vulkan) return;
+			vulkanOwnsSurface = vulkan;
+			if (vulkan) destroyEglSurfaceLocked();
+			surfaceDirty = true;
+			Log.i(TAG, vulkan ? "window handed to Vulkan" : "window returned to EGL");
+		}
+	}
+
+	/** The Android Surface for a Vulkan swapchain, or null while there is no valid one. */
+	public Surface surfaceForVulkan()
+	{
+		synchronized (lock)
+		{
+			if (!vulkanOwnsSurface || androidSurface == null || !androidSurface.isValid()) return null;
+			return androidSurface;
 		}
 	}
 

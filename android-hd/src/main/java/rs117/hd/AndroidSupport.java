@@ -17,6 +17,16 @@ public final class AndroidSupport {
          * renderbuffers + blit resolve.
          */
         default int[] createTileResolvedFbo(int width, int height, int samples, int colorFormat, int depthFormat) { return null; }
+
+        /**
+         * Hands the window to Vulkan (true) or back to EGL (false). A window can only have one
+         * producer API connected, so EGL must release its surface before Vulkan can attach.
+         */
+        default void setVulkanMode(boolean vulkan) {}
+        /** The Android Surface to present to with Vulkan, or null while there is none (backgrounded). */
+        default Object vulkanSurface() { return null; }
+        /** Capabilities object with every optional GL feature off, for code paths keyed on GL_CAPS. */
+        default org.lwjgl.opengl.GLCapabilities vulkanCapabilities() { return null; }
     }
     public static Host host;
     public static final String GLSL_HEADER = "#version 320 es\n"

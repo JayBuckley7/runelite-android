@@ -408,6 +408,19 @@ public class ShaderOverlay<T extends ShaderOverlay.Shader> extends Overlay {
 	protected void updateUniforms() {}
 
 	protected void renderShader() {
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			rs117.hd.vulkan.Vk.enable(GL_BLEND);
+			rs117.hd.vulkan.Vk.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+			if (fullscreen) {
+				rs117.hd.vulkan.Vk.bindVertexLayout(plugin.vaoTri, 0);
+				rs117.hd.vulkan.Vk.drawArrays(0, 3);
+			} else {
+				// Triangle list: the GL path's 4-vertex fan as two triangles
+				rs117.hd.vulkan.Vk.bindVertexLayout(rs117.hd.HdVulkan.quadListLayout(), 0);
+				rs117.hd.vulkan.Vk.drawArrays(0, 6);
+			}
+			return;
+		}
 		glEnable(GL_BLEND);
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 		if (fullscreen) {

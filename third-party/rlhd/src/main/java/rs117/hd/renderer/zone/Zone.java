@@ -23,6 +23,7 @@ import rs117.hd.utils.Destructible;
 import rs117.hd.utils.DestructibleHandler;
 import rs117.hd.utils.HDUtils;
 import rs117.hd.utils.buffer.GLBuffer;
+import rs117.hd.vulkan.Vk;
 import rs117.hd.utils.buffer.GLTextureBuffer;
 import rs117.hd.utils.collections.ConcurrentPool;
 import rs117.hd.utils.collections.Int2IntHashMap;
@@ -122,13 +123,13 @@ public class Zone implements Destructible {
 
 		if (o != null) {
 			vboO = o;
-			glVao = glGenVertexArrays();
+			glVao = Vk.ACTIVE ? Vk.layoutCreate() : glGenVertexArrays();
 			setupVao(glVao, o.id, vboM.id);
 		}
 
 		if (a != null) {
 			vboA = a;
-			glVaoA = glGenVertexArrays();
+			glVaoA = Vk.ACTIVE ? Vk.layoutCreate() : glGenVertexArrays();
 			setupVao(glVaoA, a.id, vboM.id);
 		}
 
@@ -175,12 +176,14 @@ public class Zone implements Destructible {
 		}
 
 		if (glVao != 0) {
-			glDeleteVertexArrays(glVao);
+			if (Vk.ACTIVE) Vk.layoutDestroy(glVao);
+			else glDeleteVertexArrays(glVao);
 			glVao = 0;
 		}
 
 		if (glVaoA != 0) {
-			glDeleteVertexArrays(glVaoA);
+			if (Vk.ACTIVE) Vk.layoutDestroy(glVaoA);
+			else glDeleteVertexArrays(glVaoA);
 			glVaoA = 0;
 		}
 
@@ -244,6 +247,15 @@ public class Zone implements Destructible {
 	}
 
 	private void setupVao(int vao, int buffer, int metadata) {
+		if (Vk.ACTIVE) {
+			Vk.layoutAttrib(vao, 0, buffer, 4, GL_SHORT, false, false, VERT_SIZE, 0, 0);
+			Vk.layoutAttrib(vao, 1, buffer, 4, GL_HALF_FLOAT, false, false, VERT_SIZE, 8, 0);
+			Vk.layoutAttrib(vao, 2, buffer, 4, GL_SHORT, false, false, VERT_SIZE, 16, 0);
+			Vk.layoutAttrib(vao, 3, buffer, 1, GL_INT, false, true, VERT_SIZE, 24, 0);
+			Vk.layoutAttrib(vao, 6, metadata, 1, GL_INT, false, true, METADATA_SIZE, 0, 1);
+			Vk.layoutAttrib(vao, 7, metadata, 2, GL_INT, false, true, METADATA_SIZE, 4, 1);
+			return;
+		}
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, buffer);
 

@@ -20,6 +20,12 @@ public class GLTextureBuffer extends GLBuffer {
 	public GLTextureBuffer initialize(long initialCapacity) {
 		super.initialize(initialCapacity);
 
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			// Read through a storage buffer; the "texture" is the buffer itself
+			texId = id;
+			return this;
+		}
+
 		// Create texture
 		texId = glGenTextures();
 		glBindTexture(target, texId);
@@ -35,6 +41,10 @@ public class GLTextureBuffer extends GLBuffer {
 	public boolean ensureCapacity(long byteOffset, long numBytes) {
 		int oldId = id;
 		boolean resized = super.ensureCapacity(byteOffset, numBytes);
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			texId = id;
+			return resized;
+		}
 		if (oldId != id) {
 			glBindTexture(target, texId);
 			glTexBuffer(target, GL_RGB32I, id);
@@ -45,7 +55,9 @@ public class GLTextureBuffer extends GLBuffer {
 
 	@Override
 	public void destroy() {
-		if (texId != 0) {
+		if (texId != 0 && rs117.hd.vulkan.Vk.ACTIVE) {
+			texId = 0;
+		} else if (texId != 0) {
 			glDeleteTextures(texId);
 			texId = 0;
 		}

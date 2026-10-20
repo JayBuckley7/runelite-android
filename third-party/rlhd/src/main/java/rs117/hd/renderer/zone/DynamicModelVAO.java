@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import rs117.hd.utils.CommandBuffer;
 import rs117.hd.utils.Destructible;
 import rs117.hd.utils.buffer.GLBuffer;
+import rs117.hd.vulkan.Vk;
 import rs117.hd.utils.buffer.GLMappedBufferIntWriter;
 import rs117.hd.utils.buffer.GLMappedBufferIntWriter.ReservedView;
 import rs117.hd.utils.buffer.GLTextureBuffer;
@@ -88,7 +89,7 @@ public class DynamicModelVAO implements Destructible {
 	public boolean hasStagingBuffer() { return vboRender != vboStaging; }
 
 	void initialize() {
-		vao = glGenVertexArrays();
+		vao = Vk.ACTIVE ? Vk.layoutCreate() : glGenVertexArrays();
 		tbo.initialize(INITIAL_SIZE);
 		vboRender.initialize(INITIAL_SIZE);
 		if (vboRender != vboStaging)
@@ -98,6 +99,11 @@ public class DynamicModelVAO implements Destructible {
 	}
 
 	public void bindMetadataVAO(@Nonnull GLBuffer vboMetadata) {
+		if (Vk.ACTIVE) {
+			Vk.layoutAttrib(vao, 6, vboMetadata.id, 1, GL_INT, false, true, METADATA_SIZE, 0, 1);
+			Vk.layoutAttrib(vao, 7, vboMetadata.id, 2, GL_INT, false, true, METADATA_SIZE, 4, 1);
+			return;
+		}
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboMetadata.id);
 
@@ -118,6 +124,13 @@ public class DynamicModelVAO implements Destructible {
 	}
 
 	void bindRenderVAO() {
+		if (Vk.ACTIVE) {
+			Vk.layoutAttrib(vao, 0, vboRender.id, 3, GL_FLOAT, false, false, VERT_SIZE, 0, 0);
+			Vk.layoutAttrib(vao, 1, vboRender.id, 4, GL_HALF_FLOAT, false, false, VERT_SIZE, 12, 0);
+			Vk.layoutAttrib(vao, 2, vboRender.id, 4, GL_SHORT, false, false, VERT_SIZE, 20, 0);
+			Vk.layoutAttrib(vao, 3, vboRender.id, 1, GL_INT, false, true, VERT_SIZE, 28, 0);
+			return;
+		}
 		glBindVertexArray(vao);
 		glBindBuffer(GL_ARRAY_BUFFER, vboRender.id);
 
@@ -197,8 +210,10 @@ public class DynamicModelVAO implements Destructible {
 		vboStaging.destroy();
 		tbo.destroy();
 
-		if (vao != 0)
-			glDeleteVertexArrays(vao);
+		if (vao != 0) {
+			if (Vk.ACTIVE) Vk.layoutDestroy(vao);
+			else glDeleteVertexArrays(vao);
+		}
 		vao = 0;
 	}
 

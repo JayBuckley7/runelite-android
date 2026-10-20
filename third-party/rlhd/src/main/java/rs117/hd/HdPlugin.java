@@ -131,6 +131,7 @@ import rs117.hd.utils.collections.ConcurrentPool;
 import rs117.hd.utils.collections.PooledArrayType;
 import rs117.hd.utils.jobs.GenericJob;
 import rs117.hd.utils.jobs.JobSystem;
+import rs117.hd.vulkan.Vk;
 
 import static net.runelite.api.Constants.*;
 import static org.lwjgl.opengl.GL33C.*;
@@ -155,6 +156,11 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 public class HdPlugin extends Plugin {
 	private int androidContextGeneration;
 	public boolean prepareAndroidFrame() {
+		if (Vk.ACTIVE) {
+			// Frames record and submit even without a window, so buffers mapped mid-frame stay consistent
+			HdVulkan.prepareFrame();
+			return true;
+		}
 		if (!AndroidSupport.host.makeCurrent()) return false;
 		if (androidContextGeneration != AndroidSupport.host.contextGeneration()) { restartPlugin(); return false; }
 		return true;
@@ -242,7 +248,7 @@ public class HdPlugin extends Plugin {
 	private Gson gson;
 
 	@Inject
-	private Client client;
+	Client client;
 
 	@Inject
 	private ClientUI clientUI;
@@ -257,7 +263,7 @@ public class HdPlugin extends Plugin {
 	private PluginManager pluginManager;
 
 	@Inject
-	private HdPluginConfig config;
+	HdPluginConfig config;
 
 	@Inject
 	private GamevalManager gamevalManager;
@@ -302,7 +308,7 @@ public class HdPlugin extends Plugin {
 	private FrameTimer frameTimer;
 
 	@Inject
-	private UIShaderProgram uiProgram;
+	UIShaderProgram uiProgram;
 
 	@Inject
 	private SceneManager sceneManager;
@@ -317,13 +323,13 @@ public class HdPlugin extends Plugin {
 	public final List<TiledLightingShaderProgram> tiledLightingShaderPrograms = new ArrayList<>();
 
 	@Inject
-	private GammaCalibrationOverlay gammaCalibrationOverlay;
+	GammaCalibrationOverlay gammaCalibrationOverlay;
 
 	@Inject
-	private ShadowMapOverlay shadowMapOverlay;
+	ShadowMapOverlay shadowMapOverlay;
 
 	@Inject
-	private TiledLightingOverlay tiledLightingOverlay;
+	TiledLightingOverlay tiledLightingOverlay;
 
 	@Inject
 	public HDVariables vars;
@@ -366,12 +372,12 @@ public class HdPlugin extends Plugin {
 	@Getter
 	@Nullable
 	private int[] uiResolution;
-	private final int[] actualUiResolution = { 0, 0 }; // Includes stretched mode and DPI scaling
+	final int[] actualUiResolution = { 0, 0 }; // Includes stretched mode and DPI scaling
 	private final GLBuffer[] pboUi = new GLBuffer[3];
 	// Android: three UI textures, rotated like the PBOs. Overwriting one texture every frame
 	// while earlier frames still sample it makes a tiled GPU driver stall or copy it.
-	private final int[] texUi = new int[3];
-	private int texUiCurrent; // the most recently uploaded one, which is what gets drawn
+	final int[] texUi = new int[3];
+	int texUiCurrent; // the most recently uploaded one, which is what gets drawn
 	private int uiWidth;
 	private int uiHeight;
 	private GenericJob uiCopyJob;
@@ -532,19 +538,29 @@ public class HdPlugin extends Plugin {
 				if (!textureManager.vanillaTexturesAvailable())
 					return false;
 
-				if (!AndroidSupport.host.makeCurrent()) return false;
-				AWTContext.loadNatives();
+				boolean useVulkan = config.vulkanBackend();
+				if (!useVulkan && !AndroidSupport.host.makeCurrent()) return false;
 				canvas = client.getCanvas();
 				synchronized (canvas.getTreeLock()) {
 					// Delay plugin startup until the client's canvas is valid
 					if (!canvas.isValid())
 						return false;
-
+				}
+				if (useVulkan) {
+					String vkError = HdVulkan.startUp();
+					if (vkError != null) {
+						log.error("Vulkan is unavailable ({}), using OpenGL ES", vkError);
+						useVulkan = false;
+						if (!AndroidSupport.host.makeCurrent()) return false;
+					}
+				}
+				if (!useVulkan) {
+					AWTContext.loadNatives();
 					awtContext = new AWTContext(canvas);
 					awtContext.configurePixelFormat(0, 0, 0);
+					awtContext.createGLContext();
+					androidContextGeneration = AndroidSupport.host.contextGeneration();
 				}
-				awtContext.createGLContext();
-				androidContextGeneration = AndroidSupport.host.contextGeneration();
 				canvas.setIgnoreRepaint(true);
 				clientJFrame = HDUtils.getJFrame(canvas);
 
@@ -571,7 +587,7 @@ public class HdPlugin extends Plugin {
 				Configuration.SHARED_LIBRARY_EXTRACT_DIRECTORY.set("lwjgl-rl");
 
 				SKIP_GL_ERROR_CHECKS = false;
-				GL_CAPS = GL.createCapabilities();
+				GL_CAPS = Vk.ACTIVE ? AndroidSupport.host.vulkanCapabilities() : GL.createCapabilities();
 				useLowMemoryMode = config.lowMemoryMode();
 				BUFFER_GROWTH_MULTIPLIER = useLowMemoryMode ? 1.333f : 2;
 
@@ -583,8 +599,8 @@ public class HdPlugin extends Plugin {
 				String osArch = System.getProperty("os.arch", "Unknown");
 				String osVersion = System.getProperty("os.version", "Unknown");
 				String wordSize = System.getProperty("sun.arch.data.model", "Unknown");
-				String glRenderer = Objects.requireNonNullElse(glGetString(GL_RENDERER), "Unknown");
-				String glVendor = Objects.requireNonNullElse(glGetString(GL_VENDOR), "Unknown");
+				String glRenderer = Vk.ACTIVE ? Vk.deviceName() : Objects.requireNonNullElse(glGetString(GL_RENDERER), "Unknown");
+				String glVendor = Vk.ACTIVE ? "Vulkan" : Objects.requireNonNullElse(glGetString(GL_VENDOR), "Unknown");
 				var runtime = Runtime.getRuntime();
 
 				APPLE = osType == OSType.MacOS;
@@ -609,7 +625,7 @@ public class HdPlugin extends Plugin {
 				log.info("CPU:                 {} ({} threads)", HDUtils.getCpuName(), runtime.availableProcessors());
 				log.info("Memory:              {}", formatBytes(HDUtils.getTotalSystemMemory()));
 				log.info("GPU:                 {} ({})", glRenderer, glVendor);
-				log.info("GPU driver:          {}", glGetString(GL_VERSION));
+				log.info("GPU driver:          {}", Vk.ACTIVE ? "Vulkan" : glGetString(GL_VERSION));
 				log.info("Indirect draw:       {}", SUPPORTS_INDIRECT_DRAW);
 				log.info("Multi indirect draw: {}", SUPPORTS_MULTI_INDIRECT_DRAW);
 				log.info("Storage buffers:     {}", SUPPORTS_STORAGE_BUFFERS);
@@ -635,7 +651,7 @@ public class HdPlugin extends Plugin {
 				lwjglInitialized = true;
 				checkGLErrors();
 
-				MAX_TEXTURE_UNITS = glGetInteger(GL_MAX_TEXTURE_IMAGE_UNITS); // Not the fixed pipeline MAX_TEXTURE_UNITS
+				MAX_TEXTURE_UNITS = Vk.ACTIVE ? 8 : glGetInteger(GL_MAX_TEXTURE_IMAGE_UNITS); // Not the fixed pipeline MAX_TEXTURE_UNITS
 				if (MAX_TEXTURE_UNITS < TEXTURE_UNIT_COUNT)
 					log.warn("The GPU only supports {} texture units", MAX_TEXTURE_UNITS);
 				MAX_IMAGE_UNITS = GL_CAPS.GL_ARB_shader_image_load_store ?
@@ -823,6 +839,7 @@ public class HdPlugin extends Plugin {
 			if (awtContext != null)
 				awtContext.destroy();
 			awtContext = null;
+			HdVulkan.shutDown();
 			AndroidSupport.host.stopped();
 
 			if (debugCallback != null)
@@ -989,7 +1006,8 @@ public class HdPlugin extends Plugin {
 		var includes = getShaderIncludes();
 
 		// Bind a valid VAO, otherwise validation may fail on older Intel-based Macs
-		glBindVertexArray(vaoTri);
+		if (!Vk.ACTIVE)
+			glBindVertexArray(vaoTri);
 
 		renderer.initializeShaders(includes);
 		uiProgram.compile(includes);
@@ -1080,6 +1098,10 @@ public class HdPlugin extends Plugin {
 	}
 
 	private void initializeVaos() {
+		if (Vk.ACTIVE) {
+			HdVulkan.initializeVaos(this);
+			return;
+		}
 		{
 			// Create quad VAO
 			vaoQuad = glGenVertexArrays();
@@ -1135,6 +1157,10 @@ public class HdPlugin extends Plugin {
 	}
 
 	private void destroyVaos() {
+		if (Vk.ACTIVE) {
+			HdVulkan.destroyVaos(this);
+			return;
+		}
 		if (vboQuad != 0)
 			glDeleteBuffers(vboQuad);
 		vboQuad = 0;
@@ -1195,6 +1221,12 @@ public class HdPlugin extends Plugin {
 			pboUi[i].initialize();
 		}
 
+		if (Vk.ACTIVE) {
+			// The textures are created at the UI's size by prepareInterfaceTexture
+			texUiCurrent = 0;
+			return;
+		}
+
 		glActiveTexture(TEXTURE_UNIT_UI);
 		for (int i = 0; i < texUi.length; i++) {
 			texUi[i] = glGenTextures();
@@ -1218,6 +1250,10 @@ public class HdPlugin extends Plugin {
 			pboUi[i] = null;
 		}
 
+		if (Vk.ACTIVE) {
+			HdVulkan.destroyUiTextures(this);
+			return;
+		}
 		for (int i = 0; i < texUi.length; i++) {
 			if (texUi[i] != 0)
 				glDeleteTextures(texUi[i]);
@@ -1237,6 +1273,13 @@ public class HdPlugin extends Plugin {
 
 		tiledLightingResolution = newResolution;
 		tiledLightingLayerCount = newLayerCount;
+
+		if (Vk.ACTIVE) {
+			HdVulkan.createTiledLighting(this);
+			uboGlobal.tiledLightingResolution.set(tiledLightingResolution);
+			uboGlobal.upload();
+			return;
+		}
 
 		fboTiledLighting = glGenFramebuffers();
 		texTiledLighting = glGenTextures();
@@ -1277,6 +1320,11 @@ public class HdPlugin extends Plugin {
 
 	private void destroyTiledLightingFbo() {
 		tiledLightingResolution = null;
+
+		if (Vk.ACTIVE) {
+			HdVulkan.destroyTiledLighting(this);
+			return;
+		}
 
 		if (fboTiledLighting != 0)
 			glDeleteFramebuffers(fboTiledLighting);
@@ -1319,6 +1367,14 @@ public class HdPlugin extends Plugin {
 
 		destroySceneFbo();
 		sceneViewport = viewport;
+
+		if (Vk.ACTIVE) {
+			sceneResolution = round(max(vec(1), multiply(slice(vec(sceneViewport), 2), config.sceneResolutionScale() / 100f)));
+			uboGlobal.sceneResolution.set(sceneResolution);
+			uboGlobal.upload();
+			HdVulkan.createSceneTargets(this);
+			return;
+		}
 
 		// Bind default FBO to check whether anti-aliasing is forced
 		int defaultFramebuffer = awtContext.getFramebuffer(false);
@@ -1421,6 +1477,11 @@ public class HdPlugin extends Plugin {
 		sceneViewport = null;
 		sceneTileResolved = false;
 
+		if (Vk.ACTIVE) {
+			HdVulkan.destroySceneTargets(this);
+			return;
+		}
+
 		if (fboScene != 0)
 			glDeleteFramebuffers(fboScene);
 		fboScene = 0;
@@ -1449,6 +1510,11 @@ public class HdPlugin extends Plugin {
 	private void initializeShadowMapFbo() {
 		if (!configShadowsEnabled) {
 			initializeDummyShadowMap();
+			return;
+		}
+
+		if (Vk.ACTIVE) {
+			HdVulkan.createShadowMap(this, config.shadowResolution().getValue());
 			return;
 		}
 
@@ -1499,6 +1565,10 @@ public class HdPlugin extends Plugin {
 	}
 
 	private void initializeDummyShadowMap() {
+		if (Vk.ACTIVE) {
+			HdVulkan.createDummyShadowMap(this);
+			return;
+		}
 		// Create dummy texture
 		texShadowMap = glGenTextures();
 		glActiveTexture(TEXTURE_UNIT_SHADOW_MAP);
@@ -1511,6 +1581,10 @@ public class HdPlugin extends Plugin {
 	}
 
 	private void destroyShadowMapFbo() {
+		if (Vk.ACTIVE) {
+			HdVulkan.destroyShadowMap(this);
+			return;
+		}
 		if (texShadowMap != 0)
 			glDeleteTextures(texShadowMap);
 		texShadowMap = 0;
@@ -1540,10 +1614,14 @@ public class HdPlugin extends Plugin {
 		if (resize) {
 			uiResolution = resolution;
 
+			if (Vk.ACTIVE) {
+				HdVulkan.resizeUiTextures(this, uiResolution[0], uiResolution[1]);
+			} else {
 			glActiveTexture(TEXTURE_UNIT_UI);
 			for (int tex : texUi) {
 				glBindTexture(GL_TEXTURE_2D, tex);
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uiResolution[0], uiResolution[1], 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+			}
 			}
 		}
 
@@ -1595,6 +1673,25 @@ public class HdPlugin extends Plugin {
 			overlayColor = 0;
 
 		frameTimer.begin(Timer.RENDER_UI);
+
+		if (Vk.ACTIVE) {
+			if (uiCopyJob != null) {
+				texUiCurrent = (texUiCurrent + 1) % texUi.length;
+				frameTimer.begin(Timer.COPY_UI);
+				uiCopyJob.waitForCompletion(true);
+				uiCopyJob = null;
+				frameTimer.end(Timer.COPY_UI);
+
+				frameTimer.begin(Timer.UPLOAD_UI);
+				final GLBuffer pbo = pboUi[frame % 3];
+				pbo.unmap();
+				HdVulkan.uploadUi(this, pbo.id, uiWidth, uiHeight);
+				frameTimer.end(Timer.UPLOAD_UI);
+			}
+			HdVulkan.drawUi(this, overlayColor, config.uiScalingMode().glSamplingFunction);
+			frameTimer.end(Timer.RENDER_UI);
+			return;
+		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		// Disable alpha writes, just in case the default FBO has an alpha channel
@@ -1666,6 +1763,10 @@ public class HdPlugin extends Plugin {
 	public Image screenshot() {
 		if (uiResolution == null)
 			return null;
+
+		if (Vk.ACTIVE)
+			return HdVulkan.screenshot(this, sceneViewport != null && sceneResolution != null,
+				config.sceneScalingMode().glFilter == GL_LINEAR);
 
 		int width = actualUiResolution[0];
 		int height = actualUiResolution[1];
@@ -1836,6 +1937,7 @@ public class HdPlugin extends Plugin {
 					for (var key : pendingConfigChanges) {
 						switch (key) {
 							case KEY_LOW_MEMORY_MODE:
+							case KEY_VULKAN:
 							case KEY_REMOVE_VERTEX_SNAPPING:
 							case KEY_LEGACY_RENDERER:
 							case KEY_INDIRECT_DRAW:
@@ -2014,7 +2116,14 @@ public class HdPlugin extends Plugin {
 				break;
 		}
 
-		int actualSwapInterval = awtContext.setSwapInterval(swapInterval);
+		int actualSwapInterval;
+		if (Vk.ACTIVE) {
+			// No adaptive sync on Android; like the GLES path, run uncapped up to the fps target
+			actualSwapInterval = Math.max(0, swapInterval);
+			Vk.setVsync(actualSwapInterval != 0);
+		} else {
+			actualSwapInterval = awtContext.setSwapInterval(swapInterval);
+		}
 		if (actualSwapInterval != swapInterval) {
 			log.info("unsupported swap interval {}, got {}", swapInterval, actualSwapInterval);
 		}
@@ -2122,6 +2231,8 @@ public class HdPlugin extends Plugin {
 
 	@SuppressWarnings("StatementWithEmptyBody")
 	public static void clearGLErrors() {
+		if (Vk.ACTIVE)
+			return;
 		// @formatter:off
 		while (glGetError() != GL_NO_ERROR);
 		// @formatter:on
@@ -2132,7 +2243,7 @@ public class HdPlugin extends Plugin {
 	}
 
 	public static boolean checkGLErrors(@Nullable Provider<String> contextProvider) {
-		if (SKIP_GL_ERROR_CHECKS)
+		if (SKIP_GL_ERROR_CHECKS || Vk.ACTIVE)
 			return false;
 
 		boolean hasGLError = false;

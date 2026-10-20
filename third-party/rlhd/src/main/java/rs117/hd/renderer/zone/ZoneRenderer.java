@@ -70,6 +70,8 @@ import rs117.hd.utils.buffer.GLMappedBufferIntWriter;
 import rs117.hd.utils.buffer.GpuIntBuffer;
 import rs117.hd.utils.collections.ConcurrentPool;
 import rs117.hd.utils.jobs.JobSystem;
+import rs117.hd.vulkan.Vk;
+import rs117.hd.vulkan.VkNative;
 
 import static net.runelite.api.Constants.*;
 import static net.runelite.api.Perspective.*;
@@ -232,6 +234,10 @@ public class ZoneRenderer implements Renderer {
 	@Override
 	public void waitUntilIdle() {
 		sceneManager.completeAllStreaming();
+		if (Vk.ACTIVE) {
+			Vk.waitIdle();
+			return;
+		}
 		glFinish();
 	}
 
@@ -378,7 +384,8 @@ public class ZoneRenderer implements Renderer {
 
 		// Ensure that the previous frames commands have finished flushing
 		frameTimer.begin(Timer.DRAW_FLUSH);
-		glFlush();
+		if (!Vk.ACTIVE)
+			glFlush();
 		frameTimer.end(Timer.DRAW_FLUSH);
 
 		plugin.updateSceneFbo();
@@ -723,6 +730,154 @@ public class ZoneRenderer implements Renderer {
 		checkGLErrors();
 	}
 
+	private void tiledLightingPassVk() {
+		if (!plugin.configTiledLighting || plugin.configDynamicLights == DynamicLights.NONE)
+			return;
+
+		plugin.updateTiledLightingFbo();
+
+		frameTimer.begin(Timer.DRAW_TILED_LIGHTING);
+		frameTimer.begin(Timer.RENDER_TILED_LIGHTING);
+
+		// Each layer reads the layers before it, so they're separate passes in GENERAL layout
+		int layerCount = plugin.configDynamicLights.getTiledLightingLayers();
+		for (int layer = 0; layer < layerCount && layer < plugin.tiledLightingShaderPrograms.size(); layer++) {
+			if (!Vk.beginPass(rs117.hd.HdVulkan.tiledLightingFramebuffer(layer), VkNative.DONT_CARE, 0, 0, 0, 0, VkNative.DONT_CARE, 0, false))
+				continue;
+			renderState.disable.set(GL_BLEND);
+			renderState.disable.set(GL_DEPTH_TEST);
+			renderState.disable.set(GL_CULL_FACE);
+			renderState.colorMask.set(true, true, true, true);
+			renderState.viewport.set(0, 0, plugin.tiledLightingResolution[0], plugin.tiledLightingResolution[1]);
+			renderState.vao.setVao(plugin.vaoTri);
+			renderState.program.set(plugin.tiledLightingShaderPrograms.get(layer));
+			renderState.apply();
+			Vk.drawArrays(0, 3);
+			Vk.endPass();
+		}
+
+		frameTimer.end(Timer.RENDER_TILED_LIGHTING);
+		frameTimer.end(Timer.DRAW_TILED_LIGHTING);
+	}
+
+	private void directionalShadowPassVk() {
+		final boolean shouldRenderShadows =
+			plugin.configShadowsEnabled &&
+			plugin.fboShadowMap != 0 &&
+			environmentManager.currentDirectionalStrength > 0;
+
+		if (!shouldRenderShadows && !shouldClearShadowFbo)
+			return;
+
+		// Cleared at the start of the pass; the depth is kept for the scene pass to sample
+		if (!Vk.beginPass(plugin.fboShadowMap, VkNative.DONT_CARE, 0, 0, 0, 0, VkNative.CLEAR, 1, true))
+			return;
+		renderState.viewport.set(0, 0, plugin.shadowMapResolution, plugin.shadowMapResolution);
+		renderState.apply();
+		shouldClearShadowFbo = false;
+
+		if (shouldRenderShadows) {
+			frameTimer.begin(Timer.RENDER_SHADOWS);
+			renderState.enable.set(GL_DEPTH_TEST);
+			renderState.disable.set(GL_CULL_FACE);
+			renderState.depthFunc.set(GL_LEQUAL);
+			directionalCmd.execute(renderState);
+			renderState.disable.set(GL_DEPTH_TEST);
+			renderState.apply();
+			shouldClearShadowFbo = true;
+			frameTimer.end(Timer.RENDER_SHADOWS);
+		}
+		Vk.endPass();
+	}
+
+	private void scenePassVk() {
+		frameTimer.begin(Timer.DRAW_SCENE);
+
+		float[] clearColor = { 0, 0, 0 };
+		if (!shouldRenderSkybox) {
+			float[] fogColor = ColorUtils.linearToSrgb(environmentManager.currentFogColor);
+			pow(clearColor, fogColor, plugin.getGammaCorrection());
+		}
+		// Reverse-Z: depth clears to 0. The depth is never read afterwards, so it isn't stored.
+		frameTimer.begin(Timer.CLEAR_SCENE);
+		boolean ok = Vk.beginPass(plugin.fboScene, VkNative.CLEAR, clearColor[0], clearColor[1], clearColor[2], 1, VkNative.CLEAR, 0, false);
+		frameTimer.end(Timer.CLEAR_SCENE);
+		if (!ok) {
+			frameTimer.end(Timer.DRAW_SCENE);
+			return;
+		}
+
+		sceneProgram.use();
+		renderState.viewport.set(0, 0, plugin.sceneResolution[0], plugin.sceneResolution[1]);
+
+		frameTimer.begin(Timer.RENDER_SCENE);
+		renderState.enable.set(GL_BLEND);
+		renderState.enable.set(GL_CULL_FACE);
+		renderState.enable.set(GL_DEPTH_TEST);
+		renderState.depthFunc.set(GL_GEQUAL);
+		renderState.blendFunc.set(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+		renderState.colorMask.set(true, true, true, true);
+		renderState.depthMask.set(true);
+
+		if (!gapFillerCmd.isEmpty()) {
+			renderState.depthMask.set(false);
+			gapFillerCmd.execute(renderState);
+			renderState.depthMask.set(true);
+		}
+
+		sceneCmd.execute(renderState);
+		frameTimer.end(Timer.RENDER_SCENE);
+
+		renderState.disable.set(GL_BLEND);
+		renderState.disable.set(GL_CULL_FACE);
+		renderState.disable.set(GL_DEPTH_TEST);
+		renderState.apply();
+		Vk.endPass();
+
+		frameTimer.end(Timer.DRAW_SCENE);
+	}
+
+	private void drawVk(int overlayColor) {
+		final GameState gameState = client.getGameState();
+		if (gameState == GameState.STARTING) {
+			frameTimer.end(Timer.DRAW_FRAME);
+			return;
+		}
+
+		plugin.prepareInterfaceTexture();
+
+		frameTimer.begin(Timer.DRAW_SUBMIT);
+		if (shouldRenderScene) {
+			tiledLightingPassVk();
+			directionalShadowPassVk();
+			scenePassVk();
+		}
+
+		boolean drawScene = sceneFboValid && plugin.sceneResolution != null && plugin.sceneViewport != null;
+		rs117.hd.HdVulkan.presentScene(plugin, drawScene, config.sceneScalingMode().glFilter == GL_LINEAR);
+		plugin.drawUi(overlayColor);
+		rs117.hd.HdVulkan.finishFrame(plugin);
+		frameTimer.end(Timer.DRAW_SUBMIT);
+
+		jobSystem.processPendingClientCallbacks();
+
+		frameTimer.end(Timer.DRAW_FRAME);
+		frameTimer.end(Timer.RENDER_FRAME);
+
+		frameTimer.begin(Timer.SWAP_BUFFERS);
+		boolean alive = Vk.endFrame();
+		frameTimer.end(Timer.SWAP_BUFFERS);
+		if (!alive) {
+			log.error("Vulkan device lost; restarting 117 HD");
+			plugin.restartPlugin();
+			return;
+		}
+		drawManager.processDrawComplete(plugin::screenshot);
+
+		frameTimer.endFrameAndReset();
+		shouldRenderScene = false;
+	}
+
 	private void tiledLightingPass() {
 		if (!plugin.configTiledLighting || plugin.configDynamicLights == DynamicLights.NONE)
 			return;
@@ -938,7 +1093,13 @@ public class ZoneRenderer implements Renderer {
 
 			frameTimer.begin(Timer.DRAW_ZONE_OPAQUE);
 			if (!sceneManager.isRoot(ctx) || z.inSceneFrustum) {
+				// Vulkan: opaque faces have alpha 1, so blending changes nothing but stops tiled GPUs
+				// from writing early depth (Adreno LRZ) for them, which is what rejects hidden fragments
+				if (Vk.ACTIVE)
+					sceneCmd.Disable(GL_BLEND);
 				z.renderOpaque(sceneCmd, ctx, false);
+				if (Vk.ACTIVE)
+					sceneCmd.Enable(GL_BLEND);
 
 				if (z.hasGapFiller)
 					z.renderOpaqueLevel(gapFillerCmd, Zone.LEVEL_GAP_FILLER);
@@ -1045,7 +1206,12 @@ public class ZoneRenderer implements Renderer {
 					directionalCmd.SetShader(fastShadowProgram);
 					directionalCmd.ExecuteSubCommandBuffer(ctx.vaoDirectionalCmd);
 
+					// Vulkan: opaque, so no blending (see drawZoneOpaque)
+					if (Vk.ACTIVE)
+						sceneCmd.Disable(GL_BLEND);
 					sceneCmd.ExecuteSubCommandBuffer(ctx.vaoSceneCmd);
+					if (Vk.ACTIVE)
+						sceneCmd.Enable(GL_BLEND);
 					break;
 				case DrawCallbacks.PASS_ALPHA:
 					modelStreamingManager.ensureAsyncUploadsComplete(null);
@@ -1136,6 +1302,16 @@ public class ZoneRenderer implements Renderer {
 		if (!plugin.prepareAndroidFrame()) return;
 		if (plugin.isPluginStopPending())
 			return;
+
+		if (Vk.ACTIVE) {
+			try {
+				drawVk(overlayColor);
+			} catch (Throwable ex) {
+				log.error("Error in draw({}):", overlayColor, ex);
+				plugin.requestPluginStop();
+			}
+			return;
+		}
 
 		try {
 			final GameState gameState = client.getGameState();

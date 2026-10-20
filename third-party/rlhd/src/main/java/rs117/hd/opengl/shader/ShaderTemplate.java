@@ -58,6 +58,44 @@ public class ShaderTemplate
 		return this;
 	}
 
+	/**
+	 * Vulkan: preprocess both stages with the same includes as GL, rewrite them for fixed
+	 * descriptor bindings, and compile to a native program handle.
+	 */
+	public int compileVulkan(
+		ShaderIncludes includes,
+		Map<String, Integer> samplerUnits,
+		Map<String, rs117.hd.vulkan.VkShaders.PushUniform> pushUniformsOut
+	) throws ShaderException, IOException {
+		String vertexPath = shaderTypePaths.get(GL_VERTEX_SHADER);
+		String fragmentPath = shaderTypePaths.get(GL_FRAGMENT_SHADER);
+		if (vertexPath == null || fragmentPath == null || shaderTypePaths.size() != 2)
+			throw new ShaderException("The Vulkan renderer only supports vertex + fragment programs: " + shaderTypePaths.values());
+
+		String vertex = includes
+			.addInclude("SHADER_TYPE", SHADER_TYPE_DEFINE + GL_VERTEX_SHADER)
+			.loadFile(vertexPath);
+		String fragment = includes
+			.addInclude("SHADER_TYPE", SHADER_TYPE_DEFINE + GL_FRAGMENT_SHADER)
+			.loadFile(fragmentPath);
+
+		Map<String, Integer> uboBindings = new HashMap<>();
+		for (var ubo : includes.uniformBuffers)
+			uboBindings.put(ubo.getUniformBlockName(), ubo.getBindingIndex());
+
+		var adapted = rs117.hd.vulkan.VkShaders.adapt(vertex, fragment, uboBindings, samplerUnits);
+		pushUniformsOut.putAll(adapted.pushUniforms);
+
+		String name = vertexPath.replace(".glsl", "") + "+" + fragmentPath.replace(".glsl", "");
+		int program = rs117.hd.vulkan.Vk.programCreate(name, adapted.vertex, adapted.fragment);
+		if (program == 0) {
+			String error = rs117.hd.vulkan.Vk.programError();
+			String source = error.startsWith("fragment") ? adapted.fragment : adapted.vertex;
+			throw ShaderException.compileError(includes, source, error, vertexPath, fragmentPath);
+		}
+		return program;
+	}
+
 	public int compile(ShaderIncludes includes) throws ShaderException, IOException {
 		int program = glCreateProgram();
 		int[] shaders = new int[shaderTypePaths.size()];

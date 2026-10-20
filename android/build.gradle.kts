@@ -350,6 +350,51 @@ if (androidSdkAvailable) {
     }
 }
 
+// shaderc (GLSL -> SPIR-V) for the 117 HD Vulkan backend, which compiles 117 HD's generated
+// shaders at runtime. Built once per ABI from the NDK's own shaderc sources into
+// android/.shaderc; CMake links the static libraries from there. The combined-archive target
+// in the NDK's Android.mk breaks on Windows (its ar script quoting), so the component
+// libraries are built and linked individually instead.
+if (androidSdkAvailable) {
+    val shadercAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+    val shadercModules = listOf("shaderc", "shaderc_util", "glslang", "OSDependent", "OGLCompiler",
+        "HLSL", "SPIRV", "SPIRV-Tools", "SPIRV-Tools-opt")
+    val shadercOut = layout.projectDirectory.dir(".shaderc")
+    val buildShaderc = tasks.register("buildShaderc") {
+        group = "build"
+        description = "Builds shaderc's static libraries from the NDK sources for every packaged ABI"
+        val sdkDir = (System.getenv("ANDROID_HOME")?.takeIf { it.isNotBlank() }
+            ?: System.getenv("ANDROID_SDK_ROOT")?.takeIf { it.isNotBlank() }
+            ?: rootProject.file("local.properties").let { f ->
+                Properties().apply { f.inputStream().use { load(it) } }.getProperty("sdk.dir")
+            })
+        val ndkDir = file("$sdkDir/ndk/27.1.12297006")
+        outputs.dir(shadercOut)
+        doLast {
+            val missing = shadercAbis.filter { abi ->
+                shadercModules.any { !shadercOut.file("obj/local/$abi/lib$it.a").asFile.isFile }
+            }
+            if (missing.isEmpty()) return@doLast
+            val ndkBuild = File(ndkDir, if (System.getProperty("os.name").startsWith("Windows")) "ndk-build.cmd" else "ndk-build")
+            val out = shadercOut.asFile
+            val cmd = listOf(ndkBuild.absolutePath,
+                "NDK_PROJECT_PATH=.", "APP_BUILD_SCRIPT=Android.mk", "APP_STL=c++_static",
+                "APP_ABI=${missing.joinToString(" ")}", "APP_PLATFORM=android-26",
+                "NDK_LIBS_OUT=${File(out, "libs").absolutePath.replace('\\', '/')}",
+                "NDK_OUT=${File(out, "obj").absolutePath.replace('\\', '/')}",
+                "-j${Runtime.getRuntime().availableProcessors()}") + shadercModules
+            logger.lifecycle("Building shaderc for $missing (one-time, several minutes)")
+            val proc = ProcessBuilder(cmd)
+                .directory(File(ndkDir, "sources/third_party/shaderc"))
+                .redirectErrorStream(true)
+                .redirectOutput(File(out.apply { mkdirs() }, "build.log"))
+                .start()
+            if (proc.waitFor() != 0) throw GradleException("shaderc build failed; see ${File(out, "build.log")}")
+        }
+    }
+    tasks.matching { it.name.startsWith("configureCMake") }.configureEach { dependsOn(buildShaderc) }
+}
+
 if (androidSdkAvailable) {
     // AGP 9's public DSL type; BaseAppModuleExtension was the pre-newDsl internal one.
     extensions.configure<com.android.build.api.dsl.ApplicationExtension>("android") {

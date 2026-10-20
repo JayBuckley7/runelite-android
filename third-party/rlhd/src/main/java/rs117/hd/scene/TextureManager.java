@@ -194,6 +194,11 @@ public class TextureManager {
 		AndroidTextureScaler.uploadPixels(image, textureSize[0], textureSize[1], image != vanillaImage, pixelBuffer);
 
 		// The buffer contains native little-endian RGBA bytes.
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			rs117.hd.vulkan.Vk.imageUpload(materialManager.getTexMaterialTextureArray(), 0, 0, 0, textureLayer,
+				textureSize[0], textureSize[1], 1, pixelBuffer, 4);
+			return;
+		}
 		glTexSubImage3D(
 			target, 0, 0, 0,
 			textureLayer, textureSize[0], textureSize[1], 1,
@@ -203,6 +208,16 @@ public class TextureManager {
 
 	public void setAnisotropicFilteringLevel() {
 		int level = config.anisotropicFilteringLevel();
+		if (rs117.hd.vulkan.Vk.ACTIVE) {
+			int maxAniso = rs117.hd.vulkan.Vk.limit(rs117.hd.vulkan.VkNative.LIMIT_MAX_ANISOTROPY);
+			rs117.hd.vulkan.Vk.imageSampler(
+				materialManager.getTexMaterialTextureArray(),
+				level == 0 ? GL_NEAREST : GL_LINEAR_MIPMAP_LINEAR,
+				level == 0 ? GL_NEAREST : GL_LINEAR,
+				GL_REPEAT, GL_REPEAT,
+				maxAniso > 0 ? clamp(level, 1, maxAniso) : 1);
+			return;
+		}
 		if (level == 0) {
 			//level = 0 means no mipmaps and no anisotropic filtering
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
