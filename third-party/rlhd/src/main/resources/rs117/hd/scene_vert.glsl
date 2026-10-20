@@ -62,8 +62,10 @@ layout (location = 0) in vec3 vPosition;
     flat out vec4 fBaseColor2;
     flat out vec4 fBaseColor3;
 
-    #if FLAT_SHADING
-        flat out vec3 fFlatNormal;
+    #if CENTROID_QUALIFIER
+        centroid out vec3 fTexBlend;
+    #else
+        out vec3 fTexBlend;
     #endif
 
     vec4 vertexBaseColor(int alphaBiasHsl, ivec4 tint) {
@@ -79,7 +81,6 @@ layout (location = 0) in vec3 vPosition;
         vec3 position;
         vec2 uv;
         vec3 normal;
-        vec3 texBlend;
     } OUT;
 
     void main() {
@@ -130,27 +131,23 @@ layout (location = 0) in vec3 vPosition;
         // waterDepth == 1, which is used when the geometry already sits flush with the surface
         int waterDepth = fTerrainData[vertex] >> 11 & 0xFFF;
         if (waterDepth > 1) {
-            const int TILE_SIZE = 128;
             const int CHUNK_SIZE = TILE_SIZE * 8;
-            ivec2 cam = ivec2(cameraPos.xz / float(CHUNK_SIZE)) * CHUNK_SIZE + CHUNK_SIZE / 2;
+            ivec2 cam = ivec2(uboGlobal.cameraPos.xz / float(CHUNK_SIZE)) * CHUNK_SIZE + CHUNK_SIZE / 2;
             ivec2 d = ivec2(abs(worldPosition.xz - vec2(cam)) / float(TILE_SIZE));
-            if (max(d.x, d.y) > int(drawDistance / 8.0) * 8 + 3)
+            if (max(d.x, d.y) > int(uboGlobal.drawDistance / 8.0) * 8 + 3)
                 worldPosition.y -= float(waterDepth);
         }
+
+        fTexBlend = vec3(0);
+        fTexBlend[vertex] = 1.0;
 
         OUT.position = worldPosition;
         OUT.uv = computeVertexUvs(materialData, worldPosition, vUv.xyz);
         OUT.normal = worldNormal;
-        OUT.texBlend = vec3(0);
-        OUT.texBlend[vertex] = 1.0;
 
-        #if FLAT_SHADING
-            fFlatNormal = worldNormal;
-        #endif
-
-        vec4 clipPosition = projectionMatrix * vec4(worldPosition, 1.0);
+        vec4 clipPosition = uboGlobal.projectionMatrix * vec4(worldPosition, 1.0);
         int depthBias = (alphaBiasHsl >> 16) & 0xff;
-        if (projectionMatrix[2][3] != 0.0) // Disable depth bias for orthographic projection
+        if (!uboGlobal.orthographicProjection)
             clipPosition.z += float(depthBias) / 128.0;
 
         gl_Position = clipPosition;

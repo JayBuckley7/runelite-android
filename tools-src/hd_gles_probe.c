@@ -70,6 +70,7 @@ int main(int argc, char **argv) {
     limit("max_texture_size",GL_MAX_TEXTURE_SIZE);
     limit("max_texture_array_layers",GL_MAX_ARRAY_TEXTURE_LAYERS);
     limit("max_texture_buffer_texels",GL_MAX_TEXTURE_BUFFER_SIZE);
+    limit("max_vertex_shader_storage_blocks",GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS);
     limit("max_vertex_uniform_blocks",GL_MAX_VERTEX_UNIFORM_BLOCKS);
     limit("max_fragment_uniform_blocks",GL_MAX_FRAGMENT_UNIFORM_BLOCKS);
     GLuint buffer; glGenBuffers(1,&buffer); glBindBuffer(GL_ARRAY_BUFFER,buffer); glBufferData(GL_ARRAY_BUFFER,64,NULL,GL_STREAM_DRAW);

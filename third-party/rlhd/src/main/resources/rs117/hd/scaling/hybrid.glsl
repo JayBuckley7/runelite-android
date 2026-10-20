@@ -6,13 +6,14 @@
  * If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
+#include <uniforms/ui.glsl>
+
 // Anti-aliased UI scaling that respects pixel sharpness
 // Approach taken from https://colececil.dev/blog/2017/scaling-pixel-art-without-destroying-it/
-
 vec4 textureHybrid(sampler2D tex, vec2 uv) {
-    uv *= vec2(sourceDimensions);
+    uv *= vec2(uboUi.sourceDimensions);
     vec2 texelUv = fract(uv);
-    vec2 pixelsPerTexel = vec2(targetDimensions) / vec2(sourceDimensions);
+    vec2 pixelsPerTexel = vec2(uboUi.targetDimensions) / vec2(uboUi.sourceDimensions);
     vec2 interpolationAmount = min(texelUv * pixelsPerTexel, .5) - min((1.0 - texelUv) * pixelsPerTexel, .5);
-    return texture(tex, (floor(uv) + .5 + interpolationAmount) / vec2(sourceDimensions));
+    return texture(tex, (floor(uv) + .5 + interpolationAmount) / vec2(uboUi.sourceDimensions));
 }

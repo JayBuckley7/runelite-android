@@ -67,8 +67,11 @@ public class GL33C extends GlesBindings {
     }
     public static void glFlushMappedBufferRange(int t,long o,long n) { if(n>0) GLES32.glFlushMappedBufferRange(t,Math.toIntExact(o),Math.toIntExact(n)); }
     public static void glClearDepth(double d) { GLES32.glClearDepthf((float)d); }
+    public static void glCullFace(int mode) { GLES32.glCullFace(mode); }
+    public static void glPolygonOffset(float factor,float units) { GLES32.glPolygonOffset(factor,units); }
     public static void glDrawBuffer(int mode) { GLES32.glDrawBuffers(1,new int[]{mode},0); }
     public static void glDrawElements(int m,int n,int t,long o) { GLES32.glDrawElements(m,n,t,Math.toIntExact(o)); }
+    public static void glDrawArraysInstanced(int mode,int first,int count,int instances) { GLES32.glDrawArraysInstanced(mode,first,count,instances); }
     public static void glMultiDrawArrays(int m,IntBuffer first,IntBuffer count) {
         for(int i=0;i<count.remaining();i++) GLES32.glDrawArrays(m,first.get(first.position()+i),count.get(count.position()+i));
     }
@@ -96,9 +99,9 @@ public class GL33C extends GlesBindings {
     public static native void glTexSubImage2D(int t,int l,int x,int y,int w,int h,int f,int ty,long off);
     public static void glTexSubImage3D(int t,int l,int x,int y,int z,int w,int h,int d,int f,int ty,IntBuffer p) { GLES32.glTexSubImage3D(t,l,x,y,z,w,h,d,f,ty,p); }
     public static void glReadPixels(int x,int y,int w,int h,int f,int t,ByteBuffer p) { GLES32.glReadPixels(x,y,w,h,f,t,p); }
-    // GLES multisampling is controlled by framebuffer storage rather than this desktop toggle.
-    public static void glEnable(int cap) { if(cap!=0x809D) GLES32.glEnable(cap); }
-    public static void glDisable(int cap) { if(cap!=0x809D) GLES32.glDisable(cap); }
+    // GLES always uses shader point sizes and point sprites; multisampling follows FBO storage.
+    public static void glEnable(int cap) { if(cap!=0x809D && cap!=0x8642 && cap!=0x8861) GLES32.glEnable(cap); }
+    public static void glDisable(int cap) { if(cap!=0x809D && cap!=0x8642 && cap!=0x8861) GLES32.glDisable(cap); }
     public static void glQueryCounter(int id,int target) { throw new UnsupportedOperationException("Desktop GPU timer queries require a GLES extension adapter"); }
     public static long glGetQueryObjectui64(int id,int p) { throw new UnsupportedOperationException("Desktop GPU timer queries require a GLES extension adapter"); }
 }
