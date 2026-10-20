@@ -12,7 +12,7 @@ public class VerifyHdAwtBindings {
         Set<String> finalMethods = new HashSet<>();
     }
     static boolean local(String name) {
-        return name.startsWith("java/awt/") || name.startsWith("javax/swing/") ||
+        return name.startsWith("org/lwjgl/") || name.startsWith("java/awt/") || name.startsWith("javax/swing/") ||
             name.startsWith("java/lang/management/") || name.startsWith("com/sun/management/") || name.startsWith("net/runelite/rlawt/");
     }
     static void add(ClassReader reader) {
@@ -74,7 +74,7 @@ public class VerifyHdAwtBindings {
             }
         }
         missing.forEach(System.out::println);
-        System.out.println("Missing Android AWT call sites: "+missing.size());
+        System.out.println("Missing Android bridge call sites: "+missing.size());
         if(!missing.isEmpty()) System.exit(1);
     }
 }

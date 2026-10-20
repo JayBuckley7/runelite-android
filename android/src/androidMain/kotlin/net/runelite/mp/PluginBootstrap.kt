@@ -60,6 +60,10 @@ object PluginBootstrap {
             val plugins = loadPlugins.invoke(pluginManager, pluginClasses, null) as List<*>
             Log.i(TAG, "loaded ${plugins.size} plugins")
 
+            // Preserve 117's old boolean choices before default loading replaces invalid enum values.
+            net.runelite.mp.hd.AndroidHdHost.migrateConfiguration(
+                (injector as com.google.inject.Injector).getInstance(net.runelite.client.config.ConfigManager::class.java)
+            )
             val loadDefaultConfig = pluginManagerClass.getMethod(
                 "loadDefaultPluginConfiguration", Collection::class.java
             )

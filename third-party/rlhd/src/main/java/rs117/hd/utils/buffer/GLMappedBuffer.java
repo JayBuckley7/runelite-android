@@ -41,7 +41,10 @@ public final class GLMappedBuffer {
 	private int mappedFlags;
 
 	@Getter
-	private long mappedOffset;
+	private long mappingOffset; // the currently mapped slice's offset into the backing GPU buffer
+	private ByteBuffer mappingBuffer; // the currently mapped slice of the backing GPU buffer
+
+	private long absoluteViewOffset; // the current offset for the view buffers, into the backing GPU buffer
 
 	GLMappedBuffer(GLBuffer owner) {
 		this.owner = owner;
@@ -49,10 +52,10 @@ public final class GLMappedBuffer {
 
 	GLMappedBuffer(GLBuffer owner, ByteBuffer mappedBuffer) {
 		this.owner = owner;
-		this.byteView = mappedBuffer;
-		this.intView = mappedBuffer.asIntBuffer();
-		this.floatView = mappedBuffer.asFloatBuffer();
 		this.mapped = true;
+		if ((owner.storageFlags & GLBuffer.STORAGE_WRITE) != 0) mappedFlags |= MAP_WRITE;
+		if ((owner.storageFlags & GLBuffer.STORAGE_READ) != 0) mappedFlags |= MAP_READ;
+		updateViews(mappedBuffer, 0, mappedBuffer.capacity());
 	}
 
 	public GLMappedBuffer map(int flags) {
@@ -60,14 +63,10 @@ public final class GLMappedBuffer {
 	}
 
 	public GLMappedBuffer map(int flags, long offsetBytes, long sizeBytes) {
-		if (byteView != null) {
-			byteView.position(0);
-			intView.position(0);
-			floatView.position(0);
-		}
-
-		if (mapped || owner.isStorageBuffer())
+		if (mapped || owner.isStorageBuffer()) {
+			updateViews(mappingBuffer, offsetBytes, sizeBytes);
 			return this;
+		}
 
 		if (Vk.ACTIVE)
 			return vkMap(flags, offsetBytes, sizeBytes);
@@ -75,9 +74,10 @@ public final class GLMappedBuffer {
 		owner.bind();
 
 		final ByteBuffer buf;
-		if (owner.target != GL_STATIC_DRAW && GL_CAPS.GL_ARB_map_buffer_range && !GLBuffer.DEBUG_MAC_OS) {
+		if (GL_CAPS.GL_ARB_map_buffer_range && !GLBuffer.DEBUG_MAC_OS) {
+			// Map a part of the buffer or its entirety depending on the offset and size
 			int glFlags = 0;
-			if ((flags & MAP_WRITE) != 0) glFlags |= GL_MAP_WRITE_BIT;
+			if ((flags & MAP_WRITE) != 0) glFlags |= GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT;
 			if ((flags & MAP_READ) != 0) glFlags |= GL_MAP_READ_BIT;
 			if ((flags & MAP_UNSYNCHRONIZED) != 0) glFlags |= GL_MAP_UNSYNCHRONIZED_BIT;
 
@@ -93,11 +93,12 @@ public final class GLMappedBuffer {
 				owner.target,
 				offsetBytes,
 				mapSize,
-				glFlags | GL_MAP_FLUSH_EXPLICIT_BIT,
-				byteView
+				glFlags,
+				mappingBuffer
 			);
-			this.mappedOffset = offsetBytes;
+			this.mappingOffset = offsetBytes;
 		} else {
+			// Map the whole buffer due to lack of GL_ARB_map_buffer_range support
 			int glAccess;
 			if ((flags & (MAP_WRITE | MAP_READ)) == (MAP_WRITE | MAP_READ)) {
 				glAccess = GL_READ_WRITE;
@@ -107,22 +108,14 @@ public final class GLMappedBuffer {
 				glAccess = GL_READ_ONLY;
 			}
 
-			buf = glMapBuffer(owner.target, glAccess, byteView);
-			this.mappedOffset = 0;
+			buf = glMapBuffer(owner.target, glAccess, mappingBuffer);
+			this.mappingOffset = 0;
 		}
 
 		if (buf == null)
 			throw new RuntimeException("Failed to map buffer " + owner.id);
 
-		if (byteView != buf) {
-			byteView = buf;
-			intView = buf.asIntBuffer();
-			floatView = buf.asFloatBuffer();
-		}
-
-		byteView.clear();
-		intView.clear();
-		floatView.clear();
+		updateViews(buf, offsetBytes, sizeBytes);
 
 		this.mappedFlags = flags;
 		mapped = true;
@@ -151,21 +144,13 @@ public final class GLMappedBuffer {
 		if (whole == null)
 			throw new RuntimeException("Failed to map buffer " + owner.id);
 
-		// Like glMapBufferRange, the returned view starts at the requested offset. The native
-		// side hands back the same ByteBuffer object for an allocation every time, so the views
-		// are rebuilt on every map: int/float views keep the size they were created with, and a
-		// larger map of the same allocation (the UI growing within its power-of-two buffer)
-		// would otherwise overflow them.
-		whole.position((int) offsetBytes).limit((int) (offsetBytes + mapSize));
-		ByteBuffer buf = whole.slice().order(ByteOrder.nativeOrder());
-		byteView = buf;
-		intView = buf.asIntBuffer();
-		floatView = buf.asFloatBuffer();
-		byteView.clear();
-		intView.clear();
-		floatView.clear();
+		// The whole allocation is the mapped slice; like glMapBufferRange, the views start at the
+		// requested offset. The native side hands back the same ByteBuffer object for an
+		// allocation every time, which updateViews tells apart by offset and size.
+		whole.order(ByteOrder.nativeOrder());
+		this.mappingOffset = 0;
+		updateViews(whole, offsetBytes, mapSize);
 
-		this.mappedOffset = offsetBytes;
 		this.mappedFlags = flags;
 		mapped = true;
 		return this;
@@ -176,12 +161,32 @@ public final class GLMappedBuffer {
 		if (!mapped)
 			return;
 		int pos = getPositionBytes();
-		long offset = mappedOffset;
+		long offset = absoluteViewOffset;
 		int flags = mappedFlags;
 		mapped = false;
 		vkMap(flags | MAP_UNSYNCHRONIZED, offset, owner.size - offset);
 		mappedFlags = flags;
 		setPositionBytes(pos);
+	}
+
+	private void updateViews(ByteBuffer buffer, long offsetBytes, long sizeBytes) {
+		int size = Math.toIntExact(sizeBytes);
+		if (mappingBuffer != buffer || absoluteViewOffset != offsetBytes || byteView.capacity() != size) {
+			assert offsetBytes >= mappingOffset : "The view must be within the mapped slice of the backing buffer";
+			absoluteViewOffset = offsetBytes;
+			int mappedOffset = Math.toIntExact(absoluteViewOffset - mappingOffset);
+			mappingBuffer = buffer
+				.clear()
+				.position(mappedOffset)
+				.limit(Math.addExact(mappedOffset, size));
+			byteView = mappingBuffer.slice().order(mappingBuffer.order());
+			intView = byteView.asIntBuffer();
+			floatView = byteView.asFloatBuffer();
+		} else {
+			byteView.clear();
+			intView.clear();
+			floatView.clear();
+		}
 	}
 
 	public int getPositionBytes() {
@@ -209,7 +214,7 @@ public final class GLMappedBuffer {
 	}
 
 	public void unmap() {
-		if (!mapped || owner.isStorageBuffer())
+		if (!mapped)
 			return;
 
 		syncViews();
@@ -221,20 +226,38 @@ public final class GLMappedBuffer {
 		}
 
 		owner.bind();
-		if (owner.target != GL_STATIC_DRAW && GL_CAPS.GL_ARB_map_buffer_range && !GLBuffer.DEBUG_MAC_OS) {
-			byteView.flip();
-			glFlushMappedBufferRange(owner.target, byteView.position(), byteView.remaining());
-			byteView.clear();
+
+		// Explicitly flush both persistent buffers and buffers mapped with the explicit flush bit
+		if ((mappedFlags & MAP_WRITE) != 0 &&
+			byteView.position() > 0 &&
+			(owner.isStorageBuffer() || GL_CAPS.GL_ARB_map_buffer_range && !GLBuffer.DEBUG_MAC_OS)
+		) {
+			glFlushMappedBufferRange(owner.target, absoluteViewOffset - mappingOffset, byteView.position());
 		}
-		glUnmapBuffer(owner.target);
+
+		boolean corrupted = false;
+		// Unmap non-persistent buffers, and handle possible buffer corruption
+		if (!owner.isStorageBuffer()) {
+			corrupted = !glUnmapBuffer(owner.target);
+			mapped = false;
+		}
 		owner.unbind();
 
-		mapped = false;
+		if (corrupted) {
+			// We might technically be able to recover from this, but it requires careful handling
+			throw new IllegalStateException(
+				String.format(
+					"Corrupted buffer contents while unmapping '%s', offset: %d",
+					owner,
+					mappingOffset
+				));
+		}
 	}
 
 	void destroy() {
 		unmap();
 
+		mappingBuffer = null;
 		byteView = null;
 		intView = null;
 		floatView = null;

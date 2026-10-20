@@ -17,6 +17,7 @@ enum Op {
 	OP_MULTI_DRAW = 10,
 	OP_PUSH = 11,
 	OP_DRAW_INSTANCED = 12,
+	OP_DEPTH_BIAS = 13,
 };
 
 void resetDrawState() {
@@ -26,6 +27,7 @@ void resetDrawState() {
 	memset(ctx->boundVertexOffsets, 0, sizeof(ctx->boundVertexOffsets));
 	ctx->boundIndexBuffer = VK_NULL_HANDLE;
 	ctx->boundStorage = VK_NULL_HANDLE;
+	ctx->depthBiasDirty = true;
 	ctx->uboDirty = true;
 	ctx->pushReplay = true;
 	ctx->texturesDirty = true;
@@ -274,6 +276,12 @@ static bool prepareDraw(VkCommandBuffer cb, bool indexed) {
 	if (ctx->boundPipeline != ctx->lastPipeline) {
 		vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->lastPipeline);
 		ctx->boundPipeline = ctx->lastPipeline;
+		ctx->depthBiasDirty = true;
+	}
+	// Pipelines with GL_POLYGON_OFFSET_FILL take the offset as dynamic state
+	if ((ctx->curState & (1u << 27)) && ctx->depthBiasDirty) {
+		vkCmdSetDepthBias(cb, ctx->depthBiasConstant, 0, ctx->depthBiasSlope);
+		ctx->depthBiasDirty = false;
 	}
 
 	if (ctx->viewportDirty) {
@@ -407,6 +415,15 @@ void executeStream(const int32_t *ops, int count) {
 					int c = ops[i++];
 					if (ok && c > 0) vkCmdDraw(cb, (uint32_t) c, 1, (uint32_t) first, 0);
 				}
+				break;
+			}
+			case OP_DEPTH_BIAS: {
+				// glPolygonOffset(factor, units): units scale the format's minimum resolvable depth
+				// difference exactly as Vulkan's constant factor does
+				memcpy(&ctx->depthBiasConstant, ops + i, 4);
+				memcpy(&ctx->depthBiasSlope, ops + i + 1, 4);
+				i += 2;
+				ctx->depthBiasDirty = true;
 				break;
 			}
 			case OP_PUSH: {

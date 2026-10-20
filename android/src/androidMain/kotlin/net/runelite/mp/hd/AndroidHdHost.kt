@@ -47,6 +47,29 @@ object AndroidHdHost : AndroidSupport.Host {
             config.setConfiguration(HdPluginConfig.CONFIG_GROUP, "tiledLighting", "true")
             config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "3")
         }
+        migrateConfiguration(config)
+    }
+    fun migrateConfiguration(config: ConfigManager) {
+        // 1.6 changes these persisted booleans to DEFAULT/ON/OFF. Preserve explicit
+        // choices, including OFF, instead of letting enum parsing fall back to defaults.
+        for (key in listOf(HdPluginConfig.KEY_TILED_LIGHTING, HdPluginConfig.KEY_IMAGE_LOAD_STORE)) {
+            val migrated = when (config.getConfiguration(HdPluginConfig.CONFIG_GROUP, key)) {
+                "true" -> "ON"
+                "false" -> "OFF"
+                else -> null
+            }
+            if (migrated != null) config.setConfiguration(HdPluginConfig.CONFIG_GROUP, key, migrated)
+        }
+        // 1.6 splits the shadow filters into low/high variants and drops the old names; a stale
+        // value fails enum parsing every time the config is read, so map it to its nearest match.
+        val filtering = config.getConfiguration(HdPluginConfig.CONFIG_GROUP, HdPluginConfig.KEY_SHADOW_FILTERING)
+        val migratedFiltering = when (filtering) {
+            "SMOOTH" -> "SMOOTH_LOW"
+            "DITHERED" -> "DITHERED_LOW"
+            else -> null
+        }
+        if (migratedFiltering != null)
+            config.setConfiguration(HdPluginConfig.CONFIG_GROUP, HdPluginConfig.KEY_SHADOW_FILTERING, migratedFiltering)
     }
     override fun makeCurrent(): Boolean {
         Canvas.setRenderedByGles(true)

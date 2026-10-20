@@ -5,6 +5,7 @@ import android.opengl.GLES32;
 /** Capabilities of the implemented desktop-to-GLES subset, never a spoofed driver version. */
 public final class GLCapabilities {
     public final boolean OpenGL31, OpenGL33;
+    public final boolean forwardCompatible=true; // GLES has no desktop compatibility point-sprite toggle.
     public final boolean OpenGL40=false, OpenGL43=false;
     public final boolean GL_ARB_buffer_storage=false, GL_ARB_draw_indirect=false, GL_ARB_multi_draw_indirect=false;
     public final boolean GL_ARB_copy_buffer, GL_ARB_map_buffer_range;

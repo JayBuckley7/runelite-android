@@ -199,9 +199,17 @@ static VkFormat mapFormat(int gl, bool sampledDepth, bool &isDepth) {
 			return VK_FORMAT_R16G16B16A16_UINT;
 		case 0x8233: // GL_R16I
 			return VK_FORMAT_R16_SINT;
+		case 0x881A: // GL_RGBA16F
+			return VK_FORMAT_R16G16B16A16_SFLOAT;
+		case 0x81A5: // GL_DEPTH_COMPONENT16
+			// Linear filtering (terrain shadows' sampler2DShadow) is guaranteed for D16, not for D32F
+			isDepth = true;
+			if (formatSupports(VK_FORMAT_D16_UNORM, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+					(sampledDepth ? VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT : 0)))
+				return VK_FORMAT_D16_UNORM;
+			return chooseDepthFormat(sampledDepth);
 		case 0x8CAC: // GL_DEPTH_COMPONENT32F
 		case 0x81A6: // GL_DEPTH_COMPONENT24
-		case 0x81A5: // GL_DEPTH_COMPONENT16
 		case 0x1902: // GL_DEPTH_COMPONENT
 			isDepth = true;
 			return chooseDepthFormat(sampledDepth);
@@ -214,6 +222,7 @@ static VkFormat mapFormat(int gl, bool sampledDepth, bool &isDepth) {
 static uint32_t bytesPerPixel(VkFormat f) {
 	switch (f) {
 		case VK_FORMAT_R16G16B16A16_UINT: return 8;
+		case VK_FORMAT_R16G16B16A16_SFLOAT: return 8;
 		case VK_FORMAT_R16_SINT: return 2;
 		case VK_FORMAT_D16_UNORM: return 2;
 		default: return 4;
@@ -236,7 +245,7 @@ int imageCreate(int type, int formatGl, uint32_t w, uint32_t h, uint32_t layers,
 	img->format = mapFormat(formatGl, (usage & IMG_SAMPLED) != 0, img->isDepth);
 	img->width = std::max<uint32_t>(w, 1);
 	img->height = std::max<uint32_t>(h, 1);
-	img->layers = type == IMG_2D ? 1 : std::max<uint32_t>(layers, 1);
+	img->layers = type == IMG_2D ? 1 : type == IMG_CUBE ? 6 : std::max<uint32_t>(layers, 1);
 	img->depth = type == IMG_3D ? img->layers : 1;
 	if (type == IMG_3D) img->layers = 1;
 	img->mips = std::max<uint32_t>(mips, 1);
@@ -258,6 +267,7 @@ int imageCreate(int type, int formatGl, uint32_t w, uint32_t h, uint32_t layers,
 	if (usage & IMG_TRANSFER_DST) vu |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 	VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+	if (type == IMG_CUBE) ici.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 	ici.imageType = type == IMG_3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
 	ici.format = img->format;
 	ici.extent = { img->width, img->height, img->depth };
@@ -292,7 +302,8 @@ int imageCreate(int type, int formatGl, uint32_t w, uint32_t h, uint32_t layers,
 	VkImageAspectFlags aspect = img->isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 	VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 	vci.image = img->image;
-	vci.viewType = type == IMG_3D ? VK_IMAGE_VIEW_TYPE_3D : type == IMG_2D_ARRAY ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+	vci.viewType = type == IMG_3D ? VK_IMAGE_VIEW_TYPE_3D : type == IMG_2D_ARRAY ? VK_IMAGE_VIEW_TYPE_2D_ARRAY :
+		type == IMG_CUBE ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
 	vci.format = img->format;
 	vci.subresourceRange = { aspect, 0, img->mips, 0, img->layers };
 	VKCHECK(vkCreateImageView(ctx->device, &vci, nullptr, &img->view));
@@ -455,6 +466,10 @@ VkSampler getSampler(const SamplerState &s) {
 	sci.minLod = 0;
 	sci.maxLod = s.mipmap ? VK_LOD_CLAMP_NONE : 0.25f; // GL: no mipmap filter = base level only
 	sci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+	if (s.compare) {
+		sci.compareEnable = VK_TRUE;
+		sci.compareOp = (VkCompareOp) (s.compare - 1);
+	}
 	if (ctx->anisotropySupported && s.anisotropy > 1 && s.mipmap) {
 		sci.anisotropyEnable = VK_TRUE;
 		sci.maxAnisotropy = std::min(s.anisotropy, ctx->maxAnisotropy);
@@ -469,7 +484,8 @@ void imageSetSampler(int handle, const SamplerState &state) {
 	Image *img = ctx->images.get(handle);
 	if (!img) return;
 	SamplerState s = state;
-	if (img->format == VK_FORMAT_R16G16B16A16_UINT || img->format == VK_FORMAT_R16_SINT) {
+	if (img->format == VK_FORMAT_R16G16B16A16_UINT || img->format == VK_FORMAT_R16_SINT ||
+		(s.minFilter || s.magFilter) && !formatSupports(img->format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
 		s.minFilter = s.magFilter = 0;
 		s.mipmap = s.mipmap ? 1 : 0;
 	}
@@ -522,6 +538,7 @@ int createDummyImage(int kind) {
 		case 1: h = imageCreate(IMG_2D_ARRAY, 0x8058, 1, 1, 1, 1, 1, IMG_SAMPLED); break;
 		case 2: h = imageCreate(IMG_2D_ARRAY, 0x8D76, 1, 1, 1, 1, 1, IMG_SAMPLED); break;
 		case 3: h = imageCreate(IMG_3D, 0x8233, 1, 1, 1, 1, 1, IMG_SAMPLED); break;
+		case 4: return imageCreate(IMG_CUBE, 0x8058, 1, 1, 6, 1, 1, IMG_SAMPLED); // zero-cleared on creation
 		default: h = imageCreate(IMG_2D, 0x8058, 1, 1, 1, 1, 1, IMG_SAMPLED); break;
 	}
 	if (h) imageUpload(h, 0, 0, 0, 0, 1, 1, 1, zero, sizeof(zero), 0, 0, 0);

@@ -29,16 +29,18 @@ public final class AndroidSupport {
         default org.lwjgl.opengl.GLCapabilities vulkanCapabilities() { return null; }
     }
     public static Host host;
+    // GLES permits zero vertex-stage SSBOs; retain texture buffers on those drivers.
+    public static boolean useFaceStorageBuffer;
     public static final String GLSL_HEADER = "#version 320 es\n"
         + "precision highp float;\nprecision highp int;\n"
         + "precision highp sampler2D;\nprecision highp sampler3D;\nprecision highp sampler2DArray;\n"
         + "precision highp isampler3D;\nprecision highp isamplerBuffer;\n"
-        + "precision highp usampler2DArray;\n";
+        + "precision highp usampler2DArray;\nprecision highp samplerCube;\nprecision highp sampler2DShadow;\n";
     private AndroidSupport() {}
     public static String adaptShader(String source) {
         // Mobile texture buffers can be limited to 65,536 texels. Crowded scenes
         // exceed that limit; read the same packed RGB32I data through an SSBO.
-        if (source.contains("uniform isamplerBuffer textureFaces;")) {
+        if (useFaceStorageBuffer && source.contains("uniform isamplerBuffer textureFaces;")) {
             source = source.replace("uniform isamplerBuffer textureFaces;",
                 "layout(std430, binding = 0) readonly buffer AndroidFaceData { int faceData[]; };\n"
                 + "ivec4 fetchFaceData(int index) { int base = index * 3; "

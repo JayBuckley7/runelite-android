@@ -80,6 +80,7 @@ public class ModelOverride
 	private boolean hideAsWaterEffect = false;
 	public float terrainVertexSnapThreshold = 0.125f;
 	public float shadowOpacityThreshold = 0;
+	public boolean shadowNormalBias = false;
 	public TzHaarRecolorType tzHaarRecolorType = TzHaarRecolorType.NONE;
 	public InheritTileColorType inheritTileColorType = InheritTileColorType.NONE;
 	public WindDisplacement windDisplacementMode = WindDisplacement.DISABLED;
@@ -118,7 +119,8 @@ public class ModelOverride
 
 	public transient boolean isDummy;
 	public transient boolean isGenerated;
-	public transient Map<AABB, ModelOverride> areaOverrides;
+	public transient ModelOverride[] areaOverrides;
+	public transient AABB[] areaOverrideBounds;
 	public transient AhslPredicate ahslCondition;
 	public transient boolean mightHaveTransparency;
 	public transient boolean mightBeDoubleSided;
@@ -266,6 +268,8 @@ public class ModelOverride
 
 		if (!castShadows && shadowOpacityThreshold == 0)
 			shadowOpacityThreshold = 1;
+
+		shadowNormalBias |= baseMaterial.subsurface > 0 || textureMaterial.subsurface > 0;
 	}
 
 	public void clearIds(){
@@ -315,6 +319,7 @@ public class ModelOverride
 			hideAsWaterEffect,
 			terrainVertexSnapThreshold,
 			shadowOpacityThreshold,
+			shadowNormalBias,
 			tzHaarRecolorType,
 			inheritTileColorType,
 			windDisplacementMode,
@@ -348,6 +353,7 @@ public class ModelOverride
 			isDummy,
 			isGenerated,
 			areaOverrides,
+			areaOverrideBounds,
 			ahslCondition,
 			mightHaveTransparency,
 			mightBeDoubleSided,

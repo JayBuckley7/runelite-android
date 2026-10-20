@@ -39,13 +39,16 @@ public final class Vk {
 	private static final int OP_MULTI_DRAW = 10;
 	private static final int OP_PUSH = 11;
 	private static final int OP_DRAW_INSTANCED = 12;
+	private static final int OP_DEPTH_BIAS = 13;
 
 	private static final int STREAM_INTS = 64 * 1024;
 	private static final ByteBuffer streamBytes = ByteBuffer.allocateDirect(STREAM_INTS * 4).order(ByteOrder.nativeOrder());
 	private static final IntBuffer stream = streamBytes.asIntBuffer();
 
 	// GL-style state
-	private static boolean blend, cull, depthTest;
+	private static boolean blend, cull, depthTest, polygonOffset, cullFront;
+	private static float polygonOffsetFactor, polygonOffsetUnits;
+	private static float emittedOffsetFactor = Float.NaN, emittedOffsetUnits = Float.NaN;
 	private static boolean depthMask = true;
 	private static int depthFunc = GL_LESS;
 	private static int blendSrcRgb = GL_ONE, blendDstRgb = GL_ZERO, blendSrcA = GL_ONE, blendDstA = GL_ZERO;
@@ -149,6 +152,7 @@ public final class Vk {
 		pushDirty = true;
 		program = layout = indexBuffer = 0;
 		emittedViewport[0] = -1;
+		emittedOffsetFactor = emittedOffsetUnits = Float.NaN;
 	}
 
 	// ---------------------------------------------------------------------------------------
@@ -191,10 +195,28 @@ public final class Vk {
 			case GL_DEPTH_TEST:
 				if (depthTest != on) { depthTest = on; stateDirty = true; }
 				break;
+			case GL_POLYGON_OFFSET_FILL:
+				if (polygonOffset != on) { polygonOffset = on; stateDirty = true; }
+				break;
 			default:
 				// GL_MULTISAMPLE, GL_FRAMEBUFFER_SRGB, ... have no per-draw Vulkan equivalent
 				break;
 		}
+	}
+
+	/** glCullFace: GL_FRONT culls front faces; anything else culls back faces. */
+	public static void cullFace(int mode) {
+		boolean front = mode == GL_FRONT;
+		if (cullFront != front) {
+			cullFront = front;
+			stateDirty = true;
+		}
+	}
+
+	/** glPolygonOffset: slope factor and constant units, applied while GL_POLYGON_OFFSET_FILL is on. */
+	public static void polygonOffset(float factor, float units) {
+		polygonOffsetFactor = factor;
+		polygonOffsetUnits = units;
 	}
 
 	public static void depthMask(boolean write) {
@@ -317,7 +339,9 @@ public final class Vk {
 				| (depthTest ? 1 : 0) << 18
 				| (depthMask ? 1 : 0) << 19
 				| ((depthFunc - GL_NEVER) & 7) << 20
-				| colorMask << 23;
+				| colorMask << 23
+				| (polygonOffset ? 1 : 0) << 27
+				| (cullFront ? 1 : 0) << 28;
 			stateDirty = false;
 			if (bits != emittedState) {
 				emittedState = bits;
@@ -330,6 +354,12 @@ public final class Vk {
 			System.arraycopy(viewport, 0, emittedViewport, 0, 4);
 			reserve(5);
 			stream.put(OP_VIEWPORT).put(viewport[0]).put(viewport[1]).put(viewport[2]).put(viewport[3]);
+		}
+		if (polygonOffset && (polygonOffsetFactor != emittedOffsetFactor || polygonOffsetUnits != emittedOffsetUnits)) {
+			emittedOffsetFactor = polygonOffsetFactor;
+			emittedOffsetUnits = polygonOffsetUnits;
+			reserve(3);
+			stream.put(OP_DEPTH_BIAS).put(Float.floatToRawIntBits(polygonOffsetUnits)).put(Float.floatToRawIntBits(polygonOffsetFactor));
 		}
 	}
 
@@ -487,12 +517,22 @@ public final class Vk {
 	 * @param wrap      GL_CLAMP_TO_EDGE, GL_REPEAT, GL_CLAMP_TO_BORDER or GL_MIRRORED_REPEAT, for S, T and R
 	 */
 	public static void imageSampler(int image, int minFilter, int magFilter, int wrapS, int wrapT, float anisotropy) {
+		imageSampler(image, minFilter, magFilter, wrapS, wrapT, anisotropy, GL_NONE);
+	}
+
+	/**
+	 * @param compareFunc GL_NONE for plain sampling; otherwise the GL_TEXTURE_COMPARE_FUNC of a depth
+	 *                    texture sampled with GL_COMPARE_REF_TO_TEXTURE (a sampler2DShadow)
+	 */
+	public static void imageSampler(int image, int minFilter, int magFilter, int wrapS, int wrapT, float anisotropy, int compareFunc) {
 		flush();
 		int min = minFilter == GL_LINEAR || minFilter == GL_LINEAR_MIPMAP_NEAREST || minFilter == GL_LINEAR_MIPMAP_LINEAR ? 1 : 0;
 		int mip = minFilter == GL_NEAREST_MIPMAP_NEAREST || minFilter == GL_LINEAR_MIPMAP_NEAREST ? 1 :
 			minFilter == GL_NEAREST_MIPMAP_LINEAR || minFilter == GL_LINEAR_MIPMAP_LINEAR ? 2 : 0;
 		int mag = magFilter == GL_LINEAR ? 1 : 0;
-		VkNative.imageSampler(image, min, mag, mip, wrapMode(wrapS), wrapMode(wrapT), wrapMode(wrapT), anisotropy);
+		// GL_NEVER..GL_ALWAYS are consecutive in the same order as VkCompareOp
+		int compare = compareFunc >= GL_NEVER && compareFunc <= GL_ALWAYS ? compareFunc - GL_NEVER + 1 : 0;
+		VkNative.imageSampler(image, min, mag, mip, wrapMode(wrapS), wrapMode(wrapT), wrapMode(wrapT), anisotropy, compare);
 	}
 
 	private static int wrapMode(int gl) {

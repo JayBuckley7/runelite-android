@@ -26,7 +26,7 @@ import static rs117.hd.utils.buffer.GLBuffer.STORAGE_WRITE;
 
 @Slf4j
 public class DynamicModelVAO implements Destructible {
-	public static final int INITIAL_SIZE = (int) (8 * MiB);
+	private static final int INITIAL_SIZE = (int) (64 * KiB);
 
 	// Temp vertex format
 	// pos float vec3(x, y, z)
@@ -328,7 +328,7 @@ public class DynamicModelVAO implements Destructible {
 		private int drawIdx;
 
 		public int getStartOffset() {
-			return vbo.getBufferOffsetInts();
+			return vbo.getOffsetInts();
 		}
 
 		public int getEndOffset() {

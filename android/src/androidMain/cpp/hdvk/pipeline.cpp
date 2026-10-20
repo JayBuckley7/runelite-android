@@ -303,10 +303,12 @@ bool preprocess(const std::string &src, shaderc_shader_kind kind, const std::str
 	return ok;
 }
 
-bool compileSpirv(const std::string &src, shaderc_shader_kind kind, const std::string &name, std::vector<uint32_t> &spirv, std::string &error) {
+bool compileSpirv(const std::string &src, shaderc_shader_kind kind, const std::string &name, std::vector<uint32_t> &spirv,
+	std::string &error, bool optimize = true) {
 	shaderc_compile_options_t opts = shaderc_compile_options_initialize();
 	shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_1);
-	shaderc_compile_options_set_optimization_level(opts, shaderc_optimization_level_performance);
+	shaderc_compile_options_set_optimization_level(opts,
+		optimize ? shaderc_optimization_level_performance : shaderc_optimization_level_zero);
 	shaderc_compilation_result_t res = shaderc_compile_into_spv(
 		compiler, src.data(), src.size(), kind, name.c_str(), "main", opts);
 	bool ok = shaderc_result_get_compilation_status(res) == shaderc_compilation_status_success;
@@ -319,6 +321,13 @@ bool compileSpirv(const std::string &src, shaderc_shader_kind kind, const std::s
 	}
 	shaderc_result_release(res);
 	shaderc_compile_options_release(opts);
+	if (!ok && optimize && error.find("failed to optimize") != std::string::npos) {
+		// The SPIR-V optimizer can trip over valid glslang output (seen with 117 HD 1.6's scene
+		// shader); the driver optimizes again anyway, so fall back to the unoptimized module
+		LOGW("%s: SPIR-V optimizer failed, using the unoptimized module", name.c_str());
+		error.clear();
+		return compileSpirv(src, kind, name, spirv, error, false);
+	}
 	return ok;
 }
 
@@ -589,7 +598,10 @@ VkPipeline getPipeline(Program *p, VertexLayout *layout, uint32_t state, uint64_
 
 	VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
-	rs.cullMode = (state & (1u << 17)) ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+	rs.cullMode = !(state & (1u << 17)) ? VK_CULL_MODE_NONE : (state & (1u << 28)) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+	// GL_POLYGON_OFFSET_FILL; the factors are dynamic (OP_DEPTH_BIAS)
+	bool depthBias = (state & (1u << 27)) != 0;
+	rs.depthBiasEnable = depthBias;
 	// GL's counter-clockwise front faces become clockwise in an unflipped Vulkan framebuffer
 	rs.frontFace = flipY ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
 	rs.lineWidth = 1;
@@ -624,9 +636,9 @@ VkPipeline getPipeline(Program *p, VertexLayout *layout, uint32_t state, uint64_
 	cb.attachmentCount = hasColor ? 1 : 0;
 	cb.pAttachments = &cba;
 
-	VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS };
 	VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-	dy.dynamicStateCount = 2;
+	dy.dynamicStateCount = depthBias ? 3 : 2;
 	dy.pDynamicStates = dyn;
 
 	VkPipelineShaderStageCreateInfo stages[2]{};

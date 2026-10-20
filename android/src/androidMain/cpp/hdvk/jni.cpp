@@ -44,6 +44,7 @@ JNI_FN(jstring, init)(JNIEnv *env, jclass, jstring cacheDir) {
 	ctx->dummyImages[1] = createDummyImage(1);
 	ctx->dummyImages[2] = createDummyImage(2);
 	ctx->dummyImages[3] = createDummyImage(3);
+	ctx->dummyImages[4] = createDummyImage(4);
 	for (int &u : ctx->unitDummy) u = ctx->dummyImages[0];
 	ctx->dummyUbo = bufferCreate(256, BUF_UNIFORM);
 	ctx->dummyStorage = bufferCreate(256, BUF_STORAGE);
@@ -200,9 +201,12 @@ JNI_FN(void, imageGenerateMips)(JNIEnv *, jclass, jint img) {
 	if (alive()) imageGenerateMips(img);
 }
 
-JNI_FN(void, imageSampler)(JNIEnv *, jclass, jint img, jint minFilter, jint magFilter, jint mipmap, jint wrapS, jint wrapT, jint wrapR, jfloat aniso) {
+// compare: 0 = plain sampling, otherwise VkCompareOp + 1 (depth comparison, GL_COMPARE_REF_TO_TEXTURE)
+JNI_FN(void, imageSampler)(JNIEnv *, jclass, jint img, jint minFilter, jint magFilter, jint mipmap, jint wrapS, jint wrapT, jint wrapR,
+	jfloat aniso, jint compare) {
 	if (!alive()) return;
 	SamplerState s;
+	s.compare = (uint8_t) compare;
 	s.minFilter = (uint8_t) minFilter;
 	s.magFilter = (uint8_t) magFilter;
 	s.mipmap = (uint8_t) mipmap;
@@ -214,7 +218,7 @@ JNI_FN(void, imageSampler)(JNIEnv *, jclass, jint img, jint minFilter, jint magF
 }
 
 JNI_FN(void, setUnitDummy)(JNIEnv *, jclass, jint unit, jint kind) {
-	if (!alive() || unit < 0 || unit >= NUM_TEXTURE_UNITS || kind < 0 || kind > 3) return;
+	if (!alive() || unit < 0 || unit >= NUM_TEXTURE_UNITS || kind < 0 || kind > 4) return;
 	ctx->unitDummy[unit] = ctx->dummyImages[kind];
 	ctx->texturesDirty = true;
 }

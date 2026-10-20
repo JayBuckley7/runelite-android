@@ -27,7 +27,8 @@ public final class VkShaders {
 	public static final String HEADER = "#version 320 es\n"
 		+ "precision highp float;\nprecision highp int;\n"
 		+ "precision highp sampler2D;\nprecision highp sampler3D;\nprecision highp sampler2DArray;\n"
-		+ "precision highp isampler3D;\nprecision highp usampler2DArray;\n";
+		+ "precision highp isampler3D;\nprecision highp usampler2DArray;\n"
+		+ "precision highp samplerCube;\nprecision highp sampler2DShadow;\n";
 
 	/** A loose uniform placed in the push-constant block. */
 	public static final class PushUniform {

@@ -47,6 +47,7 @@ public final class HdVulkan {
 		Vk.setUnitDummy(TEXTURE_UNIT_GAME - GL_TEXTURE0, VkNative.DUMMY_2D_ARRAY);
 		Vk.setUnitDummy(TEXTURE_UNIT_TILE_HEIGHT_MAP - GL_TEXTURE0, VkNative.DUMMY_3D_INT);
 		Vk.setUnitDummy(TEXTURE_UNIT_TILED_LIGHTING_MAP - GL_TEXTURE0, VkNative.DUMMY_2D_ARRAY_UINT);
+		Vk.setUnitDummy(TEXTURE_UNIT_NEBULA_MAP - GL_TEXTURE0, VkNative.DUMMY_CUBE);
 		lastSurfaceWidth = lastSurfaceHeight = 0;
 		// Handles belong to the previous device
 		compositeProgram = 0;
@@ -173,10 +174,10 @@ public final class HdVulkan {
 		p.tiledLightingOverlay.render();
 
 		p.uiProgram.use();
-		p.uboUI.sourceDimensions.set(p.getUiResolution());
-		p.uboUI.targetDimensions.set(p.actualUiResolution);
-		p.uboUI.alphaOverlay.set(ColorUtils.srgba(overlayColor));
-		p.uboUI.upload();
+		p.uboUi.sourceDimensions.set(p.getUiResolution());
+		p.uboUi.targetDimensions.set(p.actualUiResolution);
+		p.uboUi.alphaOverlay.set(ColorUtils.srgba(overlayColor));
+		p.uboUi.upload();
 
 		int tex = p.texUi[p.texUiCurrent];
 		Vk.imageSampler(tex, samplingFunction, samplingFunction, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, 1);
@@ -304,26 +305,58 @@ public final class HdVulkan {
 		Vk.imageSampler(shadowDepth, GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER, 1);
 		p.fboShadowMap = Vk.framebufferCreate(0, 0, shadowDepth, 0);
 		Vk.bindTexture(TEXTURE_UNIT_SHADOW_MAP - GL_TEXTURE0, shadowDepth);
+
+		if (p.configTerrainShadows) {
+			p.terrainShadowMapResolution = resolution;
+			terrainShadowDepth = Vk.imageCreate(VkNative.IMG_2D, GL_DEPTH_COMPONENT16, resolution, resolution, 1, 1, 1,
+				VkNative.IMG_DEPTH_ATTACHMENT | VkNative.IMG_SAMPLED);
+			Vk.imageSampler(terrainShadowDepth, GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER, 1,
+				terrainShadowCompare(p));
+			p.fboTerrainShadowMap = Vk.framebufferCreate(0, 0, terrainShadowDepth, 0);
+			Vk.bindTexture(TEXTURE_UNIT_TERRAIN_SHADOW_MAP - GL_TEXTURE0, terrainShadowDepth);
+		} else {
+			createDummyTerrainShadowMap(p);
+		}
 	}
 
-	static void createDummyShadowMap(HdPlugin p) {
-		shadowDepth = Vk.imageCreate(VkNative.IMG_2D, GL_DEPTH_COMPONENT24, 1, 1, 1, 1, 1,
+	/** Terrain shadows sample through a sampler2DShadow, except PCSS which needs the raw depths. */
+	private static int terrainShadowCompare(HdPlugin p) {
+		return p.config.shadowFiltering() == rs117.hd.config.ShadowFiltering.PCSS ? GL_NONE : GL_GREATER;
+	}
+
+	/** A 1x1 depth image cleared to 1 ("fully lit", like GL's white border) for unused shadow units. */
+	private static int dummyDepth(int glFormat, int minFilter, int compare) {
+		int image = Vk.imageCreate(VkNative.IMG_2D, glFormat, 1, 1, 1, 1, 1,
 			VkNative.IMG_DEPTH_ATTACHMENT | VkNative.IMG_SAMPLED);
-		Vk.imageSampler(shadowDepth, GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER, 1);
-		// Clear it once so the dummy reads as "fully lit" like GL's border color
-		int fb = Vk.framebufferCreate(0, 0, shadowDepth, 0);
+		Vk.imageSampler(image, minFilter, minFilter, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER, 1, compare);
+		int fb = Vk.framebufferCreate(0, 0, image, 0);
 		Vk.beginPass(fb, VkNative.DONT_CARE, 0, 0, 0, 0, VkNative.CLEAR, 1, true);
 		Vk.endPass();
 		Vk.framebufferDestroy(fb);
+		return image;
+	}
+
+	private static void createDummyTerrainShadowMap(HdPlugin p) {
+		terrainShadowDepth = dummyDepth(GL_DEPTH_COMPONENT16, GL_NEAREST, terrainShadowCompare(p));
+		Vk.bindTexture(TEXTURE_UNIT_TERRAIN_SHADOW_MAP - GL_TEXTURE0, terrainShadowDepth);
+	}
+
+	static void createDummyShadowMaps(HdPlugin p) {
+		shadowDepth = dummyDepth(GL_DEPTH_COMPONENT24, GL_NEAREST, GL_NONE);
 		Vk.bindTexture(TEXTURE_UNIT_SHADOW_MAP - GL_TEXTURE0, shadowDepth);
+		createDummyTerrainShadowMap(p);
 	}
 
 	static void destroyShadowMap(HdPlugin p) {
 		Vk.framebufferDestroy(p.fboShadowMap);
+		Vk.framebufferDestroy(p.fboTerrainShadowMap);
 		Vk.imageDestroy(shadowDepth);
-		p.fboShadowMap = 0;
-		shadowDepth = 0;
+		Vk.imageDestroy(terrainShadowDepth);
+		p.fboShadowMap = p.fboTerrainShadowMap = 0;
+		shadowDepth = terrainShadowDepth = 0;
 	}
+
+	private static int terrainShadowDepth;
 
 	static void createTiledLighting(HdPlugin p) {
 		int w = p.tiledLightingResolution[0], h = p.tiledLightingResolution[1], layers = p.tiledLightingLayerCount;

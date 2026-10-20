@@ -44,6 +44,8 @@ public final class VkNative {
 	public static final int IMG_2D = 0;
 	public static final int IMG_2D_ARRAY = 1;
 	public static final int IMG_3D = 2;
+	/** Six layers in GL face order (+X, -X, +Y, -Y, +Z, -Z), sampled as a samplerCube. */
+	public static final int IMG_CUBE = 3;
 
 	public static final int IMG_SAMPLED = 1;
 	public static final int IMG_COLOR_ATTACHMENT = 2;
@@ -58,6 +60,7 @@ public final class VkNative {
 	public static final int DUMMY_2D_ARRAY = 1;
 	public static final int DUMMY_2D_ARRAY_UINT = 2;
 	public static final int DUMMY_3D_INT = 3;
+	public static final int DUMMY_CUBE = 4;
 
 	// Attachment load ops (VkAttachmentLoadOp)
 	public static final int LOAD = 0;
@@ -110,7 +113,8 @@ public final class VkNative {
 		int image, int level, int x, int y, int layer, int width, int height, int layers,
 		int[] data, int offsetInts, int countInts);
 	static native void imageGenerateMips(int image);
-	static native void imageSampler(int image, int minFilter, int magFilter, int mipmap, int wrapS, int wrapT, int wrapR, float anisotropy);
+	/** @param compare 0 for plain sampling, otherwise VkCompareOp + 1 */
+	static native void imageSampler(int image, int minFilter, int magFilter, int mipmap, int wrapS, int wrapT, int wrapR, float anisotropy, int compare);
 	static native void setUnitDummy(int unit, int kind);
 
 	static native int framebufferCreate(int colorImage, int colorLayer, int depthImage, int resolveImage);

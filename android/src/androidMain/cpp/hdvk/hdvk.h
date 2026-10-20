@@ -113,7 +113,7 @@ struct Buffer {
 	BufferAlloc *current = nullptr;
 };
 
-enum ImageType { IMG_2D = 0, IMG_2D_ARRAY = 1, IMG_3D = 2 };
+enum ImageType { IMG_2D = 0, IMG_2D_ARRAY = 1, IMG_3D = 2, IMG_CUBE = 3 /* six layers, GL face order */ };
 
 enum ImageUsage : uint32_t {
 	IMG_SAMPLED = 1,
@@ -129,7 +129,7 @@ struct SamplerState {
 	uint8_t minFilter = 1, magFilter = 1; // 0 nearest, 1 linear
 	uint8_t mipmap = 0; // 0 none, 1 nearest, 2 linear
 	uint8_t wrapS = 0, wrapT = 0, wrapR = 0; // 0 clamp edge, 1 repeat, 2 clamp border (white), 3 mirrored repeat
-	uint8_t pad = 0;
+	uint8_t compare = 0; // 0 none, else VkCompareOp + 1 (depth-compare sampling)
 	float anisotropy = 1;
 	bool operator==(const SamplerState &o) const { return memcmp(this, &o, sizeof(*this)) == 0; }
 };
@@ -336,7 +336,7 @@ struct Context {
 	// Global bindings (persist across frames, like GL's bind points)
 	int uboBindings[NUM_UBO_BINDINGS]{};
 	int textureUnits[NUM_TEXTURE_UNITS]{};
-	int dummyImages[4]{}; // by kind: 2D rgba8, 2D array rgba8, 2D array rgba16ui, 3D r16i
+	int dummyImages[5]{}; // by kind: 2D rgba8, 2D array rgba8, 2D array rgba16ui, 3D r16i, cube rgba8
 	int unitDummy[NUM_TEXTURE_UNITS]{}; // dummy image bound to each unit while nothing else is
 	int dummyUbo = 0;
 	int dummyStorage = 0;
@@ -345,6 +345,8 @@ struct Context {
 	int lastPipelineProgram = 0;
 	uint64_t lastPipelineLayoutHash = 0;
 	uint32_t lastPipelineState = 0;
+	float depthBiasConstant = 0, depthBiasSlope = 0;
+	bool depthBiasDirty = true;
 	uint64_t lastPipelinePass = 0;
 
 	// Pass state
