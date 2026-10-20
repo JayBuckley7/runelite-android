@@ -30,6 +30,7 @@ internal object UpdateChecker
     private val DISPLAY_NAMES = mapOf(
         "zeruth" to "Zeruth",
         "JayBuckley7" to "Jay",
+        "JayBuckleyUpdox" to "Jay", // Jay's alt account
         "torkkotravis-creator" to "Torkko",
     )
 
@@ -104,7 +105,8 @@ internal object UpdateChecker
             Log.w(TAG, "contributor fetch failed", t)
             cached ?: FALLBACK_CONTRIBUTORS
         }
-        return logins.map { DISPLAY_NAMES[it] ?: it }
+        // Several accounts can belong to one person; credit them once
+        return logins.map { DISPLAY_NAMES[it] ?: it }.distinct()
     }
 
     /** Downloads [release] into the cache, reporting progress in 0..1 (or -1 when the size is unknown). */
