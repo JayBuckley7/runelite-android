@@ -103,6 +103,8 @@ public class ZoneRenderer implements Renderer {
 	private static final int[] DISCARD_WINDOW_DEPTH = { GL_DEPTH };
 
 	// Per-frame scratch, reused instead of allocated every frame (client thread only).
+	private final float[] shadowReceiverBounds = new float[6];
+	private final float[] shadowLightSpaceCenter = new float[3];
 	private final float[] lightPosition = new float[4];
 	private final float[] lightColor = new float[4];
 
@@ -592,7 +594,7 @@ public class ZoneRenderer implements Renderer {
 				// Fit only receivers inside draw distance, not the empty sides of the zoomed-out
 				// frustum. Allow an extra chunk for zone culling and four tiles for model overhang.
 				float receiverRadius = (min(90, plugin.getDrawDistance()) + CHUNK_SIZE + 4) * LOCAL_TILE_SIZE;
-				float[] bounds = new float[6];
+				float[] bounds = shadowReceiverBounds;
 				directionalShadowCasterVolume.getReceiverBounds(
 					bounds,
 					plugin.cameraFocalPoint[0] - receiverRadius, plugin.cameraFocalPoint[1] - receiverRadius,
@@ -613,11 +615,10 @@ public class ZoneRenderer implements Renderer {
 					directionalSize = previousDirectionalSize;
 
 				// Bounds above are already in light-view space; both modes use the same projection.
-				float[] lightSpaceCenter = {
-					(minX + maxX) * .5f,
-					(minY + maxY) * .5f,
-					minZ - shadowDrawDistance - 4 * LOCAL_TILE_SIZE - 2
-				};
+				float[] lightSpaceCenter = shadowLightSpaceCenter;
+				lightSpaceCenter[0] = (minX + maxX) * .5f;
+				lightSpaceCenter[1] = (minY + maxY) * .5f;
+				lightSpaceCenter[2] = minZ - shadowDrawDistance - 4 * LOCAL_TILE_SIZE - 2;
 				// Snap in light-view XY, then transform back to world space for the camera position.
 				float texelSize = (float) directionalSize / plugin.shadowMapResolution;
 				lightSpaceCenter[0] = (float) floor(lightSpaceCenter[0] / texelSize + 0.5f) * texelSize;

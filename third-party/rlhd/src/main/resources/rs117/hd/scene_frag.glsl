@@ -265,18 +265,18 @@ void main() {
         }
         #endif
 
-        // Android: most faces (all model faces) use one material at all three vertices. Its UVs
-        // then come out identical (they depend only on the material), so the 2nd and 3rd
-        // texture samples equal the 1st and are reused instead of fetched again.
+        // Preserve 1.6's effective-material overrides (models and squashed views), and
+        // also reuse samples when only one terrain vertex matches the first material.
+        // Matching materials share UV scrolling, scaling, flow and displacement inputs.
         int materialIndex1 = fMaterialData[0] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK;
-        bool sameMaterial2 = (fMaterialData[1] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
-        bool sameMaterial3 = (fMaterialData[2] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
+        bool sameMaterial2 = identicalMaterials || (fMaterialData[1] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
+        bool sameMaterial3 = identicalMaterials || (fMaterialData[2] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK) == materialIndex1;
 
         // get diffuse textures
         vec4 texColor1 = colorMap1 == -1 ? vec4(1) : texture(textureArray, vec3(uv1, colorMap1), mipBias);
-        vec4 texColor2 = identicalMaterials ? texColor1 :
+        vec4 texColor2 = sameMaterial2 ? texColor1 :
             colorMap2 == -1 ? vec4(1) : texture(textureArray, vec3(uv2, colorMap2), mipBias);
-        vec4 texColor3 = identicalMaterials ? texColor1 :
+        vec4 texColor3 = sameMaterial3 ? texColor1 :
             colorMap3 == -1 ? vec4(1) : texture(textureArray, vec3(uv3, colorMap3), mipBias);
         texColor1.rgb *= material1.brightness;
         texColor2.rgb *= material2.brightness;
@@ -359,8 +359,8 @@ void main() {
             if (identicalMaterials) {
                 normals = normalize(n1);
             } else {
-                vec3 n2 = sampleNormalMap(material2, uv2, TBN);
-                vec3 n3 = sampleNormalMap(material3, uv3, TBN);
+                vec3 n2 = sameMaterial2 ? n1 : sampleNormalMap(material2, uv2, TBN);
+                vec3 n3 = sameMaterial3 ? n1 : sampleNormalMap(material3, uv3, TBN);
                 normals = normalize(n1 * fTexBlend.x + n2 * fTexBlend.y + n3 * fTexBlend.z);
             }
         }
@@ -393,9 +393,9 @@ void main() {
             linearToSrgb(texture(textureArray, vec3(uv1, material1.roughnessMap)).r);
         vSpecularStrength *= vec3(
             roughness1,
-            identicalMaterials ? roughness1 :
+            sameMaterial2 ? roughness1 :
                 material2.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv2, material2.roughnessMap)).r),
-            identicalMaterials ? roughness1 :
+            sameMaterial3 ? roughness1 :
                 material3.roughnessMap == -1 ? 1.0 : linearToSrgb(texture(textureArray, vec3(uv3, material3.roughnessMap)).r)
         );
 
@@ -422,9 +422,9 @@ void main() {
         if (!identicalMaterials) {
             aoFactor =
                 fTexBlend.x * aoFactor +
-                fTexBlend.y * (material2.ambientOcclusionMap == -1 ? 1.0 :
+                fTexBlend.y * (sameMaterial2 ? aoFactor : material2.ambientOcclusionMap == -1 ? 1.0 :
                     texture(textureArray, vec3(uv2, material2.ambientOcclusionMap)).r) +
-                fTexBlend.z * (material3.ambientOcclusionMap == -1 ? 1.0 :
+                fTexBlend.z * (sameMaterial3 ? aoFactor : material3.ambientOcclusionMap == -1 ? 1.0 :
                     texture(textureArray, vec3(uv3, material3.ambientOcclusionMap)).r);
         }
         ambientLightOut *= aoFactor;
