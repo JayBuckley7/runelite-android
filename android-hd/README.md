@@ -56,7 +56,7 @@ The device must have the compiled `tools-src/hd_gles_probe.c` at
 `/data/local/tmp/hd_gles_probe`. Its capability report includes
 `max_vertex_shader_storage_blocks`. Logs and results go to `mobile-ganom/`.
 Shader checks do not prove complete scene rendering or gameplay stability.
-The 1.6 APK has not yet been installed or verified in-game.
+The 1.6 APK was installed on Pixel Fold and reached the Play Now screen. Full in-game day/night behavior and sustained performance remain unverified.
 
 ## Historical 1.5.2 gameplay checks on Pixel Fold / Mali-G710
 

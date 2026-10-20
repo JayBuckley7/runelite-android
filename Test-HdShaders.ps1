@@ -1,9 +1,10 @@
 param([Parameter(Mandatory)][string]$Device, [switch]$SkipBuild, [switch]$FaceStorageBuffer)
 $ErrorActionPreference='Stop'
-$env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.6.7-hotspot'
-$env:ANDROID_HOME=Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+# Use the caller's JDK 21 configuration (JAVA_HOME or PATH).
+if (!$env:ANDROID_HOME) { $env:ANDROID_HOME=Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
 Push-Location $PSScriptRoot
 try {
+    New-Item -ItemType Directory -Force mobile-ganom | Out-Null
     if (!$SkipBuild) {
         & .\gradlew.bat :android-hd:dumpGlesShaderProbes "-Phd.faceStorageBuffer=$($FaceStorageBuffer.IsPresent.ToString().ToLowerInvariant())" --console=plain *> build-hd-probes.log
         if ($LASTEXITCODE -ne 0) { Get-Content build-hd-probes.log -Tail 30; throw 'Shader expansion failed' }
