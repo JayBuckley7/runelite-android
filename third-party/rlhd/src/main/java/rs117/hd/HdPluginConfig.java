@@ -74,6 +74,20 @@ public interface HdPluginConfig extends Config
 	)
 	String generalSettings = "generalSettings";
 
+	String KEY_VULKAN = "vulkanBackend";
+	@ConfigItem(
+		keyName = KEY_VULKAN,
+		name = "Vulkan renderer (experimental)",
+		description =
+			"Render through Vulkan instead of OpenGL ES.<br>" +
+			"Falls back to OpenGL ES automatically if the device can't start Vulkan.",
+		position = 0,
+		section = generalSettings
+	)
+	default boolean vulkanBackend() {
+		return false;
+	}
+
 	@Range(
 		max = MAX_DISTANCE
 	)
@@ -906,19 +920,6 @@ public interface HdPluginConfig extends Config
 		section = miscellaneousSettings
 	)
 	default boolean lowMemoryMode() {
-		return false;
-	}
-
-	String KEY_VULKAN = "vulkanBackend";
-	@ConfigItem(
-		keyName = KEY_VULKAN,
-		name = "Vulkan renderer (experimental)",
-		description =
-			"Render through Vulkan instead of OpenGL ES.<br>" +
-			"Falls back to OpenGL ES automatically if the device can't start Vulkan.",
-		section = miscellaneousSettings
-	)
-	default boolean vulkanBackend() {
 		return false;
 	}
 

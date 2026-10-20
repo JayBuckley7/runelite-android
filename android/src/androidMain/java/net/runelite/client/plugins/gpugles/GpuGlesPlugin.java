@@ -23,57 +23,52 @@ import static android.opengl.GLES20.GL_TEXTURE_WRAP_T;
 import static android.opengl.GLES20.GL_TRIANGLE_FAN;
 import static android.opengl.GLES20.GL_UNSIGNED_BYTE;
 import static android.opengl.GLES20.GL_VERTEX_SHADER;
-import static android.opengl.GLES20.glActiveTexture;
-import static android.opengl.GLES20.glBindBuffer;
-import static android.opengl.GLES20.glBindTexture;
-import static android.opengl.GLES20.glBlendFunc;
-import static android.opengl.GLES20.glBufferData;
-import static android.opengl.GLES20.glClear;
-import static android.opengl.GLES20.glClearColor;
-import static android.opengl.GLES20.glDeleteProgram;
-import static android.opengl.GLES20.glDeleteTextures;
-import static android.opengl.GLES20.glDisable;
-import static android.opengl.GLES20.glDrawArrays;
-import static android.opengl.GLES20.glEnable;
-import static android.opengl.GLES20.glEnableVertexAttribArray;
-import static android.opengl.GLES20.glGenBuffers;
-import static android.opengl.GLES20.glGenTextures;
-import static android.opengl.GLES20.glGetString;
-import static android.opengl.GLES20.glGetUniformLocation;
-import static android.opengl.GLES20.glTexImage2D;
-import static android.opengl.GLES20.glTexParameteri;
-import static android.opengl.GLES20.glTexSubImage2D;
-import static android.opengl.GLES20.glUniform1i;
-import static android.opengl.GLES20.glUniform2i;
-import static android.opengl.GLES20.glUniform4f;
-import static android.opengl.GLES20.glUseProgram;
-import static android.opengl.GLES20.glVertexAttribPointer;
-import static android.opengl.GLES20.glViewport;
+import static net.runelite.client.plugins.gpugles.Gfx.glActiveTexture;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindBuffer;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindTexture;
+import static net.runelite.client.plugins.gpugles.Gfx.glBlendFunc;
+import static net.runelite.client.plugins.gpugles.Gfx.glBufferData;
+import static net.runelite.client.plugins.gpugles.Gfx.glClear;
+import static net.runelite.client.plugins.gpugles.Gfx.glClearColor;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteProgram;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteTextures;
+import static net.runelite.client.plugins.gpugles.Gfx.glDisable;
+import static net.runelite.client.plugins.gpugles.Gfx.glDrawArrays;
+import static net.runelite.client.plugins.gpugles.Gfx.glEnable;
+import static net.runelite.client.plugins.gpugles.Gfx.glEnableVertexAttribArray;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenTextures;
+import static net.runelite.client.plugins.gpugles.Gfx.glGetString;
+import static net.runelite.client.plugins.gpugles.Gfx.glGetUniformLocation;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexImage2D;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexParameteri;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexSubImage2D;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform1i;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform2i;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform4f;
+import static net.runelite.client.plugins.gpugles.Gfx.glUseProgram;
+import static net.runelite.client.plugins.gpugles.Gfx.glVertexAttribPointer;
+import static net.runelite.client.plugins.gpugles.Gfx.glViewport;
 import static android.opengl.GLES30.GL_PIXEL_UNPACK_BUFFER;
-import static android.opengl.GLES30.glBindVertexArray;
-import static android.opengl.GLES30.glDeleteBuffers;
-import static android.opengl.GLES30.glDeleteVertexArrays;
-import static android.opengl.GLES30.glGenVertexArrays;
-
+import static net.runelite.client.plugins.gpugles.Gfx.glBindVertexArray;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteVertexArrays;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenVertexArrays;
 import static android.opengl.GLES20.GL_BLEND;
 import static android.opengl.GLES20.GL_CULL_FACE;
 import static android.opengl.GLES20.GL_ONE;
 import static android.opengl.GLES20.GL_SRC_ALPHA;
-import static android.opengl.GLES20.glBlendFuncSeparate;
-import static android.opengl.GLES20.glClearDepthf;
-import static android.opengl.GLES20.glDepthFunc;
-import static android.opengl.GLES20.glGetUniformLocation;
-import static android.opengl.GLES20.glUniform1f;
-import static android.opengl.GLES20.glUniform1i;
-import static android.opengl.GLES20.glUniform3i;
-import static android.opengl.GLES20.glUniform4f;
-import static android.opengl.GLES20.glUniform4i;
-import static android.opengl.GLES20.glUniformMatrix4fv;
+import static net.runelite.client.plugins.gpugles.Gfx.glBlendFuncSeparate;
+import static net.runelite.client.plugins.gpugles.Gfx.glClearDepthf;
+import static net.runelite.client.plugins.gpugles.Gfx.glDepthFunc;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform1f;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform3i;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform4i;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniformMatrix4fv;
 import static android.opengl.GLES20.GL_LESS;
 import static android.opengl.GLES30.GL_UNIFORM_BUFFER;
-import static android.opengl.GLES30.glBindBufferBase;
-import static android.opengl.GLES30.glUniformBlockBinding;
-
+import static net.runelite.client.plugins.gpugles.Gfx.glBindBufferBase;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniformBlockBinding;
 import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.util.Log;
@@ -105,6 +100,8 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import rs117.hd.vulkan.Vk;
+import rs117.hd.vulkan.VkNative;
 
 /**
  * Android GLES port of the desktop GPU plugin. Replaces JOGL/LWJGL with EGL14 +
@@ -123,9 +120,9 @@ import net.runelite.client.plugins.PluginDescriptor;
  * and {@link GlesHost#swapBuffers} at the end of each frame to present.
  */
 @PluginDescriptor(
-	name = "GPU (GLES)",
-	description = "Android GLES renderer — Android port of the desktop GPU plugin",
-	tags = {"fog", "draw distance", "android"},
+	name = "GPU",
+	description = "GPU renderer (OpenGL ES or Vulkan) — Android port of the desktop GPU plugin",
+	tags = {"fog", "draw distance", "android", "gles", "vulkan"},
 	loadInSafeMode = false
 )
 public class GpuGlesPlugin extends Plugin implements DrawCallbacks
@@ -278,6 +275,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 
 	private int vaoUiHandle;
 	private int vboUiHandle;
+	private static final int UI_QUAD_VERTS = 6;
 
 	private int interfaceTexture;
 	private int interfacePbo;
@@ -546,7 +544,28 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 			GlesHost.get().setRequestedMsaa(config.msaaSamples().samples);
 			GlesHost.get().setResolutionScale(config.resolutionScale() / 100f);
 
-			bringUpGl();
+			if (config.vulkanRenderer() && !Gfx.vulkan)
+			{
+				String err = Gfx.startVulkan();
+				if (err != null)
+				{
+					Log.e(TAG, "Vulkan unavailable (" + err + "); using GLES");
+				}
+			}
+
+			try
+			{
+				bringUpGl();
+			}
+			catch (Throwable t)
+			{
+				if (!Gfx.vulkan) throw t;
+				// Everything bringUpGl made lives on the Vulkan device, which goes with it
+				Log.e(TAG, "Vulkan bring-up failed; falling back to GLES", t);
+				Gfx.stopVulkan();
+				glInitted = false;
+				bringUpGl();
+			}
 
 			client.setDrawCallbacks(this);
 			setupGpuFlags();
@@ -596,14 +615,18 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		// Drop vsync only when uncapping. With vsync on, the engine's uncapped scene
 		// rate still gets latched to the display refresh — fine on a 120Hz device, but
 		// users see ~60 on 60Hz screens when they asked for higher.
-		GlesHost.get().setSwapInterval(unlock ? 0 : 1);
+		Gfx.setSwapInterval(unlock ? 0 : 1);
 	}
 
 	@Subscribe
 	public void onConfigChanged(net.runelite.client.events.ConfigChanged ev)
 	{
 		if (!ev.getGroup().equals(GpuGlesPluginConfig.GROUP)) return;
-		if ("unlockFps".equals(ev.getKey()) || "fpsTarget".equals(ev.getKey()))
+		if ("vulkanRenderer".equals(ev.getKey()))
+		{
+			clientThread.invokeLater(this::restartRenderer);
+		}
+		else if ("unlockFps".equals(ev.getKey()) || "fpsTarget".equals(ev.getKey()))
 		{
 			clientThread.invoke(() -> { applyFpsConfig(); return true; });
 		}
@@ -621,7 +644,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 			{
 				// Rebuilding the render threads throws away their VAO pools, which means glDelete
 				// calls — only legal with our EGL context current, and only safe between frames.
-				boolean gl = glInitted && GlesHost.get().makeCurrent();
+				boolean gl = glInitted && Gfx.makeCurrent();
 				if (gl)
 				{
 					for (int i = 0; i < rts.length; ++i) // NOPMD: ForLoopCanBeForeach
@@ -766,6 +789,9 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 				}
 				glInitted = false;
 			}
+			// After every object above is freed; hands the window back to EGL
+			try { Gfx.stopVulkan(); }
+			catch (Throwable t) { Log.e(TAG, "Vulkan shutdown failed", t); }
 
 			// ALWAYS rebuild the buffer provider — even if GL teardown above threw.
 			// resizeCanvas() reconstructs the MainBufferProvider with isGpu()==false now,
@@ -801,7 +827,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 	private void bringUpGl() throws ShaderException
 	{
 		if (glInitted) return;
-		if (!GlesHost.get().makeCurrent())
+		if (!Gfx.makeCurrent())
 		{
 			Log.d(TAG, "EGL not ready yet, deferring GL init");
 			return;
@@ -826,7 +852,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		}
 
 		glInitted = true;
-		glContextGeneration = GlesHost.get().contextGeneration();
+		glContextGeneration = Gfx.contextGeneration();
 		Log.i(TAG, "GLES bring-up complete (context generation " + glContextGeneration + ")");
 	}
 
@@ -923,7 +949,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 	private void initBuffers()
 	{
 		int[] ids = new int[1];
-		GLES20.glGenBuffers(1, ids, 0);
+		Gfx.glGenBuffers(1, ids, 0);
 		glUniformBuffer.glBufferId = ids[0];
 	}
 
@@ -943,23 +969,26 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		glGenVertexArrays(1, arr, 0);
 		vaoUiHandle = arr[0];
 
-		GLES20.glGenBuffers(1, arr, 0);
+		Gfx.glGenBuffers(1, arr, 0);
 		vboUiHandle = arr[0];
 
 		glBindVertexArray(vaoUiHandle);
 		glBindBuffer(GL_ARRAY_BUFFER, vboUiHandle);
 
-		// Two-tri fullscreen quad — 4 verts × (vec3 pos + vec2 uv).
-		FloatBuffer vboBuf = ByteBuffer.allocateDirect(5 * 4 * Float.BYTES)
+		// Fullscreen quad as two triangles — 6 verts × (vec3 pos + vec2 uv). A triangle list
+		// rather than a fan, since Vulkan has no fans.
+		FloatBuffer vboBuf = ByteBuffer.allocateDirect(5 * UI_QUAD_VERTS * Float.BYTES)
 			.order(ByteOrder.nativeOrder()).asFloatBuffer();
 		vboBuf.put(new float[] {
 			 1f,  1f, 0f, 1f, 0f, // top right
 			 1f, -1f, 0f, 1f, 1f, // bottom right
 			-1f, -1f, 0f, 0f, 1f, // bottom left
+			 1f,  1f, 0f, 1f, 0f, // top right
+			-1f, -1f, 0f, 0f, 1f, // bottom left
 			-1f,  1f, 0f, 0f, 0f, // top left
 		});
 		vboBuf.rewind();
-		glBufferData(GL_ARRAY_BUFFER, 5 * 4 * Float.BYTES, vboBuf, GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, 5 * UI_QUAD_VERTS * Float.BYTES, vboBuf, GL_STATIC_DRAW);
 
 		glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
 		glEnableVertexAttribArray(0);
@@ -1024,7 +1053,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		uniExpandedMapLoadingChunks = glGetUniformLocation(glProgram, "expandedMapLoadingChunks");
 		uniTextureLightMode = glGetUniformLocation(glProgram, "textureLightMode");
 		uniTick = glGetUniformLocation(glProgram, "tick");
-		uniBlockMain = GLES30.glGetUniformBlockIndex(glProgram, "uniforms");
+		uniBlockMain = Gfx.glGetUniformBlockIndex(glProgram, "uniforms");
 		uniTextures = glGetUniformLocation(glProgram, "textures");
 		uniTextureAnimations = glGetUniformLocation(glProgram, "textureAnimations");
 		uniBase = glGetUniformLocation(glProgram, "base");
@@ -1049,11 +1078,14 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 	private void initInterfaceTexture()
 	{
 		int[] arr = new int[1];
-		GLES20.glGenBuffers(1, arr, 0);
+		Gfx.glGenBuffers(1, arr, 0);
 		interfacePbo = arr[0];
 
 		glGenTextures(1, arr, 0);
 		interfaceTexture = arr[0];
+		// A new texture has no storage yet; make prepareInterfaceTexture allocate it even when
+		// the canvas is the size it was before (a renderer restart, e.g. switching to Vulkan)
+		lastCanvasWidth = lastCanvasHeight = -1;
 		glBindTexture(GL_TEXTURE_2D, interfaceTexture);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -1085,7 +1117,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		if (wantSamples >= 2)
 		{
 			int[] maxS = new int[1];
-			GLES30.glGetIntegerv(GLES30.GL_MAX_SAMPLES, maxS, 0);
+			Gfx.glGetIntegerv(GLES30.GL_MAX_SAMPLES, maxS, 0);
 			wantSamples = Math.min(wantSamples, Math.max(1, maxS[0]));
 			if (wantSamples < 2) wantSamples = 0;
 		}
@@ -1102,6 +1134,11 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 
 		// Tear down anything stale before re-creating.
 		shutdownSceneFbo();
+
+		if (Gfx.vulkan)
+		{
+			return createSceneTargetsVk(targetW, targetH, wantSamples);
+		}
 
 		int[] arr = new int[1];
 
@@ -1136,7 +1173,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		}
 		GLES30.glBindRenderbuffer(GLES30.GL_RENDERBUFFER, 0);
 
-		GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo);
+		Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo);
 		if (wantSamples >= 2)
 		{
 			// Multisample color renderbuffer (resolved into sceneColorTex below).
@@ -1158,7 +1195,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 			GLES30.GL_RENDERBUFFER, sceneDepthRbo);
 
 		int status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER);
-		GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+		Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
 
 		if (status != GLES30.GL_FRAMEBUFFER_COMPLETE)
 		{
@@ -1174,11 +1211,11 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		{
 			GLES30.glGenFramebuffers(1, arr, 0);
 			sceneResolveFbo = arr[0];
-			GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneResolveFbo);
+			Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneResolveFbo);
 			GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
 				GL_TEXTURE_2D, sceneColorTex, 0);
 			int rstatus = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER);
-			GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+			Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
 			if (rstatus != GLES30.GL_FRAMEBUFFER_COMPLETE)
 			{
 				Log.e(TAG, "scene resolve FBO incomplete: 0x" + Integer.toHexString(rstatus));
@@ -1195,8 +1232,63 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		return true;
 	}
 
+	/**
+	 * Vulkan scene targets. The multisample color and the depth only ever live in tile memory
+	 * (transient attachments); MSAA resolves into the sampled image inside the render pass, so
+	 * there is no resolve framebuffer or blit, and sceneResolveFbo stays 0.
+	 */
+	private boolean createSceneTargetsVk(int w, int h, int samples)
+	{
+		int s = Math.max(1, samples);
+		int color = VkNative.IMG_COLOR_ATTACHMENT;
+		int sampled;
+		if (s > 1)
+		{
+			vkSceneColor = Vk.imageCreate(VkNative.IMG_2D, GLES30.GL_RGBA8, w, h, 1, 1, s, color | VkNative.IMG_TRANSIENT);
+			vkSceneResolve = Vk.imageCreate(VkNative.IMG_2D, GLES30.GL_RGBA8, w, h, 1, 1, 1, color | VkNative.IMG_SAMPLED);
+			sampled = vkSceneResolve;
+		}
+		else
+		{
+			vkSceneColor = Vk.imageCreate(VkNative.IMG_2D, GLES30.GL_RGBA8, w, h, 1, 1, 1, color | VkNative.IMG_SAMPLED);
+			vkSceneResolve = 0;
+			sampled = vkSceneColor;
+		}
+		vkSceneDepth = Vk.imageCreate(VkNative.IMG_2D, GLES30.GL_DEPTH_COMPONENT24, w, h, 1, 1, s,
+			VkNative.IMG_DEPTH_ATTACHMENT | VkNative.IMG_TRANSIENT);
+		sceneFbo = Vk.framebufferCreate(vkSceneColor, 0, vkSceneDepth, vkSceneResolve);
+		if (sceneFbo == 0 || sampled == 0)
+		{
+			Log.e(TAG, "Vulkan scene targets " + w + "x" + h + " (MSAA " + s + ") could not be created");
+			shutdownSceneFbo();
+			return false;
+		}
+		sceneColorTex = Gfx.wrapImage(sampled, w, h);
+		sceneFboW = w;
+		sceneFboH = h;
+		sceneSamples = samples;
+		Log.i(TAG, "Vulkan scene targets (re)created " + w + "x" + h + (s > 1 ? " MSAA x" + s : " (no MSAA)"));
+		return true;
+	}
+
+	private int vkSceneColor, vkSceneResolve, vkSceneDepth;
+
 	private void shutdownSceneFbo()
 	{
+		if (Gfx.vulkan)
+		{
+			// The scene texture id only wraps vkSceneColor/vkSceneResolve; deleting it frees nothing
+			if (sceneColorTex != 0) Gfx.glDeleteTextures(1, new int[]{ sceneColorTex }, 0);
+			Vk.framebufferDestroy(sceneFbo);
+			Vk.imageDestroy(vkSceneColor);
+			Vk.imageDestroy(vkSceneResolve);
+			Vk.imageDestroy(vkSceneDepth);
+			vkSceneColor = vkSceneResolve = vkSceneDepth = 0;
+			sceneFbo = sceneResolveFbo = sceneColorTex = sceneColorRbo = sceneDepthRbo = 0;
+			sceneFboW = sceneFboH = 0;
+			sceneSamples = 0;
+			return;
+		}
 		if (sceneFbo != 0)        GLES30.glDeleteFramebuffers(1, new int[]{ sceneFbo }, 0);
 		if (sceneResolveFbo != 0) GLES30.glDeleteFramebuffers(1, new int[]{ sceneResolveFbo }, 0);
 		if (sceneColorTex != 0)   glDeleteTextures(1, new int[]{ sceneColorTex }, 0);
@@ -1229,23 +1321,24 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		}
 		else
 		{
-			if (!GlesHost.get().makeCurrent())
+			if (!Gfx.makeCurrent())
 			{
 				return;
 			}
 			// Dormant in steady state (generation only moves on an actual context loss).
 			// If the EGL context was lost and rebuilt — app backgrounded, device rotated,
 			// GPU reset — every GL object we hold is invalid; rebuild before drawing.
-			if (GlesHost.get().contextGeneration() != glContextGeneration)
+			if (Gfx.contextGeneration() != glContextGeneration)
 			{
 				Log.w(TAG, "EGL context changed (generation " + glContextGeneration + " -> "
-					+ GlesHost.get().contextGeneration() + "); rebuilding GL state");
+					+ Gfx.contextGeneration() + "); rebuilding GL state");
 				resetGlStateForContextLoss();
 				try { bringUpGl(); }
 				catch (Throwable t) { Log.e(TAG, "GL re-init after context loss failed", t); return; }
 				if (!glInitted) return;
 			}
 		}
+		Gfx.attachSurface();
 
 		// A STARTING transition (logout/relog) flagged the texture array for rebuild;
 		// the GL context is current now, so free it here and let the lazy init below
@@ -1271,7 +1364,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 			{
 				float[] texAnims = textureManager.computeTextureAnimations(tp);
 				glUseProgram(glProgram);
-				GLES20.glUniform2fv(uniTextureAnimations, texAnims.length / 2, texAnims, 0);
+				Gfx.glUniform2fv(uniTextureAnimations, texAnims.length / 2, texAnims, 0);
 				glUseProgram(0);
 			}
 		}
@@ -1300,7 +1393,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		// Mali and PowerVR all honour this; a driver that ignores it just does what it did before.
 		if (scenePaintedThisFrame && sceneFbo != 0)
 		{
-			GLES30.glInvalidateFramebuffer(GLES30.GL_FRAMEBUFFER, 1, INVALIDATE_DEPTH, 0);
+			Gfx.glInvalidateFramebuffer(GLES30.GL_FRAMEBUFFER, 1, INVALIDATE_DEPTH, 0);
 		}
 
 		// SCENE_* mirror the fragui `hasScene` uniform.
@@ -1315,14 +1408,14 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 				// sceneColorTex, so there is nothing to do.
 				if (sceneSamples >= 2 && sceneResolveFbo != 0)
 				{
-					GLES30.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFbo);
-					GLES30.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, sceneResolveFbo);
-					GLES30.glBlitFramebuffer(
+					Gfx.glBindFramebuffer(GLES30.GL_READ_FRAMEBUFFER, sceneFbo);
+					Gfx.glBindFramebuffer(GLES30.GL_DRAW_FRAMEBUFFER, sceneResolveFbo);
+					Gfx.glBlitFramebuffer(
 						0, 0, sceneFboW, sceneFboH,
 						0, 0, sceneFboW, sceneFboH,
 						GL_COLOR_BUFFER_BIT, GLES20.GL_NEAREST);
 					// The multisample colour has been resolved; nothing reads it again.
-					GLES30.glInvalidateFramebuffer(GLES30.GL_READ_FRAMEBUFFER, 1, INVALIDATE_COLOR, 0);
+					Gfx.glInvalidateFramebuffer(GLES30.GL_READ_FRAMEBUFFER, 1, INVALIDATE_COLOR, 0);
 				}
 			}
 			else
@@ -1335,11 +1428,22 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		}
 		scenePaintedThisFrame = false;
 
-		GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+		Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
 
 		drawUi(overlayColor, canvasWidth, canvasHeight, sceneMode);
 
-		GlesHost.get().swapBuffers();
+		if (!Gfx.swapBuffers())
+		{
+			Log.e(TAG, "Vulkan device lost; restarting the GPU plugin");
+			clientThread.invokeLater(this::restartRenderer);
+		}
+	}
+
+	/** Tear the renderer down and bring it back up, e.g. to switch between GLES and Vulkan. */
+	private void restartRenderer()
+	{
+		shutDown();
+		startUp();
 	}
 
 	@Override
@@ -1350,7 +1454,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		// fills a VBO with per-vertex (pos, abhsl, uv) — the GL work that makes
 		// drawZoneOpaque/Alpha later actually have data to draw.
 		if (!glInitted) return;
-		if (!GlesHost.get().makeCurrent()) return;
+		if (!Gfx.makeCurrent()) return;
 		rebuild(scene);
 	}
 
@@ -1532,7 +1636,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		if (!glInitted) return;
 		WorldView wv = client.getTopLevelWorldView();
 		if (wv == null) return;
-		if (!GlesHost.get().makeCurrent()) return;
+		if (!Gfx.makeCurrent()) return;
 		rebuildDirty(wv.getScene());
 		for (net.runelite.api.WorldEntity we : wv.worldEntities())
 		{
@@ -1653,9 +1757,9 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		uniformBuffer.put(cameraYaw).put(cameraPitch).put(cameraX).put(cameraY).put(cameraZ);
 		uniformBuffer.flip();
 
-		GLES20.glBindBuffer(GL_UNIFORM_BUFFER, glUniformBuffer.glBufferId);
-		GLES20.glBufferData(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE, uniformBuffer.getBuffer(), GLES20.GL_DYNAMIC_DRAW);
-		GLES20.glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		Gfx.glBindBuffer(GL_UNIFORM_BUFFER, glUniformBuffer.glBufferId);
+		Gfx.glBufferData(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE, uniformBuffer.getBuffer(), GLES20.GL_DYNAMIC_DRAW);
+		Gfx.glBindBuffer(GL_UNIFORM_BUFFER, 0);
 		uniformBuffer.clear();
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, glUniformBuffer.glBufferId);
@@ -1681,11 +1785,11 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		{
 			// FBO unavailable — fall back to the default framebuffer so we at least
 			// render something this frame, even if the scaling slider has no effect.
-			GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+			Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
 		}
 		else
 		{
-			GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo);
+			Gfx.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, sceneFbo);
 		}
 
 		// Map the client-relative viewport into FBO space. The FBO covers the full
@@ -1704,7 +1808,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		int topFbo = (int) Math.ceil((canvasHeight - viewportYOff) * sy);
 		int vw = Math.max(1, rightFbo - vx);
 		int vh = Math.max(1, topFbo - vy);
-		GLES20.glViewport(vx, vy, vw, vh);
+		Gfx.glViewport(vx, vy, vw, vh);
 
 		// Sky colour is read here but the clear itself happens in drawSkybox() at the end
 		// of this method — a model skybox has to be drawn with the scene program bound and
@@ -1781,15 +1885,15 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		Model skybox = scene.getSkybox();
 		if (skybox == null)
 		{
-			GLES20.glClearColor(((sky >> 16) & 0xFF) / 255f, ((sky >> 8) & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
+			Gfx.glClearColor(((sky >> 16) & 0xFF) / 255f, ((sky >> 8) & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
 			glClearDepthf(1f);
-			GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+			Gfx.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 			return;
 		}
 
-		GLES20.glClearColor(0f, 0f, 0f, 1f);
+		Gfx.glClearColor(0f, 0f, 0f, 1f);
 		glClearDepthf(1f);
-		GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+		Gfx.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
 		RenderThread rt = rts[0];
 		int size = skybox.getFaceCount() * 3 * VAO.VERT_SIZE;
@@ -1827,8 +1931,8 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		if (scene.getWorldViewId() == WorldView.TOPLEVEL)
 		{
 			glDisable(GL_BLEND);
-			GLES20.glDisable(GL_CULL_FACE);
-			GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+			Gfx.glDisable(GL_CULL_FACE);
+			Gfx.glDisable(GLES20.GL_DEPTH_TEST);
 		}
 		else
 		{
@@ -2253,7 +2357,7 @@ public class GpuGlesPlugin extends Plugin implements DrawCallbacks
 		);
 
 		glBindVertexArray(vaoUiHandle);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+		glDrawArrays(GLES20.GL_TRIANGLES, 0, UI_QUAD_VERTS);
 		glBindVertexArray(0);
 
 		glActiveTexture(GL_TEXTURE0 + SCENE_TEX_UNIT);

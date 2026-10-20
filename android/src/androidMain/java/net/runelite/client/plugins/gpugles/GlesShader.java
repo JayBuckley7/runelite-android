@@ -51,6 +51,11 @@ final class GlesShader
 
 	int compile(GlesTemplate template) throws ShaderException
 	{
+		if (Gfx.vulkan)
+		{
+			return compileVulkan(template);
+		}
+
 		int program = glCreateProgram();
 		int[] shaders = new int[units.size()];
 		int i = 0;
@@ -117,6 +122,37 @@ final class GlesShader
 		}
 
 		return program;
+	}
+
+	/** Vulkan: the same GLES sources, adapted and compiled to SPIR-V by the shared backend. */
+	private int compileVulkan(GlesTemplate template) throws ShaderException
+	{
+		String vertex = null, fragment = null, name = null;
+		for (Unit unit : units)
+		{
+			String source = template.load(unit.filename);
+			if (unit.type == android.opengl.GLES20.GL_VERTEX_SHADER)
+			{
+				vertex = source;
+				name = unit.filename.replace(".glsl", "");
+			}
+			else if (unit.type == android.opengl.GLES20.GL_FRAGMENT_SHADER)
+			{
+				fragment = source;
+			}
+		}
+		if (vertex == null || fragment == null)
+		{
+			throw new ShaderException("Vulkan programs need a vertex and a fragment shader");
+		}
+		try
+		{
+			return Gfx.createProgram(name, vertex, fragment);
+		}
+		catch (IllegalArgumentException e)
+		{
+			throw new ShaderException(name + ": " + e.getMessage());
+		}
 	}
 
 	private static void logShaderSource(String name, String source)

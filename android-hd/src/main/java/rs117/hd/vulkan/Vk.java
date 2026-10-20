@@ -66,8 +66,10 @@ public final class Vk {
 	// Lifecycle
 	// ---------------------------------------------------------------------------------------
 
-	/** @return null on success, otherwise the reason Vulkan can't be used */
-	/** @param cacheDir where compiled shaders and the pipeline cache persist; null disables caching */
+	/**
+	 * @param cacheDir where compiled shaders and the pipeline cache persist; null disables caching
+	 * @return null on success, otherwise the reason Vulkan can't be used
+	 */
 	public static String init(java.io.File cacheDir) {
 		if (!VkNative.load())
 			return "libhdvk is missing";
@@ -98,7 +100,10 @@ public final class Vk {
 	/** Attach (or with null, detach) the Android Surface to present to. */
 	public static boolean setSurface(Object surface) {
 		flush();
-		return VkNative.setSurface(surface);
+		boolean ok = VkNative.setSurface(surface);
+		// A surface change submits what was recorded, which starts a new command buffer
+		resetState();
+		return ok;
 	}
 
 	public static boolean hasSwapchain() {

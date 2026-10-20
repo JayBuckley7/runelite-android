@@ -4,21 +4,21 @@ import static android.opengl.GLES20.GL_ARRAY_BUFFER;
 import static android.opengl.GLES20.GL_STREAM_DRAW;
 import static android.opengl.GLES20.GL_TRIANGLES;
 import static android.opengl.GLES20.GL_UNSIGNED_INT;
-import static android.opengl.GLES20.glBindBuffer;
-import static android.opengl.GLES20.glBufferData;
-import static android.opengl.GLES20.glDeleteBuffers;
-import static android.opengl.GLES20.glDepthMask;
-import static android.opengl.GLES20.glDrawArrays;
-import static android.opengl.GLES20.glDrawElements;
-import static android.opengl.GLES20.glEnableVertexAttribArray;
-import static android.opengl.GLES20.glGenBuffers;
-import static android.opengl.GLES20.glUniform3i;
-import static android.opengl.GLES20.glVertexAttribPointer;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindBuffer;
+import static net.runelite.client.plugins.gpugles.Gfx.glBufferData;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glDepthMask;
+import static net.runelite.client.plugins.gpugles.Gfx.glDrawArrays;
+import static net.runelite.client.plugins.gpugles.Gfx.glDrawElements;
+import static net.runelite.client.plugins.gpugles.Gfx.glEnableVertexAttribArray;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glUniform3i;
+import static net.runelite.client.plugins.gpugles.Gfx.glVertexAttribPointer;
 import static android.opengl.GLES30.GL_ELEMENT_ARRAY_BUFFER;
-import static android.opengl.GLES30.glBindVertexArray;
-import static android.opengl.GLES30.glDeleteVertexArrays;
-import static android.opengl.GLES30.glGenVertexArrays;
-import static android.opengl.GLES30.glVertexAttribIPointer;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindVertexArray;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteVertexArrays;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenVertexArrays;
+import static net.runelite.client.plugins.gpugles.Gfx.glVertexAttribIPointer;
 import static net.runelite.client.plugins.gpugles.ModelUploader.MAX_DIAMETER;
 import static net.runelite.client.plugins.gpugles.ModelUploader.MAX_VERTEX_COUNT;
 import static net.runelite.client.plugins.gpugles.GpuGlesPlugin.uniBase;
@@ -203,14 +203,10 @@ class Zone
 		}
 	}
 
-	/** glMultiDrawArrays replacement — GLES has no batched form, so loop. */
+	/** glMultiDrawArrays replacement — GLES has no batched form, so loop (Vulkan batches it). */
 	private static void multiDrawArrays(int mode, IntBuffer offsets, IntBuffer counts)
 	{
-		int n = offsets.limit();
-		for (int i = 0; i < n; ++i)
-		{
-			glDrawArrays(mode, offsets.get(i), counts.get(i));
-		}
+		Gfx.multiDrawArrays(mode, offsets, counts);
 	}
 
 	void renderOpaque(int zx, int zz, int minLevel, int currentLevel, int maxLevel, Set<Integer> hiddenRoofIds)
@@ -636,12 +632,24 @@ class Zone
 			alphaElements.flip();
 			glUniform3i(uniBase, lastzx << 10, 0, lastzz << 10);
 			glBindVertexArray(lastVao);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementBufferId);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, alphaElements.limit() * Integer.BYTES, alphaElements, GL_STREAM_DRAW);
-			glDepthMask(false);
-			glDrawElements(GL_TRIANGLES, alphaElements.limit(), GL_UNSIGNED_INT, 0);
-			glDepthMask(true);
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+			if (Gfx.vulkan)
+			{
+				// Respecifying one element buffer per draw would mean a new buffer each time on
+				// Vulkan; append to the frame's index ring instead
+				long offset = Gfx.streamIndices(alphaElements);
+				glDepthMask(false);
+				glDrawElements(GL_TRIANGLES, alphaElements.limit(), GL_UNSIGNED_INT, (int) offset);
+				glDepthMask(true);
+			}
+			else
+			{
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, elementBufferId);
+				glBufferData(GL_ELEMENT_ARRAY_BUFFER, alphaElements.limit() * Integer.BYTES, alphaElements, GL_STREAM_DRAW);
+				glDepthMask(false);
+				glDrawElements(GL_TRIANGLES, alphaElements.limit(), GL_UNSIGNED_INT, 0);
+				glDepthMask(true);
+				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+			}
 			alphaElements.clear();
 		}
 		else if (lastDrawMode == STATIC_UNSORTED)

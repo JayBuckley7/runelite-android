@@ -2,19 +2,18 @@ package net.runelite.client.plugins.gpugles;
 
 import static android.opengl.GLES20.GL_ARRAY_BUFFER;
 import static android.opengl.GLES20.GL_STATIC_DRAW;
-import static android.opengl.GLES20.glBindBuffer;
-import static android.opengl.GLES20.glBufferData;
-import static android.opengl.GLES20.glDeleteBuffers;
-import static android.opengl.GLES20.glGenBuffers;
-import static android.opengl.GLES20.glGetError;
-import static android.opengl.GLES20.glGetString;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindBuffer;
+import static net.runelite.client.plugins.gpugles.Gfx.glBufferData;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenBuffers;
+import static net.runelite.client.plugins.gpugles.Gfx.glGetError;
+import static net.runelite.client.plugins.gpugles.Gfx.glGetString;
 import static android.opengl.GLES30.GL_MAP_FLUSH_EXPLICIT_BIT;
 import static android.opengl.GLES30.GL_MAP_INVALIDATE_BUFFER_BIT;
 import static android.opengl.GLES30.GL_MAP_WRITE_BIT;
-import static android.opengl.GLES30.glFlushMappedBufferRange;
-import static android.opengl.GLES30.glMapBufferRange;
-import static android.opengl.GLES30.glUnmapBuffer;
-
+import static net.runelite.client.plugins.gpugles.Gfx.glFlushMappedBufferRange;
+import static net.runelite.client.plugins.gpugles.Gfx.glMapBufferRange;
+import static net.runelite.client.plugins.gpugles.Gfx.glUnmapBuffer;
 import android.opengl.GLES20;
 
 import java.nio.Buffer;

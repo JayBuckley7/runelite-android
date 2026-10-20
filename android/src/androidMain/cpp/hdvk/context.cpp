@@ -659,10 +659,12 @@ static bool createSwapchain() {
 }
 
 bool setSurface(JNIEnv *env, jobject surface) {
-	// Flush everything recorded so far; the swapchain image (if any) is abandoned.
-	if (ctx->recording) endFrame(false);
 	bool same = surface && ctx->surfaceRef && env->IsSameObject(surface, ctx->surfaceRef);
 	if (same && ctx->swapchain.swapchain && !ctx->swapchain.dirty) return true;
+	if (!surface && !ctx->surfaceRef) return true;
+	// Changing the swapchain: flush everything recorded so far; the swapchain image (if any)
+	// is abandoned.
+	if (ctx->recording) endFrame(false);
 
 	if (!same) {
 		destroySwapchain(false);

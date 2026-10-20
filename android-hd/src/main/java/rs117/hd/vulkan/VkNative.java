@@ -82,7 +82,8 @@ public final class VkNative {
 	public static final int LIMIT_MAX_SSBO_RANGE = 10;
 
 	/** @return null on success, otherwise why Vulkan can't be used */
-	static native String init(String cacheDir);	static native void shutdown();
+	static native String init(String cacheDir);
+	static native void shutdown();
 	static native String deviceName();
 	static native int limit(int which);
 	static native boolean setSurface(Object surface);

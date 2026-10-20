@@ -13,6 +13,14 @@ public interface GpuGlesPluginConfig extends Config
 	int MAX_DISTANCE = 184;
 	int MAX_FOG_DEPTH = 100;
 
+	@ConfigItem(
+		keyName = "vulkanRenderer",
+		name = "Vulkan renderer (experimental)",
+		description = "Render through Vulkan instead of OpenGL ES. Falls back to OpenGL ES automatically " +
+			"if the device can't start Vulkan.",
+		position = 0)
+	default boolean vulkanRenderer() { return false; }
+
 	@Range(max = MAX_DISTANCE)
 	@ConfigItem(keyName = "drawDistance", name = "Draw distance", description = "Draw distance in tiles.", position = 1)
 	default int drawDistance() { return 50; }
@@ -86,7 +94,8 @@ public interface GpuGlesPluginConfig extends Config
 		keyName = "msaaSamples",
 		name = "MSAA",
 		description = "Hardware anti-aliasing samples. Heavy on mobile — leave off unless you can spare the GPU. " +
-			"Takes effect after restarting the plugin (toggle GPU GLES off → on).",
+			"Takes effect after restarting the plugin (toggle GPU off → on).",
 		position = 15)
 	default MsaaSamples msaaSamples() { return MsaaSamples.OFF; }
+
 }

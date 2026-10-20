@@ -12,19 +12,17 @@ import static android.opengl.GLES20.GL_TEXTURE_MIN_FILTER;
 import static android.opengl.GLES20.GL_TEXTURE_WRAP_S;
 import static android.opengl.GLES20.GL_TEXTURE_WRAP_T;
 import static android.opengl.GLES20.GL_UNSIGNED_BYTE;
-import static android.opengl.GLES20.glActiveTexture;
-import static android.opengl.GLES20.glBindTexture;
-import static android.opengl.GLES20.glDeleteTextures;
-import static android.opengl.GLES20.glGenTextures;
-import static android.opengl.GLES20.glGenerateMipmap;
-import static android.opengl.GLES20.glTexParameterf;
-import static android.opengl.GLES20.glTexParameteri;
+import static net.runelite.client.plugins.gpugles.Gfx.glActiveTexture;
+import static net.runelite.client.plugins.gpugles.Gfx.glBindTexture;
+import static net.runelite.client.plugins.gpugles.Gfx.glDeleteTextures;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenTextures;
+import static net.runelite.client.plugins.gpugles.Gfx.glGenerateMipmap;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexParameterf;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexParameteri;
 import static android.opengl.GLES30.GL_RGBA8;
 import static android.opengl.GLES30.GL_TEXTURE_2D_ARRAY;
-import static android.opengl.GLES30.glTexImage3D;
-import static android.opengl.GLES30.glTexStorage3D;
-import static android.opengl.GLES30.glTexSubImage3D;
-
+import static net.runelite.client.plugins.gpugles.Gfx.glTexStorage3D;
+import static net.runelite.client.plugins.gpugles.Gfx.glTexSubImage3D;
 import android.util.Log;
 
 import java.nio.ByteBuffer;
@@ -114,7 +112,7 @@ class TextureManager
 		// harmless if the driver doesn't support it (it'll throw GL_INVALID_ENUM
 		// silently). On Adreno 6xx+ / Mali T-class+ this is widely supported.
 		float[] maxParam = new float[1];
-		android.opengl.GLES20.glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, maxParam, 0);
+		Gfx.glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, maxParam, 0);
 		if (maxParam[0] >= 1f)
 		{
 			float aniso = Math.max(1f, Math.min(maxParam[0], level));
