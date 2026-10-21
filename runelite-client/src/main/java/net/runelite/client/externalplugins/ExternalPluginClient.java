@@ -64,6 +64,7 @@ public class ExternalPluginClient
 	private final Gson gson;
 	private final HttpUrl apiBase;
 	private final HttpUrl pluginHubBase;
+	private volatile String fallbackVersion;
 
 	@Inject
 	private ExternalPluginClient(OkHttpClient okHttpClient,
@@ -90,13 +91,103 @@ public class ExternalPluginClient
 
 	private <T> T downloadManifest(String name, Class<T> clazz) throws IOException, VerificationException
 	{
+		String version = fallbackVersion != null ? fallbackVersion : RuneLiteProperties.getPluginHubVersion();
+		try
+		{
+			return downloadManifest(version, name, clazz);
+		}
+		catch (ManifestNotFoundException e)
+		{
+			String fallback = resolveFallbackVersion(name);
+			if (fallback == null || fallback.equals(version))
+			{
+				throw e;
+			}
+			log.info("Plugin hub has no {} manifest for {}, falling back to {}", name, version, fallback);
+			fallbackVersion = fallback;
+			return downloadManifest(fallback, name, clazz);
+		}
+	}
+
+	/**
+	 * A fork hub hosted on raw.githubusercontent.com keeps exactly one manifest version,
+	 * which lags behind the client after a RuneLite bump until the hub is rebuilt. List the
+	 * repo's manifest/ directory through the GitHub contents API and use whatever version
+	 * is there. Returns null for any other host (upstream hub) or on failure.
+	 */
+	private String resolveFallbackVersion(String name)
+	{
+		if (!"raw.githubusercontent.com".equals(pluginHubBase.host()) || pluginHubBase.pathSize() < 3)
+		{
+			return null;
+		}
+
+		// raw URL layout: /<owner>/<repo>/<branch>[/<subdir>...]
+		List<String> seg = pluginHubBase.pathSegments();
+		HttpUrl.Builder url = HttpUrl.get("https://api.github.com").newBuilder()
+			.addPathSegment("repos")
+			.addPathSegment(seg.get(0))
+			.addPathSegment(seg.get(1))
+			.addPathSegment("contents");
+		for (String s : seg.subList(3, seg.size()))
+		{
+			if (!s.isEmpty())
+			{
+				url.addPathSegment(s);
+			}
+		}
+		url.addPathSegment("manifest")
+			.addQueryParameter("ref", seg.get(2));
+		String suffix = "_" + name + ".js";
+		try (Response res = okHttpClient.newCall(new Request.Builder().url(url.build()).build()).execute())
+		{
+			if (res.code() != 200)
+			{
+				log.warn("Unable to list plugin hub manifests: {}", res.code());
+				return null;
+			}
+
+			// CHECKSTYLE:OFF
+			List<Map<String, Object>> entries = gson.fromJson(res.body().string(), new TypeToken<List<Map<String, Object>>>(){}.getType());
+			// CHECKSTYLE:ON
+			for (Map<String, Object> entry : entries)
+			{
+				Object fileName = entry.get("name");
+				if (fileName instanceof String && ((String) fileName).endsWith(suffix))
+				{
+					String f = (String) fileName;
+					return f.substring(0, f.length() - suffix.length());
+				}
+			}
+		}
+		catch (IOException | JsonSyntaxException e)
+		{
+			log.warn("Unable to list plugin hub manifests", e);
+		}
+		return null;
+	}
+
+	private static class ManifestNotFoundException extends IOException
+	{
+		ManifestNotFoundException(String message)
+		{
+			super(message);
+		}
+	}
+
+	private <T> T downloadManifest(String version, String name, Class<T> clazz) throws IOException, VerificationException
+	{
 		HttpUrl manifest = pluginHubBase
 			.newBuilder()
 			.addPathSegment("manifest")
-			.addPathSegment(RuneLiteProperties.getPluginHubVersion() + "_" + name + ".js")
+			.addPathSegment(version + "_" + name + ".js")
 			.build();
 		try (Response res = okHttpClient.newCall(new Request.Builder().url(manifest).build()).execute())
 		{
+			if (res.code() == 404)
+			{
+				throw new ManifestNotFoundException("No " + name + " manifest for " + version);
+			}
 			if (res.code() != 200)
 			{
 				throw new IOException("Non-OK response code: " + res.code());
