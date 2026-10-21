@@ -1119,6 +1119,10 @@ private fun dispatchClick(offset: Offset, boxSize: IntSize, button: Int) {
     val hit = hitTest(window, winX, winY) ?: return
     val target = walkUpToListener(hit.comp) ?: hit.comp
     val (lx, ly) = localCoords(target, winX, winY)
+    // Skill-guide scrollbar taps must be handled before
+    // emitting a click, otherwise the pending scene Walk here action wins.
+    if (button == BUTTON1 && target is java.awt.Canvas &&
+        net.runelite.client.plugins.mobile.MobileScrollbars.tap(lx, ly)) return
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_MOVED, lx, ly, java.awt.event.MouseEvent.NOBUTTON, false)
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_PRESSED, lx, ly, button, true)
     fireMouse(target, java.awt.event.MouseEvent.MOUSE_RELEASED, lx, ly, button, false)

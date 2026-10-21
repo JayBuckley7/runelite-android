@@ -10,6 +10,8 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Menu;
 import net.runelite.api.MenuEntry;
+import net.runelite.api.ScriptID;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetType;
@@ -41,6 +43,7 @@ public class MobileInputPlugin extends Plugin
 	private static final int CONTENT_TYPE_VIEWPORT = 1337;
 
 	@Inject private Client client;
+	@Inject private net.runelite.client.callback.ClientThread clientThread;
 
 	private long lastLogMs;
 	private int lastLoggedCount = -1;
@@ -49,6 +52,7 @@ public class MobileInputPlugin extends Plugin
 	protected void shutDown()
 	{
 		MobileHitTest.setInterfaceRects(null);
+		MobileScrollbars.publish(new MobileScrollbars.Target[0]);
 		MobileHitTest.setMenuRect(null);
 		MobileHitTest.setMenuOptions(0, null);
 		MobileHitTest.setFixedMode(false);
@@ -131,19 +135,25 @@ public class MobileInputPlugin extends Plugin
 			MobileHitTest.setMenuOptions(0, null);
 		}
 
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			MobileScrollbars.publish(new MobileScrollbars.Target[0]);
+		}
 		if (client.getGameState() == GameState.LOGGED_IN) {
 			Widget[] roots = client.getWidgetRoots();
 			if (roots == null)
 			{
 				MobileHitTest.setInterfaceRects(null);
+				MobileScrollbars.publish(new MobileScrollbars.Target[0]);
 				return;
 			}
 			List<Rectangle> rects = new ArrayList<>(64);
+			List<MobileScrollbars.Target> scrollbars = new ArrayList<>();
 			int canvasW = client.getCanvasWidth();
 			int canvasH = client.getCanvasHeight();
 			for (Widget root : roots)
 			{
-				collect(root, rects, canvasW, canvasH);
+				collect(root, rects, scrollbars, canvasW, canvasH, sx, sy);
 			}
 			Rectangle[] arr;
 			if (sx == 1.0 && sy == 1.0)
@@ -160,6 +170,8 @@ public class MobileInputPlugin extends Plugin
 				}
 			}
 			MobileHitTest.setInterfaceRects(arr);
+			MobileScrollbars.publish(client.isMenuOpen() ? new MobileScrollbars.Target[0]
+				: scrollbars.toArray(new MobileScrollbars.Target[0]));
 
 			// Periodic visibility into what's being treated as "interface". Helps diagnose
 			// when too many rects are flagged (scene-clicks getting BUTTON1 instead of
@@ -190,7 +202,8 @@ public class MobileInputPlugin extends Plugin
 	 * while excluding full-screen transparent viewport containers so 3D scene camera
 	 * rotation works smoothly.
 	 */
-	private static void collect(Widget w, List<Rectangle> out, int canvasW, int canvasH)
+	private void collect(Widget w, List<Rectangle> out, List<MobileScrollbars.Target> scrollbars,
+		int canvasW, int canvasH, double sx, double sy)
 	{
 		// isHidden also covers a hidden ancestor, so a hidden subtree is skipped whole.
 		if (w == null || w.isHidden())
@@ -200,17 +213,39 @@ public class MobileInputPlugin extends Plugin
 		Widget[] dyn = w.getDynamicChildren();
 		if (dyn != null)
 		{
-			for (Widget c : dyn) collect(c, out, canvasW, canvasH);
+			for (Widget c : dyn) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
 		}
 		Widget[] stat = w.getStaticChildren();
 		if (stat != null)
 		{
-			for (Widget c : stat) collect(c, out, canvasW, canvasH);
+			for (Widget c : stat) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
 		}
 		Widget[] nest = w.getNestedChildren();
 		if (nest != null)
 		{
-			for (Widget c : nest) collect(c, out, canvasW, canvasH);
+			for (Widget c : nest) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
+		}
+		// Skill-guide arrows poll held mouse state, which instantaneous touch clicks miss.
+		int scrollbarId = skillGuideScrollbar(w.getId());
+		if (scrollbarId != -1 && w.getType() == WidgetType.LAYER
+			&& w.getHeight() > 32 && w.getScrollHeight() > w.getHeight())
+		{
+			Rectangle b = w.getBounds();
+			Widget scrollbar = client.getWidget(scrollbarId);
+			if (scrollbar == null || scrollbar.isHidden()) return;
+			Rectangle bar = scrollbar.getBounds();
+			out.add(bar);
+			scrollbars.add(new MobileScrollbars.Target(
+				scaleRect(bar.x, bar.y, bar.width, bar.height, sx, sy), sy,
+				y -> clientThread.invokeLater(() -> {
+					if (client.getGameState() == GameState.LOGGED_IN && !w.isHidden()
+						&& !client.isMenuOpen() && b.equals(w.getBounds()))
+					{
+						int scrollY = MobileScrollbars.scrollPosition(
+							y, bar.height, w.getScrollHeight(), w.getScrollY());
+						client.runScript(ScriptID.UPDATE_SCROLLBAR, scrollbar.getId(), w.getId(), scrollY);
+					}
+				})));
 		}
 		if (isClickBlocking(w, canvasW, canvasH))
 		{
@@ -219,6 +254,23 @@ public class MobileInputPlugin extends Plugin
 			{
 				out.add(b);
 			}
+		}
+	}
+
+	private static int skillGuideScrollbar(int widgetId)
+	{
+		switch (widgetId)
+		{
+			case InterfaceID.SkillGuide.INFO:
+				return InterfaceID.SkillGuide.SCROLLBAR;
+			case InterfaceID.SkillGuideV2.OVERVIEW_CONTENT:
+			case InterfaceID.SkillGuideV2.OVERVIEW_CONTENT_1:
+			case InterfaceID.SkillGuideV2.OVERVIEW_CONTENT_2:
+				return InterfaceID.SkillGuideV2.OVERVIEW_SCROLLBAR;
+			case InterfaceID.SkillGuideV2.LIST:
+				return InterfaceID.SkillGuideV2.LIST_SCROLLER;
+			default:
+				return -1;
 		}
 	}
 
