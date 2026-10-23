@@ -227,6 +227,7 @@ fun TextRow(
     label: String,
     description: String?,
     value: String,
+    secret: Boolean = false,
     onChange: (String) -> Unit,
 )
 {
@@ -244,6 +245,8 @@ fun TextRow(
                 value = local,
                 onValueChange = { local = it; onChange(it) },
                 singleLine = true,
+                visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = if (secret) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text),
                 textStyle = TextStyle(color = RlPalette.TextPrimary, fontSize = 13.sp),
                 cursorBrush = SolidColor(RlPalette.Accent),
                 modifier = Modifier

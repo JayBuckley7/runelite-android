@@ -28,7 +28,7 @@ internal class ConfigBridge(
         val raw = configManager.getConfiguration(groupKey, item.key())
         if (raw != null)
         {
-            return decode(raw, item.type)
+            return runCatching { net.runelite.client.config.ConfigUiCodec.decode(raw, item.type) }.getOrNull()
         }
         // No persisted value — call the interface's default method via the proxy so
         // booleans / enums / strings come back already typed and we don't reimplement
@@ -66,37 +66,11 @@ internal class ConfigBridge(
         return item.key()
     }
 
-    private fun decode(raw: String, type: java.lang.reflect.Type): Any?
-    {
-        if (type is Class<*>)
-        {
-            return when
-            {
-                type == Boolean::class.javaPrimitiveType || type == java.lang.Boolean::class.java -> raw == "true"
-                type == Int::class.javaPrimitiveType || type == java.lang.Integer::class.java     -> raw.toIntOrNull()
-                type == Long::class.javaPrimitiveType || type == java.lang.Long::class.java       -> raw.toLongOrNull()
-                type == Double::class.javaPrimitiveType || type == java.lang.Double::class.java   -> raw.toDoubleOrNull()
-                type == String::class.java                                                        -> raw
-                type.isEnum -> runCatching {
-                    @Suppress("UNCHECKED_CAST")
-                    java.lang.Enum.valueOf(type as Class<out Enum<*>>, raw)
-                }.getOrNull()
-                else -> raw  // unknown — surface as String, the form will skip render
-            }
-        }
-        return raw
+    fun defaultValue(item: ConfigItemDescriptor): Any? {
+        val iface = configProxy.javaClass.interfaces.first()
+        return net.runelite.client.config.ConfigUiCodec.defaultValue(configProxy, iface.getMethod(findMethodName(item)))
     }
 
-    private fun encode(value: Any?, type: java.lang.reflect.Type): String?
-    {
-        if (value == null) return null
-        return when (value)
-        {
-            is Boolean -> value.toString()
-            is Number  -> value.toString()
-            is String  -> value
-            is Enum<*> -> value.name
-            else       -> value.toString()
-        }
-    }
+    private fun encode(value: Any?, type: java.lang.reflect.Type): String? =
+        net.runelite.client.config.ConfigUiCodec.encode(value)
 }
