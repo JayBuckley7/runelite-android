@@ -29,12 +29,12 @@ object AndroidHdHost : AndroidSupport.Host {
         if (config.getConfiguration("runelite-mp", "hdPrototypeDefaults") == null) {
             val group = HdPluginConfig.CONFIG_GROUP
             mapOf("drawDistance" to "35", "shadowMode" to "DETAILED", "shadowResolution" to "RES_2048",
-                "dynamicLights" to "NONE", "tiledLighting" to "false", "sceneResolutionScale" to "75",
+                "dynamicLights" to "NONE", "tiledLighting" to "false", "sceneResolutionScale" to "25",
                 "legacyRenderer2" to "false", "anisotropicFilteringLevel" to "2").forEach { (key, value) -> config.setConfiguration(group, key, value) }
             config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "1")
         }
         if (config.getConfiguration("runelite-mp", "hdPrototypeDefaults") == "1") {
-            mapOf("antiAliasingMode" to "MSAA_2", "lowMemoryMode" to "true",
+            mapOf("antiAliasingMode" to "MSAA_4", "lowMemoryMode" to "true",
                 "modelCacheSizeMiBv2" to "128", "expandedMapLoadingChunks" to "0")
                 .forEach { (key, value) -> config.setConfiguration(HdPluginConfig.CONFIG_GROUP, key, value) }
             config.setConfiguration("runelite-mp", "hdPrototypeDefaults", "2")
