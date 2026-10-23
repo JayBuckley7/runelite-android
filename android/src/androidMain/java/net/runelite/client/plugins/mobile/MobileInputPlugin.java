@@ -225,27 +225,29 @@ public class MobileInputPlugin extends Plugin
 		{
 			for (Widget c : nest) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
 		}
-		// Skill-guide arrows poll held mouse state, which instantaneous touch clicks miss.
-		int scrollbarId = skillGuideScrollbar(w.getId());
-		if (scrollbarId != -1 && w.getType() == WidgetType.LAYER
-			&& w.getHeight() > 32 && w.getScrollHeight() > w.getHeight())
+		// Scrollbar arrows poll held mouse state, which instantaneous touch clicks miss, so a
+		// tap on a scrollable list's bar scrolls it directly, and the whole bar blocks so a
+		// thumb drag isn't taken for a camera drag.
+		if (w.getType() == WidgetType.LAYER && w.getHeight() > 32 && w.getScrollHeight() > w.getHeight())
 		{
-			Rectangle b = w.getBounds();
-			Widget scrollbar = client.getWidget(scrollbarId);
-			if (scrollbar == null || scrollbar.isHidden()) return;
-			Rectangle bar = scrollbar.getBounds();
-			out.add(bar);
-			scrollbars.add(new MobileScrollbars.Target(
-				scaleRect(bar.x, bar.y, bar.width, bar.height, sx, sy), sy,
-				y -> clientThread.invokeLater(() -> {
-					if (client.getGameState() == GameState.LOGGED_IN && !w.isHidden()
-						&& !client.isMenuOpen() && b.equals(w.getBounds()))
-					{
-						int scrollY = MobileScrollbars.scrollPosition(
-							y, bar.height, w.getScrollHeight(), w.getScrollY());
-						client.runScript(ScriptID.UPDATE_SCROLLBAR, scrollbar.getId(), w.getId(), scrollY);
-					}
-				})));
+			Widget scrollbar = scrollbarFor(w);
+			if (scrollbar != null && !scrollbar.isHidden())
+			{
+				Rectangle b = w.getBounds();
+				Rectangle bar = scrollbar.getBounds();
+				out.add(bar);
+				scrollbars.add(new MobileScrollbars.Target(
+					scaleRect(bar.x, bar.y, bar.width, bar.height, sx, sy), sy,
+					y -> clientThread.invokeLater(() -> {
+						if (client.getGameState() == GameState.LOGGED_IN && !w.isHidden()
+							&& !client.isMenuOpen() && b.equals(w.getBounds()))
+						{
+							int scrollY = MobileScrollbars.scrollPosition(
+								y, bar.height, w.getScrollHeight(), w.getScrollY());
+							client.runScript(ScriptID.UPDATE_SCROLLBAR, scrollbar.getId(), w.getId(), scrollY);
+						}
+					})));
+			}
 		}
 		if (isClickBlocking(w, canvasW, canvasH))
 		{
@@ -255,6 +257,57 @@ public class MobileInputPlugin extends Plugin
 				out.add(b);
 			}
 		}
+	}
+
+	/** Most wide a scrollbar column gets; the game's are 16px. */
+	private static final int SCROLLBAR_MAX_WIDTH = 24;
+	/** Slack, in px, when matching a bar to its list's right edge and height. */
+	private static final int SCROLLBAR_SLACK = 6;
+
+	/**
+	 * The scrollbar driving scrollable layer {@code list}: a known one, else a sibling laid
+	 * out as its bar. The game builds a bar (scrollbar_vertical) as a narrow layer of
+	 * arrow/track/thumb children right beside the list it scrolls, which is how the Grand
+	 * Exchange's history, price checker and price list bars are found.
+	 */
+	private Widget scrollbarFor(Widget list)
+	{
+		int known = skillGuideScrollbar(list.getId());
+		if (known != -1)
+		{
+			return client.getWidget(known);
+		}
+		Widget parent = list.getParent();
+		Widget[] siblings = parent == null ? null : parent.getStaticChildren();
+		if (siblings == null)
+		{
+			return null;
+		}
+		Rectangle lb = list.getBounds();
+		for (Widget s : siblings)
+		{
+			if (s == null || s == list || s.isHidden())
+			{
+				continue;
+			}
+			Widget[] parts = s.getDynamicChildren();
+			if (parts == null || parts.length < 3)
+			{
+				continue;
+			}
+			Rectangle sb = s.getBounds();
+			boolean narrow = sb.width > 0 && sb.width <= SCROLLBAR_MAX_WIDTH;
+			// Right beside the list, or tucked inside its right edge.
+			boolean beside = Math.abs(sb.x - (lb.x + lb.width)) <= SCROLLBAR_SLACK
+				|| Math.abs((sb.x + sb.width) - (lb.x + lb.width)) <= SCROLLBAR_SLACK;
+			boolean spans = Math.abs(sb.y - lb.y) <= SCROLLBAR_SLACK
+				&& Math.abs(sb.height - lb.height) <= SCROLLBAR_SLACK;
+			if (narrow && beside && spans)
+			{
+				return s;
+			}
+		}
+		return null;
 	}
 
 	private static int skillGuideScrollbar(int widgetId)

@@ -146,9 +146,26 @@ val rewriteLauncherEnv = if (androidSdkAvailable) {
 // to runtime fails with NoSuchMethodError. D8 leaves indys intact at minSdk >= 26;
 // this task pre-desugars them so we don't depend on runtime LambdaMetafactory at all.
 // --------------------------------------------------------------------------------------
+// --------------------------------------------------------------------------------------
+// locateWindowMode: finds the client's own window-mode setter so a watch can force
+// resizable (WindowModeForcer). The game only switches mode from clientscript —
+// `setwindowmode` (opcode 5307) pops the mode and, for 1 (fixed) / 2 (resizable), calls a
+// static `<obf>(int, <dummy>)V` — and RuneLite's API can read the mode but not set it.
+// The setter is renamed every revision, so it's found from the opcode handler: the one
+// static call with an (I<dummy>)V shape in the methods that compare against 5307. Its
+// owner/name/desc and the dummy value the game passes go into the jar as
+// `net/runelite/mp/windowmode.properties` for the runtime to call by reflection.
+// --------------------------------------------------------------------------------------
+val locateWindowMode = if (androidSdkAvailable) {
+    tasks.register<LocateWindowModeTask>("locateWindowMode") {
+        inputJar.set(rewriteLauncherEnv!!.flatMap { it.outputJar })
+        outputJar.set(layout.buildDirectory.file("desugared/injected-client-windowmode.jar"))
+    }
+} else null
+
 val desugarStringConcat = if (androidSdkAvailable) {
     tasks.register<DesugarStringConcatTask>("desugarStringConcat") {
-        inputJar.set(rewriteLauncherEnv!!.flatMap { it.outputJar })
+        inputJar.set(locateWindowMode!!.flatMap { it.outputJar })
         outputJar.set(layout.buildDirectory.file("desugared/injected-client.jar"))
         helperOwner.set("net/runelite/mp/util/IndyConcat")
     }
@@ -303,6 +320,8 @@ if (androidSdkAvailable) {
         "implementation"(platform(libs.firebase.bom))
         "implementation"(libs.firebase.crashlytics)
         "implementation"(libs.firebase.analytics)
+        // Phone → watch relay of the Jagex sign-in redirect (WearRelay).
+        "implementation"(libs.play.services.wearable)
         // android-awt provides the shadow java.awt / javax.swing / javax.sound surface
         // the runelite jars compile against; it must be on the classpath before
         // anything that touches AWT can resolve at dex time.
@@ -422,7 +441,7 @@ if (androidSdkAvailable) {
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
             val versionMajor = 1
             val versionMinor = 0
-            val versionPatch = 48
+            val versionPatch = 49
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
             // Same tag CI publishes releases under; UpdateChecker compares against it.
@@ -843,6 +862,91 @@ abstract class RewriteLauncherEnvTask : org.gradle.api.DefaultTask() {
             }
         }, 0)
         return cw.toByteArray()
+    }
+}
+
+// Implementation class for locateWindowMode — registered above.
+
+abstract class LocateWindowModeTask : org.gradle.api.DefaultTask() {
+    @get:org.gradle.api.tasks.InputFile
+    abstract val inputJar: org.gradle.api.file.RegularFileProperty
+
+    @get:org.gradle.api.tasks.OutputFile
+    abstract val outputJar: org.gradle.api.file.RegularFileProperty
+
+    private companion object {
+        const val SETWINDOWMODE = 5307
+        const val RESOURCE = "net/runelite/mp/windowmode.properties"
+        // (int mode, <byte|short|int dummy>) -> void
+        val SETTER_DESC = Regex("""\(I[BSI]\)V""")
+    }
+
+    private data class Setter(val owner: String, val name: String, val desc: String)
+
+    @org.gradle.api.tasks.TaskAction
+    fun run() {
+        val inFile = inputJar.get().asFile
+        val outFile = outputJar.get().asFile
+        outFile.parentFile.mkdirs()
+
+        val found = HashMap<Setter, MutableSet<Int>>()
+        JarFile(inFile).use { input ->
+            JarOutputStream(outFile.outputStream().buffered()).use { output ->
+                val entries = input.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val bytes = input.getInputStream(entry).use { it.readBytes() }
+                    if (entry.name.endsWith(".class")) scan(bytes, found)
+                    output.putNextEntry(JarEntry(entry.name))
+                    output.write(bytes)
+                    output.closeEntry()
+                }
+
+                // A miss or an ambiguity fails the build: a wrong guess would call some
+                // other (int, dummy) static on the watch with mode 2.
+                require(found.size == 1) {
+                    "locateWindowMode: expected one (I<dummy>)V setter behind opcode $SETWINDOWMODE, " +
+                        "found ${found.keys}. The handler changed shape this revision — " +
+                        "disassemble the methods comparing against $SETWINDOWMODE and re-check."
+                }
+                val (setter, dummies) = found.entries.single()
+                val dummy = dummies.minOrNull()
+                    ?: error("locateWindowMode: no constant dummy argument passed to $setter")
+                output.putNextEntry(JarEntry(RESOURCE))
+                output.write(
+                    "owner=${setter.owner}\nname=${setter.name}\ndesc=${setter.desc}\ndummy=$dummy\n".toByteArray()
+                )
+                output.closeEntry()
+                logger.lifecycle("locateWindowMode: window-mode setter is ${setter.owner}.${setter.name}${setter.desc} (dummy $dummy)")
+            }
+        }
+    }
+
+    /** Records `<const dummy>; invokestatic <setter>` pairs in methods that test for 5307. */
+    private fun scan(bytes: ByteArray, found: MutableMap<Setter, MutableSet<Int>>) {
+        val node = org.objectweb.asm.tree.ClassNode()
+        ClassReader(bytes).accept(node, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        for (method in node.methods) {
+            val insns = method.instructions.toArray()
+            val handlesOpcode = insns.any {
+                it is org.objectweb.asm.tree.IntInsnNode && it.opcode == Opcodes.SIPUSH && it.operand == SETWINDOWMODE
+            }
+            if (!handlesOpcode) continue
+            for ((i, insn) in insns.withIndex()) {
+                if (insn !is org.objectweb.asm.tree.MethodInsnNode || insn.opcode != Opcodes.INVOKESTATIC) continue
+                if (!SETTER_DESC.matches(insn.desc)) continue
+                val dummy = insns.getOrNull(i - 1)?.let { constant(it) } ?: continue
+                found.getOrPut(Setter(insn.owner, insn.name, insn.desc)) { sortedSetOf() }.add(dummy)
+            }
+        }
+    }
+
+    private fun constant(insn: org.objectweb.asm.tree.AbstractInsnNode): Int? = when {
+        insn is org.objectweb.asm.tree.IntInsnNode && (insn.opcode == Opcodes.BIPUSH || insn.opcode == Opcodes.SIPUSH) -> insn.operand
+        insn.opcode in Opcodes.ICONST_M1..Opcodes.ICONST_5 -> insn.opcode - Opcodes.ICONST_0
+        insn is org.objectweb.asm.tree.LdcInsnNode -> insn.cst as? Int
+        else -> null
     }
 }
 

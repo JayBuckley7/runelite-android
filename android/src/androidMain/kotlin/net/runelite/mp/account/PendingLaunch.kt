@@ -21,6 +21,7 @@ internal object PendingLaunch
     private const val TAG = "PendingLaunch"
     private const val FILE = "pending-launch.properties"
     private const val KEY_FILE = "credentialsFile"
+    private const val DROP_FILE = "credentials.properties"
 
     private fun file(context: Context) = File(context.filesDir, FILE)
 
@@ -56,6 +57,7 @@ internal object PendingLaunch
      */
     fun resolveForBoot(context: Context): AccountSelection?
     {
+        importDropped(context)
         consume(context)?.let { return it }
 
         val lastType = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_LAST_TYPE, null)
@@ -67,6 +69,43 @@ internal object PendingLaunch
             TYPE_IMPORT -> imported ?: jagex
             TYPE_JAGEX -> jagex ?: imported
             else -> jagex ?: imported
+        }
+    }
+
+    /**
+     * Picks up a credentials.properties pushed to the app's external files dir, for devices
+     * with no usable file picker (watches):
+     *
+     *     adb push credentials.properties /sdcard/Android/data/net.runelite.mp/files/
+     *
+     * It replaces the saved account it belongs to (or is added as a new one), becomes the
+     * active account, and is deleted so the tokens don't sit in shared storage.
+     */
+    private fun importDropped(context: Context)
+    {
+        val drop = File(context.getExternalFilesDir(null) ?: return, DROP_FILE)
+        if (!drop.isFile) return
+        try
+        {
+            val id = AccountStore.importOrReplace(context, null, drop.readBytes())
+            if (id == null)
+            {
+                Log.w(TAG, "dropped $DROP_FILE wasn't a Jagex credentials file; discarding")
+                return
+            }
+            AccountStore.setActive(context, id)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_LAST_TYPE, TYPE_IMPORT)
+                .commit()
+            Log.i(TAG, "imported dropped $DROP_FILE")
+        }
+        catch (t: Throwable)
+        {
+            Log.w(TAG, "failed to import dropped $DROP_FILE", t)
+        }
+        finally
+        {
+            drop.delete()
         }
     }
 

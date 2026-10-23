@@ -47,6 +47,8 @@ rustAndroidGradle = "0.10.0"
 googleServices = "4.5.0"
 firebaseCrashlyticsGradle = "3.0.8"
 firebaseBom = "34.19.0"
+# Wear Data Layer: the phone app relays a Jagex sign-in redirect to the watch app.
+playServicesWearable = "19.0.0"
 
 
 [libraries]
@@ -102,6 +104,7 @@ firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "fir
 firebase-crashlytics = { module = "com.google.firebase:firebase-crashlytics" }
 firebase-crashlytics-ndk = { module = "com.google.firebase:firebase-crashlytics-ndk" }
 firebase-analytics = { module = "com.google.firebase:firebase-analytics" }
+play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "playServicesWearable" }
 
 
 [plugins]

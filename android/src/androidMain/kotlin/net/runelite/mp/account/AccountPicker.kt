@@ -509,6 +509,8 @@ private fun CharacterRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        // A watch has no width to spare: the row itself launches, so the name gets it all.
+        if (isWatch()) return@Row
         if (highlight)
         {
             Text("last used", color = TextDisabled, fontSize = 10.sp)
@@ -523,6 +525,12 @@ private fun CharacterRow(
             Text("Launch", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
     }
+}
+
+@Composable
+private fun isWatch(): Boolean {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return remember { net.runelite.mp.update.UpdateGate.isWatch(context) }
 }
 
 @Composable
@@ -541,8 +549,13 @@ private fun ImportedAccountCard(
             .background(CardBg)
             .border(1.dp, SurfaceBorder, RoundedCornerShape(8.dp)),
     ) {
+        val watch = isWatch()
         Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // On a watch the Launch button would squeeze out the name; tapping the name launches instead.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = if (watch) Modifier.clickable(enabled = !busy, onClick = onLaunch) else Modifier,
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         account.displayName,
@@ -574,7 +587,7 @@ private fun ImportedAccountCard(
                         }
                     }
                 }
-                Box(
+                if (!watch) Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(BrandOrange)

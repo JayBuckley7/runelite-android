@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,11 +31,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import net.runelite.client.config.ConfigItemDescriptor
-import net.runelite.client.config.Range
-import net.runelite.mp.ui.bridge.ConfigBridge
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import net.runelite.mp.ui.bridge.ConfigForm
 import net.runelite.mp.ui.bridge.PluginBridge
 import net.runelite.mp.ui.bridge.PluginRow
+import net.runelite.mp.wear.WatchLink
 import net.runelite.mp.ui.widgets.IntSliderRow
 import net.runelite.mp.ui.widgets.SectionHeader
 import net.runelite.mp.ui.widgets.SegmentedRow
@@ -47,14 +52,17 @@ import net.runelite.mp.ui.widgets.ToggleRow
  * int with [Range] → slider, enum → dropdown, String → text field, etc.).
  *
  * Form state lives in a `mutableStateMapOf<key, value>` cache so the slider thumb feels
- * responsive (the underlying [ConfigBridge] write happens on every change but Compose
+ * responsive (the underlying onSet write happens on every change but Compose
  * recomposition reads from the cache first). The bridge persists via ConfigManager and
  * RuneLite's existing change-event plumbing notifies the plugin.
  */
 @Composable
 internal fun PluginConfigPanel(
     pluginName: String,
-    bridge: ConfigBridge?,
+    form: ConfigForm?,
+    loading: Boolean,
+    emptyMessage: String,
+    onSet: (group: String, key: String, value: String?) -> Unit,
     onBack: () -> Unit,
 )
 {
@@ -85,7 +93,7 @@ internal fun PluginConfigPanel(
             Text(pluginName, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
 
-        if (bridge == null)
+        if (form == null)
         {
             Box(
                 Modifier
@@ -94,7 +102,7 @@ internal fun PluginConfigPanel(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    "This plugin has no configurable settings.",
+                    if (loading) "Loading…" else emptyMessage,
                     color = RlPalette.TextSecondary,
                     fontSize = 13.sp,
                 )
@@ -102,35 +110,34 @@ internal fun PluginConfigPanel(
             return@Column
         }
 
-        // Materialise the live values once into a state map keyed by ConfigItem.keyName.
-        // Edits write through the bridge AND update the map in the same gesture, so a
-        // slider drag doesn't fight a delayed read on every frame.
-        val cache = remember(bridge) { mutableStateMapOf<String, Any?>() }
-        val collapsed = remember(bridge) { mutableStateMapOf<String, Boolean>() }
-        val visibleItems = remember(bridge) { bridge.descriptor.items.filter { !it.item.hidden && it.name().isNotBlank() } }
-        LaunchedEffect(bridge)
-        {
-            for (item in visibleItems) cache[item.key()] = bridge.getValue(item)
+        // Materialise the values once into a state map keyed by item key. Edits write
+        // through onSet AND update the map in the same gesture, so a slider drag doesn't
+        // fight a delayed read on every frame.
+        val cache = remember(form) { mutableStateMapOf<String, String?>().apply { putAll(form.values) } }
+        val collapsed = remember(form) { mutableStateMapOf<String, Boolean>() }
+        val set: (String, String?) -> Unit = { key, value ->
+            cache[key] = value
+            onSet(form.group, key, value)
         }
 
         // Rows own their padding so section backgrounds span the panel width.
         LazyColumn(modifier = Modifier.fillMaxSize())
         {
             // Section-less items first (RuneLite renders them above any sections too).
-            val orphans = visibleItems.filter { it.item.section.isEmpty() }
-            if (orphans.isNotEmpty()) items(orphans, key = { it.key() }) { ConfigRow(bridge, it, cache) }
+            val orphans = form.fields.filter { it.section.isEmpty() }
+            if (orphans.isNotEmpty()) items(orphans, key = { it.key }) { ConfigRow(it, cache[it.key], set) }
             // Then one section header per section, with its items beneath.
-            for (section in bridge.descriptor.sections)
+            for (section in form.sections)
             {
-                val secItems = visibleItems.filter { it.item.section == section.key() }
+                val secItems = form.fields.filter { it.section == section.key }
                 if (secItems.isEmpty()) continue
-                val isClosed = collapsed[section.key()] ?: section.section.closedByDefault
-                item(key = "sec:${section.key()}") {
-                    SectionHeader(section.name(), !isClosed) { collapsed[section.key()] = !isClosed }
+                val isClosed = collapsed[section.key] ?: section.closedByDefault
+                item(key = "sec:${section.key}") {
+                    SectionHeader(section.name, !isClosed) { collapsed[section.key] = !isClosed }
                 }
                 if (!isClosed) {
-                    items(secItems, key = { "${section.key()}/${it.key()}" }) {
-                        ConfigRow(bridge, it, cache)
+                    items(secItems, key = { "${section.key}/${it.key}" }) {
+                        ConfigRow(it, cache[it.key], set)
                     }
                 }
             }
@@ -139,83 +146,58 @@ internal fun PluginConfigPanel(
     }
 }
 
-/** Choose the right widget for a single [ConfigItemDescriptor] and bind it to the bridge. */
+/** Choose the right widget for a single [ConfigForm.Field] and bind it to [set]. */
 @Composable
 private fun ConfigRow(
-    bridge: ConfigBridge,
-    item: ConfigItemDescriptor,
-    cache: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Any?>,
+    field: ConfigForm.Field,
+    current: String?,
+    set: (key: String, value: String?) -> Unit,
 )
 {
-    val label = item.name()
-    val desc = item.item.description.takeIf { it.isNotBlank() }
-    val current = cache[item.key()]
-
-    val type = item.type
-    val clazz = type as? Class<*>
-    when
+    val label = field.name
+    val desc = field.description
+    when (field.kind)
     {
-        clazz == Boolean::class.javaPrimitiveType || clazz == java.lang.Boolean::class.java ->
+        ConfigForm.Kind.BOOL ->
         {
-            val v = current as? Boolean ?: false
-            ToggleRow(label, desc, v) {
-                cache[item.key()] = it
-                bridge.setValue(item, it)
-            }
+            ToggleRow(label, desc, current == "true") { set(field.key, it.toString()) }
         }
-        clazz == Int::class.javaPrimitiveType || clazz == java.lang.Integer::class.java ->
+        ConfigForm.Kind.INT ->
         {
-            val range: Range? = item.range
-            val v = (current as? Int) ?: 0
-            if (range != null)
+            val v = current?.toIntOrNull() ?: 0
+            if (field.min != null && field.max != null)
             {
                 IntSliderRow(
                     label = label,
                     description = desc,
-                    value = v.coerceIn(range.min, range.max),
-                    min = range.min,
-                    max = range.max,
-                    unit = item.units?.value,
-                ) {
-                    cache[item.key()] = it
-                    bridge.setValue(item, it)
-                }
+                    value = v.coerceIn(field.min, field.max),
+                    min = field.min,
+                    max = field.max,
+                    unit = field.units,
+                ) { set(field.key, it.toString()) }
             }
             else
             {
                 // No range — render as text field. Int parsing happens at write time.
                 TextRow(label, desc, v.toString()) { txt ->
                     val parsed = txt.toIntOrNull()
-                    if (parsed != null)
-                    {
-                        cache[item.key()] = parsed
-                        bridge.setValue(item, parsed)
-                    }
+                    if (parsed != null) set(field.key, parsed.toString())
                 }
             }
         }
-        clazz == String::class.java ->
+        ConfigForm.Kind.STRING ->
         {
-            val v = (current as? String) ?: ""
-            TextRow(label, desc, v) {
-                cache[item.key()] = it
-                bridge.setValue(item, it)
+            TextRow(label, desc, current ?: "") { set(field.key, it) }
+        }
+        ConfigForm.Kind.ENUM ->
+        {
+            val selected = field.options.indexOf(current).coerceAtLeast(0)
+            SegmentedRow(label, desc, field.optionLabels, selected) { idx ->
+                val pick = field.options.getOrNull(idx) ?: return@SegmentedRow
+                set(field.key, pick)
             }
         }
-        clazz != null && clazz.isEnum ->
-        {
-            @Suppress("UNCHECKED_CAST")
-            val enumClass = clazz as Class<out Enum<*>>
-            val constants = enumClass.enumConstants ?: emptyArray()
-            val names = constants.map { it.toString().replace('_', ' ') }
-            val selected = (current as? Enum<*>)?.ordinal ?: 0
-            SegmentedRow(label, desc, names, selected.coerceAtLeast(0)) { idx ->
-                val pick = constants.getOrNull(idx) ?: return@SegmentedRow
-                cache[item.key()] = pick
-                bridge.setValue(item, pick)
-            }
-        }
-        else ->
+        ConfigForm.Kind.OTHER ->
         {
             // Fallback: show as disabled text row so the user at least sees the key.
             // Color, Keybind, Instant, etc. land here for now.
@@ -227,7 +209,7 @@ private fun ConfigRow(
                 Column {
                     Text(label, color = RlPalette.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Type ${clazz?.simpleName ?: type} not yet editable in the Compose UI.",
+                        "Type ${field.typeName} not yet editable in the Compose UI.",
                         color = RlPalette.TextDisabled,
                         fontSize = 11.sp,
                     )
@@ -237,12 +219,55 @@ private fun ConfigRow(
     }
 }
 
-/** Reverse lookup: which Plugin owns the provided ConfigBridge? Stub kept here so the
- *  sidebar can hand a `PluginRow` to the panel and trust the panel knows how to look up
- *  the bridge on demand without importing PluginManager. */
+/**
+ * Loads `row`'s form from wherever the row lives — this device, or the watch being
+ * configured — and writes edits back to the same place. Watch writes are debounced per
+ * key so a slider drag sends its resting value rather than every step.
+ */
 @Composable
 internal fun PluginConfigPanelFor(row: PluginRow, onBack: () -> Unit)
 {
-    val bridge by remember(row.rowKey) { mutableStateOf(PluginBridge.configBridge(row)) }
-    PluginConfigPanel(row.displayName, bridge, onBack)
+    val remote = row.remoteKey != null
+    var form by remember(row.rowKey) { mutableStateOf<ConfigForm?>(null) }
+    var loading by remember(row.rowKey) { mutableStateOf(true) }
+    var failed by remember(row.rowKey) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val pending = remember(row.rowKey) { HashMap<String, Job>() }
+
+    LaunchedEffect(row.rowKey)
+    {
+        form = withContext(Dispatchers.IO) {
+            try
+            {
+                if (remote) WatchLink.configForm(row) else PluginBridge.configForm(row)
+            }
+            catch (t: Throwable)
+            {
+                android.util.Log.w("ConfigPanel", "config form load failed", t)
+                failed = true
+                null
+            }
+        }
+        loading = false
+    }
+
+    PluginConfigPanel(
+        pluginName = row.displayName,
+        form = form,
+        loading = loading,
+        emptyMessage = if (failed) "Couldn't reach the watch." else "This plugin has no configurable settings.",
+        onSet = { group, key, value ->
+            if (!remote) PluginBridge.setConfig(group, key, value)
+            else
+            {
+                pending.remove(key)?.cancel()
+                pending[key] = scope.launch(Dispatchers.IO) {
+                    delay(150)
+                    try { WatchLink.setConfig(group, key, value) }
+                    catch (t: Throwable) { android.util.Log.w("ConfigPanel", "watch config write failed", t) }
+                }
+            }
+        },
+        onBack = onBack,
+    )
 }

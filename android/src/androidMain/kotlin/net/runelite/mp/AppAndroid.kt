@@ -136,7 +136,20 @@ fun AndroidApp() {
     }
     // Updates are offered before anything loads; the boot waits for the answer.
     LaunchedEffect(Unit) {
-        net.runelite.mp.update.UpdateGate.checkThenBoot(scope) { launcher.launch(scope) }
+        net.runelite.mp.update.UpdateGate.checkThenBoot(context, scope) { launcher.launch(scope) }
+    }
+    // Phone-driven watch configuration, once the plugins it touches exist: a watch answers
+    // the phone; a phone looks for a same-version watch to offer the toolbar button for.
+    val booted = net.runelite.mp.ui.WindowImpl.bootComplete.value
+    LaunchedEffect(booted) {
+        if (!booted) return@LaunchedEffect
+        if (net.runelite.mp.update.UpdateGate.isWatch(context))
+        {
+            net.runelite.mp.wear.WatchConfigServer.start(context)
+            // Fixed mode is unusable on a watch screen.
+            net.runelite.mp.wear.WindowModeForcer.run()
+        }
+        else net.runelite.mp.wear.WatchLink.run(context)
     }
 
     // Once booted, swallow hardware/gesture back so an accidental press at the edge of
@@ -682,6 +695,16 @@ private fun ComposeSplash() {
     // An update the user started keeps the splash up; an ignored prompt left with boot.
     if (bootDone && update == UpdateState.None) return
 
+    // Watch auto-update: no card, the splash's own text and bar carry it until boot.
+    val autoUpdating = gate.autoUpdate && !gate.bootStarted && update != UpdateState.None
+    val shownAction = if (!autoUpdating) actionText else when (update) {
+        is UpdateState.Downloading -> "Updating to ${update.release.tag}…"
+        is UpdateState.Ready -> "Installing ${update.release.tag}…"
+        else -> actionText
+    }
+    val shownProgress = if (autoUpdating && update is UpdateState.Downloading) update.progress else progress
+    val shownProgressText = if (autoUpdating) null else progressText
+
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize().background(DarkerGray),
         contentAlignment = Alignment.Center,
@@ -691,14 +714,19 @@ private fun ComposeSplash() {
         // no room for the text and bar beneath it — so take a fraction of each axis and
         // use the smaller, which keeps the mark square and always on screen. The update
         // card needs some of that height, so the logo shrinks while it's showing.
-        val logoShare = if (update == UpdateState.None) 0.40f else 0.26f
+        val logoShare = if (update == UpdateState.None || gate.autoUpdate) 0.40f else 0.26f
         val logoSize = minOf(maxWidth * 0.42f, maxHeight * logoShare).coerceAtMost(280.dp)
         val gap = minOf(maxHeight * 0.04f, 28.dp)
 
         // Footer: this build's version and credits. Bottom-left, clear of the Accounts
-        // button (bottom-center) and the update card.
+        // button (bottom-center) and the update card. On a watch it's centered instead, as
+        // the round screen clips the corners, and drops the "RuneLite" credit so the line fits.
+        val watch = remember { net.runelite.mp.update.UpdateGate.isWatch(context) }
         Column(
-            modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalAlignment = if (watch) Alignment.CenterHorizontally else Alignment.Start,
+            modifier = Modifier
+                .align(if (watch) Alignment.BottomCenter else Alignment.BottomStart)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
         ) {
             androidx.compose.material3.Text(
                 text = "RuneLite Android ${net.runelite.mp.update.UpdateChecker.currentTag}",
@@ -706,9 +734,11 @@ private fun ComposeSplash() {
                 fontSize = 11.sp,
             )
             androidx.compose.material3.Text(
-                text = (listOf("RuneLite") + contributors).joinToString(" · "),
+                text = (if (watch) contributors else listOf("RuneLite") + contributors).joinToString(" · "),
                 color = BrandOrange,
                 fontSize = 11.sp,
+                // Centers the lines too, should the credits still wrap.
+                textAlign = if (watch) androidx.compose.ui.text.style.TextAlign.Center else null,
             )
         }
 
@@ -727,7 +757,7 @@ private fun ComposeSplash() {
                 Spacer(Modifier.height(gap))
             }
             androidx.compose.material3.Text(
-                text = actionText,
+                text = shownAction,
                 color = Color.White,
                 fontSize = 20.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -755,11 +785,11 @@ private fun ComposeSplash() {
             ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxWidth(shownProgress.coerceIn(0f, 1f))
                         .fillMaxHeight()
                         .background(BrandOrange),
                 )
-                progressText?.let {
+                shownProgressText?.let {
                     androidx.compose.material3.Text(
                         text = it,
                         color = Color.White,
@@ -769,7 +799,7 @@ private fun ComposeSplash() {
                 }
             }
             val pending = update
-            if (pending != UpdateState.None) {
+            if (pending != UpdateState.None && !gate.autoUpdate) {
                 Spacer(Modifier.height(gap))
                 UpdateCard(
                     state = pending,
@@ -1119,7 +1149,7 @@ private fun dispatchClick(offset: Offset, boxSize: IntSize, button: Int) {
     val hit = hitTest(window, winX, winY) ?: return
     val target = walkUpToListener(hit.comp) ?: hit.comp
     val (lx, ly) = localCoords(target, winX, winY)
-    // Skill-guide scrollbar taps must be handled before
+    // Scrollbar taps must be handled before
     // emitting a click, otherwise the pending scene Walk here action wins.
     if (button == BUTTON1 && target is java.awt.Canvas &&
         net.runelite.client.plugins.mobile.MobileScrollbars.tap(lx, ly)) return

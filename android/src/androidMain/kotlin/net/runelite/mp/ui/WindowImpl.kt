@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,7 +97,11 @@ object WindowImpl
                 // Chrome (content panel + icon strip) doesn't render at all until
                 // the splash dismisses — otherwise the user sees a pinned sidebar
                 // floating beside the boot splash during the long initial load.
-                if (bootComplete.value)
+                // None at all on a watch: the screen is too small to share, and the phone
+                // configures it instead (WatchLink / WatchConfigServer).
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val isWatch = remember { net.runelite.mp.update.UpdateGate.isWatch(context) }
+                if (bootComplete.value && !isWatch)
                 {
                     RuneLiteMenuTheme {
                         // Reserve a content column for the selected plugin panel.
@@ -134,7 +139,9 @@ object WindowImpl
                     width = CONTENT_WIDTH,
                     onConfigure = { configTarget.value = it },
                 )
-                val target = configTarget.value
+                // A config opened for one device stays with it: switching between phone
+                // and watch closes it rather than showing the other's form.
+                val target = configTarget.value?.takeIf { (it.remoteKey != null) == net.runelite.mp.wear.WatchLink.configuring }
                 if (target != null)
                 {
                     PluginConfigPanelFor(

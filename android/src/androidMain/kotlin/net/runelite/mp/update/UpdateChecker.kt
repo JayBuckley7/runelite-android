@@ -1,7 +1,9 @@
 package net.runelite.mp.update
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -152,6 +154,36 @@ internal object UpdateChecker
         context.startActivity(Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /**
+     * Installs [apk] through a PackageInstaller session, for watches where there's no room
+     * for the update card. On Android 12+ the session asks not to need the user, which the
+     * system honours once this app is the installer of record (ie. after the first update
+     * it installed itself); until then [UpdateInstallReceiver] launches the confirm screen.
+     * The result arrives at that receiver; on success the system replaces this process.
+     */
+    fun installSession(context: Context, apk: File)
+    {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(context.packageName)
+            setSize(apk.length())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+            session.openWrite("base.apk", 0, apk.length()).use { out ->
+                apk.inputStream().use { it.copyTo(out) }
+                session.fsync(out)
+            }
+            // Mutable so the installer can fill in the status extras.
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+            val callback = PendingIntent.getBroadcast(context, id, Intent(context, UpdateInstallReceiver::class.java), flags)
+            session.commit(callback.intentSender)
+        }
     }
 
     /** The installer would reject a mismatch with a vague "App not installed"; catch it with a clear message. */

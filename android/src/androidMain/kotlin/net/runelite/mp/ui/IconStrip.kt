@@ -132,6 +132,21 @@ internal fun NavIconStrip(
             net.runelite.mp.ui.bridge.SoftKeyboardController.toggle()
         }
         Spacer(Modifier.height(4.dp))
+        // Only while a same-version watch has RuneLite open. Engaging it points the
+        // Plugins screen at the watch (and tints the chrome blue) until tapped again.
+        if (net.runelite.mp.wear.WatchLink.watch != null)
+        {
+            val link = net.runelite.mp.wear.WatchLink
+            ModifierChip(label = "⌚", state = link.configuring) {
+                link.configuring = !link.configuring
+                if (link.configuring && selected != NAV_KEY_PLUGINS)
+                {
+                    net.runelite.mp.ui.bridge.NavBarBridge.closePanels()
+                    onSelect(NAV_KEY_PLUGINS)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
         // RL-registered nav buttons. The list scrolls when it overflows the column height.
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),

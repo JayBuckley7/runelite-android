@@ -35,6 +35,10 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_paths" />
         </provider>
+        <!-- PackageInstaller session results for the watch auto-update (UpdateChecker.installSession). -->
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
+            android:exported="false" />
         <!-- Trampoline for AppRestart: lives in its own process so it can kill the app's
              process and start MainActivity fresh (an account switch needs a cold start). -->
         <activity

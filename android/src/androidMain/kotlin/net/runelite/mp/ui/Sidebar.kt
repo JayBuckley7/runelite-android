@@ -52,6 +52,7 @@ import net.runelite.mp.ui.bridge.ExternalPluginEntry
 import net.runelite.mp.ui.bridge.FavoritesBridge
 import net.runelite.mp.ui.bridge.PluginBridge
 import net.runelite.mp.ui.bridge.PluginRow
+import net.runelite.mp.wear.WatchLink
 
 
 
@@ -87,6 +88,7 @@ internal fun PluginSidebar(
             .background(RlPalette.DarkerGray)
             .border(1.dp, RlPalette.SurfaceBorder),
     ) {
+        WatchBanner()
         SidebarHeader(tab = tab, onTabChange = { tab = it })
         when (tab)
         {
@@ -94,6 +96,32 @@ internal fun PluginSidebar(
             SidebarTab.PROFILES -> ProfilesTab()
             SidebarTab.EXTERNAL -> ExternalTab()
         }
+    }
+}
+
+/** While configuring a watch: says which, in the watch accent. Tap to go back to this phone. */
+@Composable
+private fun WatchBanner()
+{
+    if (!WatchLink.configuring) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(RlPalette.Accent)
+            .clickable { WatchLink.configuring = false }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        Text(
+            "⌚ Configuring ${WatchLink.watch?.name ?: "watch"}",
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text("Done", color = Color.White, fontSize = 11.sp)
     }
 }
 
@@ -148,27 +176,40 @@ private fun PluginsTab(onConfigure: (PluginRow) -> Unit)
     val plugins = remember { mutableStateListOf<PluginRow>() }
     var query by remember { mutableStateOf("") }
     var favorites by remember { mutableStateOf(emptySet<String>()) }
+    val remote = WatchLink.configuring
+    val scope = rememberCoroutineScope()
 
     // Refresh from host every second — cheap (just a list of fields). Catches the case
     // where a plugin enables/disables itself (eg. on login), or where the panel
     // appeared before PluginManager finished registering. Also re-reads favorites here
     // so a config-profile switch eventually surfaces the new pinned-set without needing
-    // a sidebar reopen.
-    LaunchedEffect(Unit)
+    // a sidebar reopen. Restarts, emptied, when switching between phone and watch.
+    LaunchedEffect(remote)
     {
-        favorites = FavoritesBridge.list()
+        plugins.clear()
+        favorites = emptySet()
         while (true)
         {
-            val next = PluginBridge.list()
+            val (next, liveFavs) = try
+            {
+                if (remote) withContext(Dispatchers.IO) { WatchLink.plugins() to WatchLink.favorites() }
+                else PluginBridge.list() to FavoritesBridge.list()
+            }
+            catch (t: Throwable)
+            {
+                // The watch went quiet; keep the last list until WatchLink notices it's gone.
+                delay(1000)
+                continue
+            }
             val same = next.size == plugins.size && next.indices.all {
-                plugins[it].plugin === next[it].plugin && plugins[it].enabled == next[it].enabled
+                plugins[it].rowKey == next[it].rowKey && plugins[it].plugin === next[it].plugin &&
+                    plugins[it].enabled == next[it].enabled
             }
             if (!same)
             {
                 plugins.clear()
                 plugins.addAll(next)
             }
-            val liveFavs = FavoritesBridge.list()
             if (liveFavs != favorites) favorites = liveFavs
             delay(1000)
         }
@@ -199,8 +240,18 @@ private fun PluginsTab(onConfigure: (PluginRow) -> Unit)
                         favorite = favorites.contains(row.rowKey),
                         onToggleFavorite = {
                             val next = !favorites.contains(row.rowKey)
-                            FavoritesBridge.setFavorite(row.rowKey, next)
+                            if (remote) scope.launch(Dispatchers.IO) {
+                                runCatching { WatchLink.setFavorite(row.rowKey, next) }
+                            }
+                            else FavoritesBridge.setFavorite(row.rowKey, next)
                             favorites = if (next) favorites + row.rowKey else favorites - row.rowKey
+                        },
+                        onToggleEnabled = { next ->
+                            val plugin = row.plugin
+                            if (row.remoteKey != null) scope.launch(Dispatchers.IO) {
+                                runCatching { WatchLink.setEnabled(row, next) }
+                            }
+                            else if (plugin != null) PluginBridge.setEnabled(plugin, next)
                         },
                         onConfigure = onConfigure,
                     )
@@ -215,6 +266,7 @@ private fun PluginRowItem(
     row: PluginRow,
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit,
     onConfigure: (PluginRow) -> Unit,
 )
 {
@@ -266,17 +318,15 @@ private fun PluginRowItem(
         // widths stay uniform.
         if (row.toggleable)
         {
-            val pluginRef = row.plugin
             Box(
                 Modifier
                     .size(width = 30.dp, height = 16.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (enabled) RlPalette.Accent else Color(0xFF3A3A3A))
-                    .clickable(enabled = pluginRef != null) {
-                        if (pluginRef == null) return@clickable
+                    .clickable(enabled = row.plugin != null || row.remoteKey != null) {
                         val next = !enabled
                         enabled = next
-                        PluginBridge.setEnabled(pluginRef, next)
+                        onToggleEnabled(next)
                     },
                 contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart,
             ) {
@@ -309,6 +359,12 @@ private fun PluginRowItem(
 @Composable
 private fun ProfilesTab()
 {
+    // The Profiles tab is the phone's own Swing panel; there's no watch version of it.
+    if (WatchLink.configuring)
+    {
+        EmptyState("Profiles are managed on the watch itself.")
+        return
+    }
     net.runelite.mp.ui.panels.PluginPanelHost(net.runelite.mp.ui.bridge.NavBarBridge.PROFILES_PANEL_KEY)
 }
 @Composable
@@ -323,6 +379,13 @@ private fun ExternalTab()
     // OkHttp on the next visit.
     val icons = remember { mutableStateMapOf<String, ImageBitmap>() }
     val scope = rememberCoroutineScope()
+    // The hub listing is the same either way (one hub, matching builds); only which
+    // device's installed set is shown, and where install/remove go, follows the target.
+    val remote = WatchLink.configuring
+    val readInstalled: suspend () -> Set<String>? = {
+        if (remote) withContext(Dispatchers.IO) { runCatching { WatchLink.installedExternals() }.getOrNull() }
+        else ExternalPluginBridge.installed()
+    }
 
     // One-shot manifest fetch on first composition; reuse the cached list afterwards.
     // The installed set is refreshed cheaply on a slower cadence so install/remove taps
@@ -332,13 +395,25 @@ private fun ExternalTab()
         loading = true
         val fetched = withContext(Dispatchers.IO) { ExternalPluginBridge.available() }
         entries = fetched
-        installed.value = ExternalPluginBridge.installed()
         loading = false
+    }
+    LaunchedEffect(remote)
+    {
+        installed.value = readInstalled() ?: emptySet()
         while (true)
         {
             delay(1500)
-            val live = ExternalPluginBridge.installed()
+            val live = readInstalled() ?: continue
             if (live != installed.value) installed.value = live
+        }
+    }
+    val change: (String, Boolean) -> Unit = { name, install ->
+        scope.launch {
+            if (remote) withContext(Dispatchers.IO) {
+                runCatching { if (install) WatchLink.install(name) else WatchLink.remove(name) }
+            }
+            else if (install) ExternalPluginBridge.install(name) else ExternalPluginBridge.remove(name)
+            readInstalled()?.let { installed.value = it }
         }
     }
 
@@ -374,14 +449,8 @@ private fun ExternalTab()
                         ExternalRowItem(
                             row = row.copy(installed = live.contains(row.internalName)),
                             icon = icons[row.internalName],
-                            onInstall = {
-                                ExternalPluginBridge.install(row.internalName)
-                                scope.launch { installed.value = ExternalPluginBridge.installed() }
-                            },
-                            onRemove = {
-                                ExternalPluginBridge.remove(row.internalName)
-                                scope.launch { installed.value = ExternalPluginBridge.installed() }
-                            },
+                            onInstall = { change(row.internalName, true) },
+                            onRemove = { change(row.internalName, false) },
                             onIconLoaded = { bitmap -> icons[row.internalName] = bitmap },
                         )
                     }

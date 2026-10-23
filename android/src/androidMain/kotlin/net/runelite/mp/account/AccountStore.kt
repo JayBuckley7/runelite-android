@@ -147,6 +147,39 @@ internal object AccountStore
         return id
     }
 
+    /** Like [import], but a file for an account that's already saved (same JX_CHARACTER_ID,
+     *  else same JX_DISPLAY_NAME) overwrites it in place: a re-exported file with a fresh
+     *  session key updates the account rather than adding a duplicate. Returns the id. */
+    fun importOrReplace(context: Context, displayHint: String?, bytes: ByteArray): String?
+    {
+        val props = try
+        {
+            Properties().apply { bytes.inputStream().use { load(it) } }
+        }
+        catch (t: Throwable)
+        {
+            Log.w(TAG, "importOrReplace: failed to parse properties", t)
+            return null
+        }
+        if (props.stringPropertyNames().none { it.startsWith("JX_") })
+        {
+            Log.w(TAG, "importOrReplace: file has no JX_* keys; refusing")
+            return null
+        }
+        fun key(p: Properties, name: String) = p.getProperty(name)?.trim()?.takeIf { it.isNotEmpty() }
+        val character = key(props, "JX_CHARACTER_ID")
+        val display = key(props, "JX_DISPLAY_NAME")
+        val existing = list(context).firstOrNull { acc ->
+            val saved = try { Properties().apply { acc.file.inputStream().use { load(it) } } } catch (_: Throwable) { return@firstOrNull false }
+            if (character != null && key(saved, "JX_CHARACTER_ID") != null) key(saved, "JX_CHARACTER_ID") == character
+            else display != null && key(saved, "JX_DISPLAY_NAME") == display
+        } ?: return import(context, displayHint, bytes)
+        existing.file.outputStream().use { stream ->
+            props.store(stream, "Replaced by runelite-mp on ${java.util.Date()}")
+        }
+        return existing.id
+    }
+
     /** Looks up the given account name against the OSRS hiscores endpoints in order
      *  (Normal → Ironman → HCIM → UIM). The first one to return 200 wins; we cache the
      *  account type + Overall row in the sidecar JSON. Network-blocking; call from a

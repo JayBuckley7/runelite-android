@@ -25,11 +25,14 @@ internal data class PluginRow(
     val enabled: Boolean,
     val toggleable: Boolean,
     val hasConfig: Boolean,
+    /** Set on rows describing the watch being configured: its [rowKey] there. Such rows
+     *  have no live [plugin] / [configProxy]; every action on them goes to the watch. */
+    val remoteKey: String? = null,
 )
 {
     /** Stable identity for Compose's list `key` — uses the class name of whichever side
      *  is present (plugin or config). */
-    val rowKey: String get() = (plugin?.javaClass?.name ?: configProxy?.javaClass?.interfaces?.firstOrNull()?.name ?: displayName)
+    val rowKey: String get() = remoteKey ?: (plugin?.javaClass?.name ?: configProxy?.javaClass?.interfaces?.firstOrNull()?.name ?: displayName)
 }
 
 internal object PluginBridge
@@ -125,6 +128,16 @@ internal object PluginBridge
         {
             null
         }
+    }
+
+    /** The row's config form with current values, or null when it has no config. */
+    fun configForm(row: PluginRow): ConfigForm? = configBridge(row)?.let { ConfigForm.fromBridge(it) }
+
+    /** Writes one [ConfigForm] value; null unsets it (back to the interface default). */
+    fun setConfig(group: String, key: String, value: String?)
+    {
+        val cm = RuneLiteAccess.instance(ConfigManager::class.java) ?: return
+        if (value == null) cm.unsetConfiguration(group, key) else cm.setConfiguration(group, key, value)
     }
 
     private fun safeGetConfigProxy(pm: PluginManager, plugin: Plugin): Config?

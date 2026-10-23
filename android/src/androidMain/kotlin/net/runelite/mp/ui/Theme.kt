@@ -52,8 +52,12 @@ internal object RlPalette
     val TextPrimary      = Color.White
     val TextSecondary    = Color(0xFFAAAAAA)
     val TextDisabled     = Color(0xFF666666)
-    val Accent           = BrandOrange
-    val AccentSurface    = Color(0xFF332518)        // panel background when "active"
+    /** Accent while the phone is configuring a watch, so every highlight says so. */
+    val WatchBlue        = Color(0xFF3FA9F5)
+    // Getters over WatchLink's state: reads in composition recompose when configuring flips.
+    val Accent: Color get() = if (net.runelite.mp.wear.WatchLink.configuring) WatchBlue else BrandOrange
+    val AccentSurface: Color get() =                // panel background when "active"
+        if (net.runelite.mp.wear.WatchLink.configuring) Color(0xFF13293A) else Color(0xFF332518)
     val OkGreen          = Color(0xFF78D278)
     val DangerRed        = Color(0xFFFF6B6B)
 }

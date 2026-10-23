@@ -9,6 +9,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -52,9 +54,19 @@ internal class JagexLoginActivity : ComponentActivity()
     private val state = LoginUiState()
     private var work: Job? = null
 
+    private val isWatch by lazy { net.runelite.mp.update.UpdateGate.isWatch(this) }
+
+    /** Watch only: the redirect comes back from the phone app via [WearRelay]. */
+    private val relayListener = MessageClient.OnMessageReceivedListener { event ->
+        if (event.path != WearRelay.PATH) return@OnMessageReceivedListener
+        Log.i(TAG, "redirect relayed from phone")
+        consumeRedirect(Intent(Intent.ACTION_VIEW, Uri.parse(String(event.data))))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?)
     {
         super.onCreate(savedInstanceState)
+        if (isWatch) Wearable.getMessageClient(this).addListener(relayListener)
         setContent {
             JagexLoginScreen(
                 state = state,
@@ -79,6 +91,7 @@ internal class JagexLoginActivity : ComponentActivity()
     override fun onDestroy()
     {
         work?.cancel()
+        if (isWatch) Wearable.getMessageClient(this).removeListener(relayListener)
         super.onDestroy()
     }
 
@@ -104,7 +117,8 @@ internal class JagexLoginActivity : ComponentActivity()
         }
         Log.i(TAG, "opening browser for sign-in")
         state.error = null
-        state.status = "Waiting for sign-in in your browser…"
+        // Wear OS opens the page on the paired phone; the phone app relays the answer back.
+        state.status = if (isWatch) "Continue sign-in on your phone…" else "Waiting for sign-in in your browser…"
         openInBrowser(url)
     }
 
@@ -153,6 +167,13 @@ internal class JagexLoginActivity : ComponentActivity()
         val uri = data.toString()
         val verifier = pending.getString(KEY_VERIFIER, null)
         val expectedState = pending.getString(KEY_STATE, null)
+        // Not ours: either nothing is in flight here, or a different attempt is. On a phone
+        // that's a watch's sign-in, opened here by Wear OS; hand it over rather than drop it.
+        if (!isWatch && (expectedState == null || data.getQueryParameter("state") != expectedState))
+        {
+            relayToWatch(uri)
+            return true
+        }
         if (verifier == null || expectedState == null)
         {
             Log.w(TAG, "redirect with no attempt in flight; ignoring")
@@ -188,6 +209,27 @@ internal class JagexLoginActivity : ComponentActivity()
             }
         }
         return true
+    }
+
+    /** Phone side of [WearRelay]: passes a watch's redirect on, then gets out of the way. */
+    private fun relayToWatch(uri: String)
+    {
+        Log.i(TAG, "redirect isn't for this device; relaying to watch")
+        work?.cancel()
+        work = lifecycleScope.launch {
+            state.error = null
+            state.status = "Sending sign-in to your watch…"
+            val sent = withContext(Dispatchers.IO) { WearRelay.forward(this@JagexLoginActivity, uri) }
+            if (sent == 0)
+            {
+                state.status = null
+                state.error = "This sign-in was started on another device, and no watch is connected to hand it to."
+                return@launch
+            }
+            state.status = "Sign-in sent to your watch."
+            kotlinx.coroutines.delay(1_500)
+            finish()
+        }
     }
 
     /** Network-blocking; call from [Dispatchers.IO]. */
