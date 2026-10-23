@@ -77,6 +77,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
      *  the UI thread when it schedules a render; touch mapping reads the same value. */
     @Volatile private var logicalWidth = BASE_LOGICAL_WIDTH
     private var diagnosed = false
+    private val wheel = net.runelite.mp.input.MouseWheelSteps()
     private val render = object : Runnable {
         override fun run() {
             if (!running) return
@@ -212,6 +213,30 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
             canvas.drawText(it, 8f, paint.textSize + 8f, paint)
         }
         canvas.restoreToCount(saved)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (!running || event.actionMasked != MotionEvent.ACTION_SCROLL) {
+            return super.onGenericMotionEvent(event)
+        }
+        val delta = -event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        if (delta == 0f) return super.onGenericMotionEvent(event)
+        val scale = logicalWidth.toFloat() / width.coerceAtLeast(1)
+        val x = (event.x * scale).toInt()
+        val y = (event.y * scale).toInt()
+        val serial = mountSerial
+        SwingUtilities.invokeLater {
+            if (isCurrentMount(serial)) {
+                val base = root
+                var target: Component? = base?.let { hit(it, x, y) }
+                while (target != null && target !is JScrollPane && target !== base) target = target.parent
+                if (target is JScrollPane) {
+                    val steps = wheel.add(delta.toDouble(), target)
+                    if (steps != 0) scroll(x, y, steps)
+                }
+            }
+        }
+        return true
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

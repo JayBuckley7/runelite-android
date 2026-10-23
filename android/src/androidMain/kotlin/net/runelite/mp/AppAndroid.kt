@@ -398,7 +398,11 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                             PointerKind.Touch -> continue
                             PointerKind.Mouse -> {
                                 val change = event.changes.firstOrNull() ?: continue
-                                mouse.handle(event, change.position, change.scrollDelta.y, boxSize)
+                                // Read wheel units directly: Compose may scale scroll deltas for pixels.
+                                val wheelY = event.motionEvent?.let {
+                                    -it.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
+                                } ?: change.scrollDelta.y
+                                mouse.handle(event, change.position, wheelY, boxSize)
                             }
                             PointerKind.TouchpadPinch -> pinch.update(event, boxSize)
                             PointerKind.TouchpadSwipe -> swipe.update(event, boxSize)
@@ -1543,7 +1547,7 @@ private class MouseBridge {
     private var dragged = false
     private var lastX = Int.MIN_VALUE
     private var lastY = Int.MIN_VALUE
-    private var wheel = 0f
+    private val wheel = net.runelite.mp.input.MouseWheelSteps()
 
     private var clickCount = 0
     private var lastPressAt = 0L
@@ -1654,16 +1658,19 @@ private class MouseBridge {
     }
 
     private fun scroll(window: java.awt.Window, wx: Int, wy: Int, delta: Float) {
-        // Compose reports wheel-down as positive, the same sign as AWT's wheelRotation.
-        // Smooth/high-resolution wheels arrive in fractions; whole notches are emitted
-        // as they accumulate, with the fraction carried in preciseWheelRotation.
-        wheel += delta
-        val notches = wheel.toInt()
-        wheel -= notches
         val hit = hitTest(window, wx, wy) ?: return
         val target = ancestorChain(hit.comp).firstOrNull { it.mouseWheelListeners.isNotEmpty() }
             ?: ancestorChain(hit.comp).firstOrNull { it is java.awt.Canvas || it is javax.swing.JScrollPane }
             ?: return
+        // The game routes wheel input using its last mouse position, not the wheel
+        // event's coordinates. Wheel-only components must not swallow mouse motion.
+        val motionTarget = ancestorChain(hit.comp).firstOrNull { it.mouseMotionListeners.isNotEmpty() }
+        if (motionTarget != null && held == 0) {
+            val (mx, my) = localCoords(motionTarget, wx, wy)
+            fire(motionTarget, java.awt.event.MouseEvent.MOUSE_MOVED, mx, my, 0, java.awt.event.MouseEvent.NOBUTTON, 0)
+        }
+        val notches = wheel.add(delta.toDouble(), target)
+        if (notches == 0) return
         val (lx, ly) = localCoords(target, wx, wy)
         target.dispatchMouseEvent(
             java.awt.event.MouseWheelEvent(
@@ -1690,7 +1697,9 @@ private class MouseBridge {
 
     private fun targetAt(window: java.awt.Window, wx: Int, wy: Int): java.awt.Component? {
         val hit = hitTest(window, wx, wy) ?: return null
-        return walkUpToListener(hit.comp) ?: hit.comp
+        return ancestorChain(hit.comp).firstOrNull {
+            it.mouseListeners.isNotEmpty() || it.mouseMotionListeners.isNotEmpty()
+        } ?: hit.comp
     }
 
     private fun fire(target: java.awt.Component, id: Int, x: Int, y: Int, mods: Int, button: Int, clicks: Int) {
