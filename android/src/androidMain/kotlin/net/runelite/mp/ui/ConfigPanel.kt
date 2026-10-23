@@ -146,9 +146,28 @@ internal fun PluginConfigPanel(
     }
 }
 
+@Composable
+private fun ConfigRow(field: ConfigForm.Field, current: String?, set: (String, String?) -> Unit) {
+    var pending by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    Column {
+        ConfigControl(field, current) { key, value ->
+            if (field.warning.isNotBlank()) pending = field.warning to value else set(key, value)
+        }
+        if (field.hasDefault) androidx.compose.material3.TextButton(onClick = {
+            pending = ("Reset ${field.name} to its default?" + if (field.warning.isBlank()) "" else "\n${field.warning}") to field.defaultValue
+        }) { Text("Reset to default") }
+    }
+    pending?.let { change ->
+        androidx.compose.material3.AlertDialog(onDismissRequest = { pending = null },
+            title = { Text(field.name) }, text = { Text(change.first) },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { set(field.key, change.second); pending = null }) { Text("Confirm") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { pending = null }) { Text("Cancel") } })
+    }
+}
+
 /** Choose the right widget for a single [ConfigForm.Field] and bind it to [set]. */
 @Composable
-private fun ConfigRow(
+private fun ConfigControl(
     field: ConfigForm.Field,
     current: String?,
     set: (key: String, value: String?) -> Unit,
@@ -187,7 +206,8 @@ private fun ConfigRow(
         }
         ConfigForm.Kind.STRING ->
         {
-            TextRow(label, desc, current ?: "") { set(field.key, it) }
+            if (field.warning.isNotBlank()) net.runelite.mp.ui.widgets.ExtendedSettingRow(field, current) { set(field.key, it) }
+            else TextRow(label, desc, current ?: "", secret = field.secret) { set(field.key, it) }
         }
         ConfigForm.Kind.ENUM ->
         {
@@ -197,10 +217,19 @@ private fun ConfigRow(
                 set(field.key, pick)
             }
         }
+        ConfigForm.Kind.COLOR ->
+        {
+            net.runelite.mp.ui.widgets.ColorSettingRow(label, desc, current, field.alpha) {
+                set(field.key, it)
+            }
+        }
+        ConfigForm.Kind.DOUBLE, ConfigForm.Kind.DIMENSION, ConfigForm.Kind.MULTI,
+        ConfigForm.Kind.NOTIFICATION, ConfigForm.Kind.FONT ->
+            net.runelite.mp.ui.widgets.ExtendedSettingRow(field, current) { set(field.key, it) }
         ConfigForm.Kind.OTHER ->
         {
             // Fallback: show as disabled text row so the user at least sees the key.
-            // Color, Keybind, Instant, etc. land here for now.
+            // Instant and other unsupported types land here for now.
             Box(
                 Modifier
                     .fillMaxWidth()
