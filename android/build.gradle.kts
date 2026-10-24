@@ -96,113 +96,12 @@ configurations.configureEach {
     exclude(group = "org.lwjgl")
 }
 
-configurations.all {
-    resolutionStrategy.force(
-        "com.google.guava:guava:33.6.0-android",
-        // Guava's own placeholder for the ListenableFuture split artifact. AGP 9 no longer adds
-        // dependency constraints (android.dependency.useConstraints defaults to false), so the
-        // real listenablefuture:1.0 some transitive dependency asks for surfaced as a duplicate
-        // class against guava-android; pinning the empty version is Guava's documented answer.
-        "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
-    )
-}
-
-// Built-in Kotlin takes its jvmTarget from android.compileOptions.targetCompatibility (17 below),
-// so there is no kotlin { } block to configure here.
-
-if (androidSdkAvailable) {
-    // Polywoof's thin hub jar expects H2 in its parent loader. Keep the SQL engine
-    // and resources, replacing the data source and excluding desktop integrations.
-    val h2Runtime = configurations.create("h2Runtime") {
-        isCanBeConsumed = false
-        isTransitive = false
-    }
-    dependencies.add(h2Runtime.name, "com.h2database:h2:2.1.212")
-    val androidH2 = tasks.register<Jar>("androidH2") {
-        archiveFileName.set("h2-android.jar")
-        destinationDirectory.set(layout.buildDirectory.dir("android-h2"))
-        from(provider { h2Runtime.files.map { zipTree(it) } })
-        // Desktop integrations are not part of the embedded Android database runtime.
-        val unsupported = listOf(
-            "org/h2/jdbcx/**",
-            "org/h2/server/web/*Servlet.class", "org/h2/server/web/*DbStarter.class",
-            "org/h2/tools/GUIConsole*.class", "org/h2/fulltext/FullTextLucene*.class",
-            "org/h2/util/DbDriverActivator.class", "org/h2/util/OsgiDataSourceFactory.class",
-            "org/h2/util/AbbaLockingDetector*.class"
-        )
-        inputs.property("unsupportedIntegrations", unsupported)
-        exclude(unsupported)
-    }
-    // The android plugin is applied above by name (only when an SDK is present), so the typed
-    // implementation() accessor does not exist at script-compile time; use the configuration name.
-    dependencies {
-        "implementation"(compose.runtime)
-        "implementation"(compose.foundation)
-        "implementation"(compose.material3)
-        "implementation"(compose.ui)
-        "implementation"(compose.components.resources)
-        "implementation"(libs.androidx.activity.compose)
-        // Firebase. BoM coordinates the individual product versions so they
-        // can't drift apart. Crashlytics auto-installs an uncaught handler on
-        // first FirebaseApp init; we still front it with AndroidCrashReporter
-        // to add Compose-state breadcrumbs that Crashlytics can't see.
-        //
-        // KotlinDependencyHandler.platform() doesn't accept the catalog's
-        // Provider<MinimalExternalModuleDependency> directly, so route
-        // through the project's standard DependencyHandler which does.
-        "implementation"(platform(libs.firebase.bom))
-        "implementation"(libs.firebase.crashlytics)
-        "implementation"(libs.firebase.analytics)
-        // Phone → watch relay of the Jagex sign-in redirect (WearRelay).
-        "implementation"(libs.play.services.wearable)
-        // android-awt provides the shadow java.awt / javax.swing / javax.sound surface
-        // the runelite jars compile against; it must be on the classpath before
-        // anything that touches AWT can resolve at dex time.
-        "implementation"(project(":android-awt"))
-        "implementation"(project(":android-hd"))
-        "implementation"(project(":jshell"))
-        "implementation"(project(":client"))
-        "implementation"("net.runelite:runelite-api:${project.version}")
-        "implementation"(libs.rs.cache)
-        // FlatLaf jars are pure Java; classes load fine on Android, even though
-        // the actual Swing rendering pipeline behind them won't.
-        "implementation"(libs.flatlaf.core)
-        "implementation"(libs.flatlaf.extras)
-        // Plugin-hub plugins shade their `implementation` deps into the desktop
-        // jar, but the Android dex pipeline ships thin jars (plugin classes only),
-        // so those bundled libs are missing at runtime. The DexClassLoader's parent
-        // is the host APK, so providing the shared ones here resolves them for every
-        // plugin. tomlj (TOML parser, pulls antlr4-runtime transitively) is what the
-        // resource-packs plugin needs — without it it dies at injector creation with
-        // NoClassDefFoundError: org/tomlj/TomlTable.
-        "implementation"("org.tomlj:tomlj:1.1.1")
-        "implementation"(files(androidH2.flatMap { it.archiveFile }))
-        // Patched RS client (RuneLite's injected-client artifact). The raw jar has
-        // invokedynamic makeConcatWithConstants sites whose recipes use constant
-        // types D8's StringConcat desugarer rejects, so we pre-rewrite them to
-        // calls into IndyConcat at build time. See desugarStringConcat below.
-        "implementation"(files(desugarApis))
-
-        "implementation"("com.google.guava:guava:33.6.0-android")
-    }
-}
-
-// AGP's `coreLibraryDesugaring` configuration is set up by the android plugin after the
-// KMP `kotlin {}` block runs, so add the polyfill dep here outside the source-set
-// closures. desugar_jdk_libs 2.1.x is the version that ships the LambdaMetafactory
-// polyfill alongside the rest of the modern JDK surface.
-if (androidSdkAvailable) {
-    dependencies {
-        add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:2.1.4")
-        // Lombok — 117HD's java sources use @Slf4j / @Getter / @AllArgsConstructor.
-        // Wired here because KMP source-set closures don't expose `annotationProcessor`;
-        // AGP creates the config for the android variant.
-        add("compileOnly", "org.projectlombok:lombok:1.18.30")
-        add("annotationProcessor", "org.projectlombok:lombok:1.18.30")
-    }
-}
-
-
+// Release version + the injected gamepack it ships with. Bump these together: CI tags
+// releases as <major>.<minor>.<patch>_<RuneLite version>, and `target` names the
+// data/<target>.jar the desugar chain below consumes.
+val versionMajor = 1
+val versionMinor = 0
+val versionPatch = 52
 val target = "runelite-1.13.4-injected-40104541855.297"
 
 // --------------------------------------------------------------------------------------
@@ -369,6 +268,112 @@ val desugarApis = if (androidSdkAvailable) {
     }
 } else null
 
+configurations.all {
+    resolutionStrategy.force(
+        "com.google.guava:guava:33.6.0-android",
+        // Guava's own placeholder for the ListenableFuture split artifact. AGP 9 no longer adds
+        // dependency constraints (android.dependency.useConstraints defaults to false), so the
+        // real listenablefuture:1.0 some transitive dependency asks for surfaced as a duplicate
+        // class against guava-android; pinning the empty version is Guava's documented answer.
+        "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+    )
+}
+
+// Built-in Kotlin takes its jvmTarget from android.compileOptions.targetCompatibility (17 below),
+// so there is no kotlin { } block to configure here.
+
+if (androidSdkAvailable) {
+    // Polywoof's thin hub jar expects H2 in its parent loader. Keep the SQL engine
+    // and resources, replacing the data source and excluding desktop integrations.
+    val h2Runtime = configurations.create("h2Runtime") {
+        isCanBeConsumed = false
+        isTransitive = false
+    }
+    dependencies.add(h2Runtime.name, "com.h2database:h2:2.1.212")
+    val androidH2 = tasks.register<Jar>("androidH2") {
+        archiveFileName.set("h2-android.jar")
+        destinationDirectory.set(layout.buildDirectory.dir("android-h2"))
+        from(provider { h2Runtime.files.map { zipTree(it) } })
+        // Desktop integrations are not part of the embedded Android database runtime.
+        val unsupported = listOf(
+            "org/h2/jdbcx/**",
+            "org/h2/server/web/*Servlet.class", "org/h2/server/web/*DbStarter.class",
+            "org/h2/tools/GUIConsole*.class", "org/h2/fulltext/FullTextLucene*.class",
+            "org/h2/util/DbDriverActivator.class", "org/h2/util/OsgiDataSourceFactory.class",
+            "org/h2/util/AbbaLockingDetector*.class"
+        )
+        inputs.property("unsupportedIntegrations", unsupported)
+        exclude(unsupported)
+    }
+    // The android plugin is applied above by name (only when an SDK is present), so the typed
+    // implementation() accessor does not exist at script-compile time; use the configuration name.
+    dependencies {
+        "implementation"(compose.runtime)
+        "implementation"(compose.foundation)
+        "implementation"(compose.material3)
+        "implementation"(compose.ui)
+        "implementation"(compose.components.resources)
+        "implementation"(libs.androidx.activity.compose)
+        // Firebase. BoM coordinates the individual product versions so they
+        // can't drift apart. Crashlytics auto-installs an uncaught handler on
+        // first FirebaseApp init; we still front it with AndroidCrashReporter
+        // to add Compose-state breadcrumbs that Crashlytics can't see.
+        //
+        // KotlinDependencyHandler.platform() doesn't accept the catalog's
+        // Provider<MinimalExternalModuleDependency> directly, so route
+        // through the project's standard DependencyHandler which does.
+        "implementation"(platform(libs.firebase.bom))
+        "implementation"(libs.firebase.crashlytics)
+        "implementation"(libs.firebase.analytics)
+        // Phone → watch relay of the Jagex sign-in redirect (WearRelay).
+        "implementation"(libs.play.services.wearable)
+        // android-awt provides the shadow java.awt / javax.swing / javax.sound surface
+        // the runelite jars compile against; it must be on the classpath before
+        // anything that touches AWT can resolve at dex time.
+        "implementation"(project(":android-awt"))
+        "implementation"(project(":android-hd"))
+        "implementation"(project(":jshell"))
+        "implementation"(project(":client"))
+        "implementation"("net.runelite:runelite-api:${project.version}")
+        "implementation"(libs.rs.cache)
+        // FlatLaf jars are pure Java; classes load fine on Android, even though
+        // the actual Swing rendering pipeline behind them won't.
+        "implementation"(libs.flatlaf.core)
+        "implementation"(libs.flatlaf.extras)
+        // Plugin-hub plugins shade their `implementation` deps into the desktop
+        // jar, but the Android dex pipeline ships thin jars (plugin classes only),
+        // so those bundled libs are missing at runtime. The DexClassLoader's parent
+        // is the host APK, so providing the shared ones here resolves them for every
+        // plugin. tomlj (TOML parser, pulls antlr4-runtime transitively) is what the
+        // resource-packs plugin needs — without it it dies at injector creation with
+        // NoClassDefFoundError: org/tomlj/TomlTable.
+        "implementation"("org.tomlj:tomlj:1.1.1")
+        "implementation"(files(androidH2.flatMap { it.archiveFile }))
+        // Patched RS client (RuneLite's injected-client artifact). The raw jar has
+        // invokedynamic makeConcatWithConstants sites whose recipes use constant
+        // types D8's StringConcat desugarer rejects, so we pre-rewrite them to
+        // calls into IndyConcat at build time. See desugarStringConcat below.
+        "implementation"(files(desugarApis))
+
+        "implementation"("com.google.guava:guava:33.6.0-android")
+    }
+}
+
+// AGP's `coreLibraryDesugaring` configuration is set up by the android plugin after the
+// KMP `kotlin {}` block runs, so add the polyfill dep here outside the source-set
+// closures. desugar_jdk_libs 2.1.x is the version that ships the LambdaMetafactory
+// polyfill alongside the rest of the modern JDK surface.
+if (androidSdkAvailable) {
+    dependencies {
+        add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:2.1.4")
+        // Lombok — 117HD's java sources use @Slf4j / @Getter / @AllArgsConstructor.
+        // Wired here because KMP source-set closures don't expose `annotationProcessor`;
+        // AGP creates the config for the android variant.
+        add("compileOnly", "org.projectlombok:lombok:1.18.30")
+        add("annotationProcessor", "org.projectlombok:lombok:1.18.30")
+    }
+}
+
 // shaderc (GLSL -> SPIR-V) for the 117 HD Vulkan backend, which compiles 117 HD's generated
 // shaders at runtime. Built once per ABI from the NDK's own shaderc sources into
 // android/.shaderc; CMake links the static libraries from there. The combined-archive target
@@ -439,9 +444,6 @@ if (androidSdkAvailable) {
             // so 1.12.27 → 1_012_027. Max minor/patch are 999 each — comfortable headroom
             // versus how OSRS-RuneLite actually versions. Monotonic across any of
             // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
-            val versionMajor = 1
-            val versionMinor = 0
-            val versionPatch = 51
             versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
             versionName = project.version.toString()
             // Same tag CI publishes releases under; UpdateChecker compares against it.
