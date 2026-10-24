@@ -24,11 +24,6 @@
  */
 package net.runelite.client.task;
 
-import java.lang.invoke.CallSite;
-import java.lang.invoke.LambdaMetafactory;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -39,7 +34,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.client.util.ReflectUtil;
 
 @Singleton
 @Slf4j
@@ -68,24 +62,46 @@ public class Scheduler
 			Runnable runnable = null;
 			try
 			{
-				final Class<?> clazz = method.getDeclaringClass();
-				final MethodHandles.Lookup caller = ReflectUtil.privateLookupIn(clazz);
-				final MethodType subscription = MethodType.methodType(method.getReturnType(), method.getParameterTypes());
-				final MethodHandle target = caller.findVirtual(clazz, method.getName(), subscription);
-				final CallSite site = LambdaMetafactory.metafactory(
-					caller,
-					"run",
-					MethodType.methodType(Runnable.class, clazz),
-					subscription,
-					target,
-					subscription);
-
-				final MethodHandle factory = site.getTarget();
-				runnable = (Runnable) factory.bindTo(object).invokeExact();
+				// Was: LambdaMetafactory.metafactory(...) to bind {@code method} to a
+				// Runnable. Android 14+ blocks LambdaMetafactory as a hidden API at runtime
+				// (the call goes through the host JVM's java.lang.invoke surface, which the
+				// non-SDK list denies), so every @Schedule on every plugin returned a null
+				// Runnable and the scheduler silently dropped its ticks — manifesting as
+				// "world hop appears to do nothing", "xp tracker stops updating", etc. A
+				// plain reflective invoke does the same job: schedulers fire @Schedule a few
+				// times per second at most, so the per-call overhead of Method.invoke vs an
+				// indy-bridged lambda is irrelevant. ReflectUtil.privateLookupIn is no
+				// longer needed since reflection respects setAccessible(true).
+				final Method m = method;
+				m.setAccessible(true);
+				runnable = new Runnable()
+				{
+					@Override
+					public void run()
+					{
+						try
+						{
+							m.invoke(object);
+						}
+						catch (InvocationTargetException ite)
+						{
+							// Re-throw the actual cause so run()'s try-catch (which logs
+							// at warn) sees the plugin's exception, not the reflective wrapper.
+							Throwable cause = ite.getCause();
+							if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+							if (cause instanceof Error) throw (Error) cause;
+							throw new RuntimeException(cause);
+						}
+						catch (IllegalAccessException iae)
+						{
+							throw new RuntimeException(iae);
+						}
+					}
+				};
 			}
 			catch (Throwable e)
 			{
-				log.warn("Unable to create lambda for method {}", method, e);
+				log.warn("Unable to bind scheduled method {}", method, e);
 			}
 
 			ScheduledMethod scheduledMethod = new ScheduledMethod(schedule, method, object, runnable);
