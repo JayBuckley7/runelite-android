@@ -9,6 +9,12 @@ public class GL33C extends GlesBindings {
     // Mirror the face texture's backing buffer at the binding used by AndroidSupport.
     private static final ThreadLocal<java.util.Map<Integer, Integer>> faceBuffers =
         ThreadLocal.withInitial(java.util.HashMap::new);
+
+    // Per-thread scratch buffers so the single-value glGet* / glGen* getters don't allocate a
+    // fresh array on every call (they run several times per frame during state checks).
+    private static final ThreadLocal<int[]> INT1 = ThreadLocal.withInitial(() -> new int[1]);
+    private static final ThreadLocal<float[]> FLOAT1 = ThreadLocal.withInitial(() -> new float[1]);
+    private static final ThreadLocal<long[]> LONG1 = ThreadLocal.withInitial(() -> new long[1]);
     public static void glTexBuffer(int target, int format, int buffer) {
         GLES32.glTexBuffer(target, format, buffer);
         if (target == GL_TEXTURE_BUFFER && format == GL_RGB32I) {
@@ -27,11 +33,11 @@ public class GL33C extends GlesBindings {
         int width = b instanceof ByteBuffer ? 1 : b instanceof ShortBuffer ? 2 : b instanceof LongBuffer || b instanceof DoubleBuffer ? 8 : 4;
         return Math.multiplyExact(b.remaining(), width);
     }
-    public static int glGenBuffers() { int[] v = new int[1]; GLES32.glGenBuffers(1,v,0); return v[0]; }
-    public static int glGenTextures() { int[] v = new int[1]; GLES32.glGenTextures(1,v,0); return v[0]; }
-    public static int glGenFramebuffers() { int[] v = new int[1]; GLES32.glGenFramebuffers(1,v,0); return v[0]; }
-    public static int glGenRenderbuffers() { int[] v = new int[1]; GLES32.glGenRenderbuffers(1,v,0); return v[0]; }
-    public static int glGenVertexArrays() { int[] v = new int[1]; GLES32.glGenVertexArrays(1,v,0); return v[0]; }
+    public static int glGenBuffers() { int[] v = INT1.get(); GLES32.glGenBuffers(1,v,0); return v[0]; }
+    public static int glGenTextures() { int[] v = INT1.get(); GLES32.glGenTextures(1,v,0); return v[0]; }
+    public static int glGenFramebuffers() { int[] v = INT1.get(); GLES32.glGenFramebuffers(1,v,0); return v[0]; }
+    public static int glGenRenderbuffers() { int[] v = INT1.get(); GLES32.glGenRenderbuffers(1,v,0); return v[0]; }
+    public static int glGenVertexArrays() { int[] v = INT1.get(); GLES32.glGenVertexArrays(1,v,0); return v[0]; }
     public static void glGenQueries(int[] v) { GLES32.glGenQueries(v.length,v,0); }
     public static void glDeleteBuffers(int v) { GLES32.glDeleteBuffers(1,new int[]{v},0); }
     public static void glDeleteTextures(int v) { faceBuffers.get().remove(v); GLES32.glDeleteTextures(1,new int[]{v},0); }
@@ -39,13 +45,13 @@ public class GL33C extends GlesBindings {
     public static void glDeleteRenderbuffers(int v) { GLES32.glDeleteRenderbuffers(1,new int[]{v},0); }
     public static void glDeleteVertexArrays(int v) { GLES32.glDeleteVertexArrays(1,new int[]{v},0); }
     public static void glDeleteQueries(int[] v) { GLES32.glDeleteQueries(v.length,v,0); }
-    public static int glGetInteger(int p) { int[] v = new int[1]; GLES32.glGetIntegerv(p,v,0); return v[0]; }
-    public static float glGetFloat(int p) { float[] v = new float[1]; GLES32.glGetFloatv(p,v,0); return v[0]; }
-    public static int glGetShaderi(int s,int p) { int[] v = new int[1]; GLES32.glGetShaderiv(s,p,v,0); return v[0]; }
-    public static int glGetProgrami(int s,int p) { int[] v = new int[1]; GLES32.glGetProgramiv(s,p,v,0); return v[0]; }
-    public static long glGetBufferParameteri64(int s,int p) { long[] v = new long[1]; GLES32.glGetBufferParameteri64v(s,p,v,0); return v[0]; }
+    public static int glGetInteger(int p) { int[] v = INT1.get(); GLES32.glGetIntegerv(p,v,0); return v[0]; }
+    public static float glGetFloat(int p) { float[] v = FLOAT1.get(); GLES32.glGetFloatv(p,v,0); return v[0]; }
+    public static int glGetShaderi(int s,int p) { int[] v = INT1.get(); GLES32.glGetShaderiv(s,p,v,0); return v[0]; }
+    public static int glGetProgrami(int s,int p) { int[] v = INT1.get(); GLES32.glGetProgramiv(s,p,v,0); return v[0]; }
+    public static long glGetBufferParameteri64(int s,int p) { long[] v = LONG1.get(); GLES32.glGetBufferParameteri64v(s,p,v,0); return v[0]; }
     public static int glGetFramebufferAttachmentParameteri(int t,int a,int p) {
-        int[] v=new int[1]; GLES32.glGetFramebufferAttachmentParameteriv(t,a==0x0402?GL_BACK:a,p,v,0); return v[0];
+        int[] v=INT1.get(); GLES32.glGetFramebufferAttachmentParameteriv(t,a==0x0402?GL_BACK:a,p,v,0); return v[0];
     }
     public static void glGetIntegerv(int p,int[] v) { GLES32.glGetIntegerv(p,v,0); }
     public static void glGetProgramiv(int s,int p,int[] v) { GLES32.glGetProgramiv(s,p,v,0); }
