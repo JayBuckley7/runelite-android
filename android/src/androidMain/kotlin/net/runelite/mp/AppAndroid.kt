@@ -530,7 +530,7 @@ private fun GameViewport(modifier: Modifier = Modifier) {
                                 // Begin a drag — pick BUTTON2 inside Canvas (camera) or
                                 // BUTTON1 in any other UI surface (scroll/list/slider).
                                 fired = true
-                                session = beginDrag(down.position, change.position, boxSize)
+                                session = beginDrag(down.position, change.position, boxSize, System.currentTimeMillis() - downTime)
                                 if (session == null) break
                             }
                         } else if (session != null) {
@@ -1396,7 +1396,7 @@ private fun releaseHitsMenuOption(releasePos: Offset, boxSize: IntSize): Boolean
         winX - cHit.absX, winY - cHit.absY)
 }
 
-private fun beginDrag(downPos: Offset, currentPos: Offset, boxSize: IntSize): DragSession? {
+private fun beginDrag(downPos: Offset, currentPos: Offset, boxSize: IntSize, heldMillis: Long): DragSession? {
     val window = java.awt.Window.primaryFrame() ?: return null
     // Start the press at the original down location, not the slop-crossing point — that
     // way the press lands where the finger first landed and the subsequent drag deltas
@@ -1429,6 +1429,25 @@ private fun beginDrag(downPos: Offset, currentPos: Offset, boxSize: IntSize): Dr
     // emitting BUTTON2 the camera would rotate and the overlay never moves. Force
     // BUTTON1 over the scene while Alt is held so the drag reaches the overlay path.
     val altHeld = net.runelite.mp.ui.bridge.ModifierState.altActive.value
+    if (canvas != null && !altHeld) {
+        val origin = hitTestExact(window, canvas)
+        val current = composeToWindow(currentPos, boxSize, window)
+        if (origin != null && current != null) {
+            val gesture = net.runelite.client.plugins.mobile.MobileSwipeScroll.begin(
+                winX - origin.absX, winY - origin.absY, current.first - winX, current.second - winY, heldMillis)
+            if (gesture != null) {
+                val session = object : DragSession {
+                    override fun update(pos: Offset, boxSize: IntSize) {
+                        val point = composeToWindow(pos, boxSize, window) ?: return
+                        gesture.move(point.second - origin.absY)
+                    }
+                    override fun end() { gesture.end() }
+                }
+                session.update(currentPos, boxSize)
+                return session
+            }
+        }
+    }
     val button = if (canvas != null) {
         val cHit = hitTestExact(window, canvas)
         val cx = if (cHit != null) winX - cHit.absX else -1

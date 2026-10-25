@@ -53,6 +53,7 @@ public class MobileInputPlugin extends Plugin
 	{
 		MobileHitTest.setInterfaceRects(null);
 		MobileScrollbars.publish(new MobileScrollbars.Target[0]);
+            MobileSwipeScroll.publish(new MobileSwipeScroll.Target[0]);
 		MobileHitTest.setMenuRect(null);
 		MobileHitTest.setMenuOptions(0, null);
 		MobileHitTest.setFixedMode(false);
@@ -138,6 +139,7 @@ public class MobileInputPlugin extends Plugin
 		if (client.getGameState() != GameState.LOGGED_IN)
 		{
 			MobileScrollbars.publish(new MobileScrollbars.Target[0]);
+            MobileSwipeScroll.publish(new MobileSwipeScroll.Target[0]);
 		}
 		if (client.getGameState() == GameState.LOGGED_IN) {
 			Widget[] roots = client.getWidgetRoots();
@@ -145,15 +147,17 @@ public class MobileInputPlugin extends Plugin
 			{
 				MobileHitTest.setInterfaceRects(null);
 				MobileScrollbars.publish(new MobileScrollbars.Target[0]);
+            MobileSwipeScroll.publish(new MobileSwipeScroll.Target[0]);
 				return;
 			}
 			List<Rectangle> rects = new ArrayList<>(64);
 			List<MobileScrollbars.Target> scrollbars = new ArrayList<>();
+            List<MobileSwipeScroll.Target> swipes = new ArrayList<>();
 			int canvasW = client.getCanvasWidth();
 			int canvasH = client.getCanvasHeight();
 			for (Widget root : roots)
 			{
-				collect(root, rects, scrollbars, canvasW, canvasH, sx, sy);
+				collect(root, rects, scrollbars, swipes, canvasW, canvasH, sx, sy);
 			}
 			Rectangle[] arr;
 			if (sx == 1.0 && sy == 1.0)
@@ -170,6 +174,8 @@ public class MobileInputPlugin extends Plugin
 				}
 			}
 			MobileHitTest.setInterfaceRects(arr);
+            MobileSwipeScroll.publish(client.isMenuOpen() ? new MobileSwipeScroll.Target[0]
+                : swipes.toArray(new MobileSwipeScroll.Target[0]));
 			MobileScrollbars.publish(client.isMenuOpen() ? new MobileScrollbars.Target[0]
 				: scrollbars.toArray(new MobileScrollbars.Target[0]));
 
@@ -202,7 +208,7 @@ public class MobileInputPlugin extends Plugin
 	 * while excluding full-screen transparent viewport containers so 3D scene camera
 	 * rotation works smoothly.
 	 */
-	private void collect(Widget w, List<Rectangle> out, List<MobileScrollbars.Target> scrollbars,
+	private void collect(Widget w, List<Rectangle> out, List<MobileScrollbars.Target> scrollbars, List<MobileSwipeScroll.Target> swipes,
 		int canvasW, int canvasH, double sx, double sy)
 	{
 		// isHidden also covers a hidden ancestor, so a hidden subtree is skipped whole.
@@ -213,17 +219,17 @@ public class MobileInputPlugin extends Plugin
 		Widget[] dyn = w.getDynamicChildren();
 		if (dyn != null)
 		{
-			for (Widget c : dyn) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
+			for (Widget c : dyn) collect(c, out, scrollbars, swipes, canvasW, canvasH, sx, sy);
 		}
 		Widget[] stat = w.getStaticChildren();
 		if (stat != null)
 		{
-			for (Widget c : stat) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
+			for (Widget c : stat) collect(c, out, scrollbars, swipes, canvasW, canvasH, sx, sy);
 		}
 		Widget[] nest = w.getNestedChildren();
 		if (nest != null)
 		{
-			for (Widget c : nest) collect(c, out, scrollbars, canvasW, canvasH, sx, sy);
+			for (Widget c : nest) collect(c, out, scrollbars, swipes, canvasW, canvasH, sx, sy);
 		}
 		// Scrollbar arrows poll held mouse state, which instantaneous touch clicks miss, so a
 		// tap on a scrollable list's bar scrolls it directly, and the whole bar blocks so a
@@ -231,6 +237,27 @@ public class MobileInputPlugin extends Plugin
 		if (w.getType() == WidgetType.LAYER && w.getHeight() > 32 && w.getScrollHeight() > w.getHeight())
 		{
 			Widget scrollbar = scrollbarFor(w);
+            Rectangle visible = new Rectangle(w.getBounds());
+            for (Widget parent = w.getParent(); parent != null; parent = parent.getParent())
+                visible = visible.intersection(parent.getBounds());
+            visible = visible.intersection(new Rectangle(0, 0, canvasW, canvasH));
+            if (!visible.isEmpty()) {
+                Rectangle bounds = scaleRect(visible.x, visible.y, visible.width, visible.height, sx, sy);
+                Rectangle barBounds = scrollbar == null || scrollbar.isHidden() ? null : scrollbar.getBounds();
+                Rectangle scaledBar = barBounds == null ? null : scaleRect(barBounds.x, barBounds.y, barBounds.width, barBounds.height, sx, sy);
+                List<Rectangle> items = new ArrayList<>();
+                collectDragItems(w, items, sx, sy);
+                int initialScroll = w.getScrollY();
+                swipes.add(new MobileSwipeScroll.Target(w, bounds, scaledBar, items.toArray(new Rectangle[0]), sy,
+                    offset -> clientThread.invokeLater(() -> {
+                        if (client.getGameState() != GameState.LOGGED_IN || client.isMenuOpen() || w.isHidden()
+                            || !MobileSwipeScroll.current(w, bounds)) return;
+                        int next = Math.max(0, Math.min(w.getScrollHeight() - w.getHeight(), initialScroll + offset));
+                        if (scrollbar != null && !scrollbar.isHidden())
+                            client.runScript(ScriptID.UPDATE_SCROLLBAR, scrollbar.getId(), w.getId(), next);
+                        else { w.setScrollY(next); w.revalidateScroll(); }
+                    })));
+            }
 			if (scrollbar != null && !scrollbar.isHidden())
 			{
 				Rectangle b = w.getBounds();
@@ -258,6 +285,17 @@ public class MobileInputPlugin extends Plugin
 			}
 		}
 	}
+
+    private static void collectDragItems(Widget w, List<Rectangle> items, double sx, double sy) {
+        if (w == null || w.isHidden()) return;
+        if (w.getItemId() >= 0 || w.getDragParent() != null) {
+            Rectangle b = w.getBounds();
+            items.add(scaleRect(b.x, b.y, b.width, b.height, sx, sy));
+        }
+        Widget[][] children = {w.getDynamicChildren(), w.getStaticChildren(), w.getNestedChildren()};
+        for (Widget[] group : children) if (group != null)
+            for (Widget child : group) collectDragItems(child, items, sx, sy);
+    }
 
 	/** Most wide a scrollbar column gets; the game's are 16px. */
 	private static final int SCROLLBAR_MAX_WIDTH = 24;
