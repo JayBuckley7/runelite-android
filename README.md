@@ -74,9 +74,9 @@ Release signing reads `runeliteMp.signing.*` from `local.properties`; without it
 
 ---
 
-## Contributing
+## Community
 
-Ping me on Discord at **@therealnull**.
+Questions, bug reports and contributing: join us on [Discord](https://discord.gg/Edkba6MRgq).
 
 ---
 
