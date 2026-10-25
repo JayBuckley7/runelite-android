@@ -108,14 +108,22 @@ internal object PluginInstallTracker : PluginHubHooks.Listener
 
     private fun update(internalName: String, displayName: String?, fresh: Boolean = false, phase: () -> InstallPhase) = post {
         val old = statuses[internalName]
-        statuses[internalName] = InstallStatus(
+        val next = InstallStatus(
             internalName = internalName,
             displayName = displayName ?: old?.displayName ?: internalName,
             phase = phase(),
             fresh = fresh || old?.fresh == true,
             requested = old?.requested == true,
         )
+        statuses[internalName] = next
+        // A finished install clears itself; failures stay until retried or cleared.
+        if (next.phase is InstallPhase.Ready) main.postDelayed({
+            val current = statuses[internalName]
+            if (current != null && current.phase is InstallPhase.Ready && current.at == next.at) statuses.remove(internalName)
+        }, READY_DISMISS_MS)
     }
+
+    private const val READY_DISMISS_MS = 3_000L
 
     private fun describe(stage: PluginHubHooks.Stage, cause: Throwable?): String
     {

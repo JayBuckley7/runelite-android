@@ -126,10 +126,11 @@ internal fun PluginActivityCard(onRetry: (InstallStatus) -> Unit, onDetails: (In
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-            if (active == 0)
+            // Finished installs clear themselves after a few seconds; this is for failures.
+            if (failed > 0 || hubErrors.isNotEmpty())
             {
                 SmallAction("Clear") {
-                    shown.forEach { PluginInstallTracker.dismiss(it.internalName) }
+                    shown.filter { it.phase is InstallPhase.Failed }.forEach { PluginInstallTracker.dismiss(it.internalName) }
                     PluginInstallTracker.clearHubErrors()
                 }
             }

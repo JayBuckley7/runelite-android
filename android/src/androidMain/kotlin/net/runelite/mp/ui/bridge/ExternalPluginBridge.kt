@@ -96,7 +96,13 @@ internal object ExternalPluginBridge
     {
         val mgr = RuneLiteAccess.instance(ExternalPluginManager::class.java) ?: return
         PluginInstallTracker.queued(internalName, displayName)
-        try { mgr.install(internalName) } catch (t: Throwable) { /* host logs */ }
+        try
+        {
+            // install() is a no-op for a name already on the list (one that failed earlier),
+            // which left its row "waiting" forever; refresh instead so it's actually retried.
+            if (internalName in mgr.installedExternalPlugins) mgr.update() else mgr.install(internalName)
+        }
+        catch (t: Throwable) { /* host logs */ }
     }
 
     fun remove(internalName: String)
