@@ -47,13 +47,14 @@
 -keep class javax.inject.Scope { *; }
 
 # ----------------------------------------------------------------------------
-# Jagex obfuscated gamepack. Lives in the default package as 1-3 char tokens
-# (`client`, `te`, `tf`, `da`). Mixin injection re-targets specific methods on
-# these classes at build time, then reflection from the runtime config picks
-# the entry class by name (ClientLoader.java:197-198). Keep everything in the
-# default package — these names are already short, so R8 has nothing to win
-# by mangling them.
+# The default package belongs to the Jagex gamepack (`client`, `to`, `te`, …), which
+# ClientPreparer loads at runtime onto the same class loader, after the APK's dex. R8's
+# renamed classes must never land there: they would shadow the gamepack's own 1-3 char
+# names (an APK `to` beat the client's, "Superclass to of client is declared final").
+# While the gamepack was in the APK, R8 avoided its names by itself; now it can't see
+# them, so everything it renames is moved into a package of its own.
 # ----------------------------------------------------------------------------
+-repackageclasses 'net.runelite.mp.r8'
 -keep class !**.* { *; }
 
 # Synthetic helpers from the desugar pipeline land in `net/runelite/mp/util/`
@@ -272,6 +273,25 @@
 # JDK tooling integration) reference classes Android doesn't have.
 -keep class com.android.tools.r8.** { *; }
 -dontwarn com.android.tools.r8.**
+
+# The game client is no longer in the APK: ClientPreparer downloads the injected client and
+# dexes it on the device. Whatever it links against therefore has to exist with its original
+# name even though R8 sees no caller — the android-awt shadow JDK surface above all (only the
+# client touched much of it), plus the runtime its transforms rewrite calls into (kept above:
+# net.runelite.mp.util, runelite.desugar).
+-keep class java.** { *; }
+-keep class javax.** { *; }
+-keep class sun.** { *; }
+-keep class com.sun.** { *; }
+-keep class net.runelite.awt.** { *; }
+-keep class net.runelite.rlawt.** { *; }
+# runelite-api's com.jagex.oldscape.pub types (OAuthApi): desugarStringConcat drops the client's
+# duplicate copy, so the client resolves these from the APK, where nothing else references them.
+-keep class com.jagex.** { *; }
+-keep class org.lsposed.hiddenapibypass.** { *; }
+# ASM, which those transforms run on.
+-keep class org.objectweb.asm.** { *; }
+-dontwarn org.objectweb.asm.**
 
 # ----------------------------------------------------------------------------
 # Slf4j / Logback. Both ship sources that reference packages we don't bundle.

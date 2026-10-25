@@ -28,12 +28,6 @@ package net.runelite.client.rs;
 
 import com.google.common.base.Strings;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.security.CodeSource;
 import java.util.Map;
 import java.util.function.Supplier;
 import javax.annotation.Nonnull;
@@ -202,61 +196,7 @@ public class ClientLoader implements Supplier<Client>
 
 		log.info("injected-client {}", rs.getBuildID());
 
-		backupPatchedClient(clientClass, rs.getBuildID());
-
 		return rs;
-	}
-
-	private static void backupPatchedClient(Class<?> clientClass, String buildId)
-	{
-		java.security.ProtectionDomain pd = clientClass.getProtectionDomain();
-		if (pd == null)
-		{
-			log.warn("Unable to backup patched client: no protection domain for {}", clientClass.getName());
-			return;
-		}
-		CodeSource codeSource = pd.getCodeSource();
-		if (codeSource == null)
-		{
-			log.warn("Unable to backup patched client: no code source for {}", clientClass.getName());
-			return;
-		}
-
-		URL location = codeSource.getLocation();
-		if (location == null)
-		{
-			log.warn("Unable to backup patched client: no code source location for {}", clientClass.getName());
-			return;
-		}
-
-		String rlVersion = sanitize(RuneLiteProperties.getVersion());
-		String injectedVersion = sanitize(buildId);
-		String fileName = "runelite-" + rlVersion + "-injected-" + injectedVersion + ".jar";
-
-		try
-		{
-			Path outDir = Path.of("data");
-			Files.createDirectories(outDir);
-			Path outFile = outDir.resolve(fileName);
-			try (InputStream in = location.openStream())
-			{
-				Files.copy(in, outFile, StandardCopyOption.REPLACE_EXISTING);
-			}
-			log.info("Backed up patched client to {}", outFile.toAbsolutePath());
-		}
-		catch (IOException e)
-		{
-			log.warn("Failed to backup patched client from {}", location, e);
-		}
-	}
-
-	private static String sanitize(String s)
-	{
-		if (s == null || s.isEmpty())
-		{
-			return "unknown";
-		}
-		return s.replaceAll("[^A-Za-z0-9._-]", "_");
 	}
 
 	private static class OutageException extends RuntimeException

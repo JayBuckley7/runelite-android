@@ -668,6 +668,15 @@ private fun ComposeSplash() {
             } catch (t: Throwable) {
                 false
             }
+            val prep = net.runelite.mp.client.ClientPrepStatus
+            if (!open && prep.active) {
+                // First launch on a RuneLite version: the client is being downloaded and
+                // converted before RuneLite (and its splash) can start.
+                actionText = prep.action
+                subActionText = prep.detail
+                progress = prep.fraction
+                progressText = prep.text
+            }
             if (open) {
                 hasBeenOpen = true
                 actionText = net.runelite.client.ui.SplashScreen.currentActionText() ?: actionText

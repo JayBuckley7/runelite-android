@@ -30,13 +30,11 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import lombok.AllArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-@Slf4j
 @AllArgsConstructor
 class ClientConfigLoader
 {
@@ -88,13 +86,6 @@ class ClientConfigLoader
 				}
 			}
 		}
-
-		// One-shot dump of every parsed entry — handy on mp where world-list fetch sometimes
-		// fails and we need to know exactly which URL the gamepack was handed. The applet
-		// params with numeric keys 0..28 are the ones the gamepack's init() switch dispatches
-		// against; key 17 in particular is the world-list URL that gv.ak() polls.
-		log.info("jav_config applet params: {}", config.getAppletProperties());
-		log.info("jav_config classloader params: {}", config.getClassLoaderProperties());
 
 		return config;
 	}

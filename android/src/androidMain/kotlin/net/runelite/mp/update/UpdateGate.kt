@@ -24,12 +24,11 @@ internal sealed interface UpdateState
 }
 
 /**
- * Runs the update check ahead of the client boot so the prompt is up before anything
- * loads. The boot never waits on the user, only (briefly) on the check itself.
- *
- * Watches are the exception: the update card doesn't fit on a round screen, so there an
- * update is downloaded and installed straight away and the boot waits for it. A failed
- * download or install falls through to booting the current build.
+ * Runs the update check ahead of the client boot. When a newer release exists, startup
+ * halts: it is downloaded and handed to the installer straight away, with the splash
+ * showing progress, and the boot waits for it — booting an old client while a new one
+ * downloads only raced the two. A failed download, or an install that's rejected or
+ * cancelled, falls through to booting the current build.
  */
 internal object UpdateGate
 {
@@ -54,15 +53,11 @@ internal object UpdateGate
     suspend fun checkThenBoot(context: Context, scope: CoroutineScope, boot: () -> Unit)
     {
         if (bootStarted) return
-        autoUpdate = isWatch(context)
+        autoUpdate = true
         // Blocking IO can't be cancelled, so time out the await rather than the request.
         val check = scope.async(Dispatchers.IO) { UpdateChecker.newerRelease() }
-        val release = withTimeoutOrNull(if (autoUpdate) WATCH_CHECK_TIMEOUT_MS else CHECK_TIMEOUT_MS) { check.await() }
-        if (release != null && autoUpdate)
-        {
-            if (autoInstall(context, scope, release, boot)) return
-        }
-        else if (release != null) state = UpdateState.Available(release)
+        val release = withTimeoutOrNull(if (isWatch(context)) WATCH_CHECK_TIMEOUT_MS else CHECK_TIMEOUT_MS) { check.await() }
+        if (release != null && autoInstall(context, scope, release, boot)) return
         startBoot(boot)
     }
 

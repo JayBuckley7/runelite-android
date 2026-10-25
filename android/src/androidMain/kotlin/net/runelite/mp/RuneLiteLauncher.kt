@@ -106,6 +106,14 @@ class RuneLiteLauncher(private val context: android.content.Context? = null) {
                 seedLauncherCredentials()
                 runNetSelfTest()
 
+                // The game client isn't in the APK: fetch the injected client matching the
+                // bundled runelite-client, desugar + dex it (first launch per version only),
+                // and put it on our class loader for the unmodified ClientLoader to find.
+                if (context != null) {
+                    val version = net.runelite.client.RuneLiteProperties.getVersion()
+                    net.runelite.mp.client.ClientPreparer.prepare(context, version) { logLine(it) }
+                }
+
                 val cls = Class.forName("net.runelite.client.RuneLite")
                 val main = cls.getDeclaredMethod("main", Array<String>::class.java)
                 logLine("invoking ${cls.name}.main(${args.size} args)")
