@@ -1,8 +1,20 @@
 #include <jni.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <EGL/egl.h>
 #include <GLES3/gl32.h>
+
+/* GL_EXT_disjoint_timer_query constants (not in the GLES 3.2 core headers). */
+#ifndef GL_TIME_ELAPSED_EXT
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#endif
+#ifndef GL_QUERY_RESULT_EXT
+#define GL_QUERY_RESULT_EXT 0x8866
+#endif
+#ifndef GL_QUERY_RESULT_AVAILABLE_EXT
+#define GL_QUERY_RESULT_AVAILABLE_EXT 0x8867
+#endif
 
 /* Scene framebuffer through GL_EXT_multisampled_render_to_texture: the multisampled color
  * and depth live only in tile memory and are resolved into a single-sample texture as each
@@ -90,4 +102,72 @@ JNIEXPORT void JNICALL Java_org_lwjgl_opengl_GL33C_glTexSubImage2D(JNIEnv *env, 
     jint target, jint level, jint x, jint y, jint width, jint height, jint format, jint type, jlong offset) {
     (void)env; (void)cls;
     glTexSubImage2D(target, level, x, y, width, height, format, type, (const void *)(uintptr_t)offset);
+}
+
+/* --- GPU timer queries via GL_EXT_disjoint_timer_query --------------------------
+ * The GLES 3.2 headers don't declare these (they're an extension), so resolve them once
+ * through eglGetProcAddress. The Java side (GL33C) probes support and falls back to
+ * no-ops when the extension is absent, so the 117HD FrameTimer overlay degrades instead
+ * of crashing the render thread. */
+typedef void (*glBeginQueryEXT_fn)(GLenum, GLuint);
+typedef void (*glEndQueryEXT_fn)(GLenum);
+typedef void (*glGetQueryObjectuivEXT_fn)(GLuint, GLenum, GLuint *);
+typedef void (*glGetQueryObjectui64vEXT_fn)(GLuint, GLenum, GLuint64 *);
+
+JNIEXPORT jboolean JNICALL Java_org_lwjgl_opengl_GL33C_timerQuerySupported(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    static int cached = -1;
+    if (cached < 0) {
+        const char *exts = (const char *)glGetString(GL_EXTENSIONS);
+        cached = (exts && strstr(exts, "GL_EXT_disjoint_timer_query")) ? 1 : 0;
+    }
+    return cached == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_org_lwjgl_opengl_GL33C_timerQueryResolution(JNIEnv *env, jclass cls) {
+    (void)cls;
+    if (!Java_org_lwjgl_opengl_GL33C_timerQuerySupported(env, cls)) return 0;
+    static jlong cached = -1;
+    if (cached < 0) {
+        GLint v = 0;
+        glGetIntegeri_v(GL_TIME_ELAPSED_EXT, 0, &v);
+        cached = v > 0 ? v : 0;
+    }
+    return cached;
+}
+
+JNIEXPORT void JNICALL Java_org_lwjgl_opengl_GL33C_beginTimerQuery(JNIEnv *env, jclass cls, jint id) {
+    (void)env; (void)cls;
+    static glBeginQueryEXT_fn begin;
+    if (!begin) begin = (glBeginQueryEXT_fn)eglGetProcAddress("glBeginQueryEXT");
+    if (begin && id != 0) begin(GL_TIME_ELAPSED_EXT, (GLuint)id);
+}
+
+JNIEXPORT void JNICALL Java_org_lwjgl_opengl_GL33C_endTimerQuery(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    static glEndQueryEXT_fn end;
+    if (!end) end = (glEndQueryEXT_fn)eglGetProcAddress("glEndQueryEXT");
+    if (end) end(GL_TIME_ELAPSED_EXT);
+}
+
+JNIEXPORT jboolean JNICALL Java_org_lwjgl_opengl_GL33C_timerQueryAvailable(JNIEnv *env, jclass cls, jint id) {
+    (void)cls;
+    if (!Java_org_lwjgl_opengl_GL33C_timerQuerySupported(env, cls)) return JNI_TRUE; /* claim available so the busy-wait exits */
+    static glGetQueryObjectuivEXT_fn avail;
+    if (!avail) avail = (glGetQueryObjectuivEXT_fn)eglGetProcAddress("glGetQueryObjectuivEXT");
+    if (!avail) return JNI_TRUE;
+    GLuint v = 0;
+    avail((GLuint)id, GL_QUERY_RESULT_AVAILABLE_EXT, &v);
+    return v == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_org_lwjgl_opengl_GL33C_timerQueryResult(JNIEnv *env, jclass cls, jint id) {
+    (void)cls;
+    if (!Java_org_lwjgl_opengl_GL33C_timerQuerySupported(env, cls)) return 0;
+    static glGetQueryObjectui64vEXT_fn result;
+    if (!result) result = (glGetQueryObjectui64vEXT_fn)eglGetProcAddress("glGetQueryObjectui64vEXT");
+    if (!result) return 0;
+    GLuint64 v = 0;
+    result((GLuint)id, GL_QUERY_RESULT_EXT, &v);
+    return (jlong)v;
 }
