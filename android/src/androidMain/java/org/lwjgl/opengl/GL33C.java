@@ -49,7 +49,15 @@ public class GL33C extends GlesBindings {
     }
     public static void glGetIntegerv(int p,int[] v) { GLES32.glGetIntegerv(p,v,0); }
     public static void glGetProgramiv(int s,int p,int[] v) { GLES32.glGetProgramiv(s,p,v,0); }
-    public static void glGetQueryObjectiv(int s,int p,int[] v) { GLES32.glGetQueryObjectuiv(s,p,v,0); }
+    public static void glGetQueryObjectiv(int s,int p,int[] v) {
+        if (p == 0x8867) { // GL_QUERY_RESULT_AVAILABLE: route through the native helper so the
+            // FrameTimer busy-wait exits when the extension is absent (claim available) instead
+            // of spinning on an extension function that never completes.
+            v[0] = timerQueryAvailable(s) ? 1 : 0;
+            return;
+        }
+        GLES32.glGetQueryObjectuiv(s,p,v,0);
+    }
     public static void glBufferData(int t,long n,int u) { GLES32.glBufferData(t,Math.toIntExact(n),null,u); }
     public static void glBufferData(int t,FloatBuffer b,int u) { GLES32.glBufferData(t,bytes(b),b,u); }
     public static void glBufferSubData(int t,long o,ByteBuffer b) { GLES32.glBufferSubData(t,Math.toIntExact(o),bytes(b),b); }
@@ -102,6 +110,31 @@ public class GL33C extends GlesBindings {
     // GLES always uses shader point sizes and point sprites; multisampling follows FBO storage.
     public static void glEnable(int cap) { if(cap!=0x809D && cap!=0x8642 && cap!=0x8861) GLES32.glEnable(cap); }
     public static void glDisable(int cap) { if(cap!=0x809D && cap!=0x8642 && cap!=0x8861) GLES32.glDisable(cap); }
-    public static void glQueryCounter(int id,int target) { throw new UnsupportedOperationException("Desktop GPU timer queries require a GLES extension adapter"); }
-    public static long glGetQueryObjectui64(int id,int p) { throw new UnsupportedOperationException("Desktop GPU timer queries require a GLES extension adapter"); }
+    // --- GPU timer queries via GL_EXT_disjoint_timer_query -------------------------------
+    // The 117HD FrameTimer (performance overlay) issues glQueryCounter(GL_TIMESTAMP) around
+    // the render frame and busy-waits glGetQueryObjectiv(GL_QUERY_RESULT_AVAILABLE). On
+    // desktop that's core OpenGL 3.3; on GLES the equivalent is this extension, resolved
+    // natively in hd_memory.c (the GLES 3.2 Java stubs don't expose it). When the extension
+    // is absent the calls are no-ops, so the overlay degrades to a zero/empty GPU reading
+    // instead of crashing the render thread (the old code threw UnsupportedOperationException
+    // on the first query, which killed the frame).
+    private static final int GL_TIME_ELAPSED_EXT = 0x88BF;
+    private static final int GL_TIMESTAMP_EXT = 0x8E17;
+    private static native boolean timerQuerySupported();
+    private static native long timerQueryResolution();
+    private static native void beginTimerQuery(int id);
+    private static native void endTimerQuery();
+    private static native boolean timerQueryAvailable(int id);
+    private static native long timerQueryResult(int id);
+    public static void glQueryCounter(int id,int target) {
+        if (target == GL_TIMESTAMP_EXT || target == GL_TIME_ELAPSED_EXT) beginTimerQuery(id);
+    }
+    public static void glQueryCounter(int id) { beginTimerQuery(id); }
+    public static void glEndQuery(int target) { if (target == GL_TIME_ELAPSED_EXT) endTimerQuery(); }
+    public static long glGetQueryObjectui64(int id,int p) { return timerQueryResult(id); }
+    /** Nanosecond resolution of the GPU timestamp clock (0 if unsupported/unknown). */
+    public static long getTimerQueryResolutionNanos() { return timerQueryResolution(); }
+    /** True if GPU timer queries are available on this device. */
+    public static boolean isTimerQuerySupported() { return timerQuerySupported(); }
+
 }
