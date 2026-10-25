@@ -4,8 +4,8 @@
 //! arrive as `int[]` in canonical ARGB packing (`0xAARRGGBB`) and are pinned for the
 //! duration of one call via the JNI critical-section API for zero-copy access.
 
-use jni::objects::{JClass, JIntArray, JString, ReleaseMode};
-use jni::sys::{jfloat, jint};
+use jni::objects::{JClass, JDoubleArray, JIntArray, JString, ReleaseMode};
+use jni::sys::{jboolean, jfloat, jint};
 use jni::JNIEnv;
 
 mod blit;
@@ -255,41 +255,55 @@ pub extern "system" fn Java_net_runelite_awt_AwtNative_drawLine<'local>(
     x1: jint,
     y1: jint,
     argb: jint,
+    composite_rule: jint,
+    clip_x0: jint,
+    clip_y0: jint,
+    clip_x1: jint,
+    clip_y1: jint,
+    flags: jint,
 ) {
     let _ = with_pinned_array(&mut env, &pixels, ReleaseMode::CopyBack, |buf| {
-        line::draw_line(buf, img_w, img_h, x0, y0, x1, y1, argb);
+        line::draw_line(
+            buf, img_w, img_h, x0, y0, x1, y1, argb, composite_rule,
+            (clip_x0, clip_y0, clip_x1, clip_y1), flags,
+        );
     });
 }
 
 #[no_mangle]
-pub extern "system" fn Java_net_runelite_awt_AwtNative_fillPolygon<'local>(
+pub extern "system" fn Java_net_runelite_awt_AwtNative_fillPath<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     pixels: JIntArray<'local>,
     img_w: jint,
     img_h: jint,
-    xs: JIntArray<'local>,
-    ys: JIntArray<'local>,
-    n: jint,
-    tx: jint,
-    ty: jint,
+    coords: JDoubleArray<'local>,
+    counts: JIntArray<'local>,
+    n_contours: jint,
+    even_odd: jboolean,
+    clip: JIntArray<'local>,
+    n_clip: jint,
     argb: jint,
     composite_rule: jint,
 ) {
-    if n < 3 {
+    if n_contours <= 0 || n_clip <= 0 {
         return;
     }
-    // Regular (non-critical) pinning for the coordinate arrays, and acquired *before*
-    // with_pinned_array takes its critical section: these are JNI calls, which are not
-    // allowed while a critical is held. They are a handful of ints, so the copy ART may
-    // make here is irrelevant.
-    let xs_elems = unsafe { env.get_array_elements(&xs, ReleaseMode::NoCopyBack).ok() };
-    let ys_elems = unsafe { env.get_array_elements(&ys, ReleaseMode::NoCopyBack).ok() };
-    if let (Some(xs_e), Some(ys_e)) = (xs_elems, ys_elems) {
-        let xs_slice = unsafe { std::slice::from_raw_parts(xs_e.as_ptr(), xs_e.len()) };
-        let ys_slice = unsafe { std::slice::from_raw_parts(ys_e.as_ptr(), ys_e.len()) };
+    // Regular (non-critical) pinning for the coordinate / clip arrays, and acquired
+    // *before* with_pinned_array takes its critical section: these are JNI calls, which
+    // are not allowed while a critical is held. They are small, so the copy ART may make
+    // here is irrelevant.
+    let coords_e = unsafe { env.get_array_elements(&coords, ReleaseMode::NoCopyBack).ok() };
+    let counts_e = unsafe { env.get_array_elements(&counts, ReleaseMode::NoCopyBack).ok() };
+    let clip_e = unsafe { env.get_array_elements(&clip, ReleaseMode::NoCopyBack).ok() };
+    if let (Some(co), Some(cn), Some(cl)) = (coords_e, counts_e, clip_e) {
+        let co = unsafe { std::slice::from_raw_parts(co.as_ptr(), co.len()) };
+        let cn = unsafe { std::slice::from_raw_parts(cn.as_ptr(), cn.len()) };
+        let cl = unsafe { std::slice::from_raw_parts(cl.as_ptr(), cl.len()) };
+        let cn = &cn[..(n_contours as usize).min(cn.len())];
+        let cl = &cl[..((n_clip as usize) * 4).min(cl.len() / 4 * 4)];
         let _ = with_pinned_array(&mut env, &pixels, ReleaseMode::CopyBack, |buf| {
-            poly::fill_polygon(buf, img_w, img_h, xs_slice, ys_slice, n, tx, ty, argb, composite_rule);
+            poly::fill_path(buf, img_w, img_h, co, cn, even_odd != 0, cl, argb, composite_rule);
         });
     }
 }
@@ -384,11 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_polygon_with_translation() {
+    fn test_fill_path_square() {
         let mut buf = vec![0i32; 100 * 100];
-        let xs = [0, 20, 20, 0];
-        let ys = [0, 0, 20, 20];
-        poly::fill_polygon(&mut buf, 100, 100, &xs, &ys, 4, 10, 10, 0xFFAABBCCu32 as i32, SRC);
+        let pts = [10.0, 10.0, 30.0, 10.0, 30.0, 30.0, 10.0, 30.0];
+        poly::fill_path(&mut buf, 100, 100, &pts, &[4], true, &[0, 0, 100, 100], 0xFFAABBCCu32 as i32, SRC);
         assert_eq!(buf[15 * 100 + 15], 0xFFAABBCCu32 as i32);
         assert_eq!(buf[5 * 100 + 5], 0);
     }

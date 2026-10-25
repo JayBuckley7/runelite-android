@@ -47,11 +47,48 @@ public class BasicStroke implements Stroke {
     public float[] getDashArray() { return dash != null ? dash.clone() : null; }
     public float getDashPhase()  { return dashPhase; }
 
+    /** The stroke outline as overlapping, consistently oriented pieces under non-zero
+     *  winding — fills (and {@code new Area(...)}) to exactly the stroked region. */
     @Override
     public Shape createStrokedShape(Shape p) {
-        // Returning the source shape is the simplest semantically-valid response — the
-        // outline is approximated as the shape itself. Most RuneLite use sites only
-        // need stroke width to control fill behaviour.
-        return p;
+        java.awt.geom.Path2D.Double out = new java.awt.geom.Path2D.Double(java.awt.geom.Path2D.WIND_NON_ZERO);
+        if (p == null) return out;
+        net.runelite.awt.impl.Contours path = new net.runelite.awt.impl.Contours();
+        path.appendFlattened(p.getPathIterator(null), null, 1.0, Math.max(0.01, Math.min(0.25, width / 8)));
+        if (dash != null) {
+            net.runelite.awt.impl.Contours dashed = new net.runelite.awt.impl.Contours();
+            net.runelite.awt.impl.Stroker.dash(path, dash, 1.0, dashPhase, dashed);
+            path = dashed;
+        }
+        net.runelite.awt.impl.Contours pieces = new net.runelite.awt.impl.Contours();
+        net.runelite.awt.impl.Stroker.stroke(path, width / 2.0, cap, join, miterLimit, pieces);
+        int off = 0;
+        for (int c = 0; c < pieces.n; c++) {
+            for (int i = 0; i < pieces.counts[c]; i++) {
+                double x = pieces.xy[off + i * 2], y = pieces.xy[off + i * 2 + 1];
+                if (i == 0) out.moveTo(x, y); else out.lineTo(x, y);
+            }
+            out.closePath();
+            off += pieces.counts[c] * 2;
+        }
+        return out;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof BasicStroke)) return false;
+        BasicStroke b = (BasicStroke) o;
+        return width == b.width && cap == b.cap && join == b.join && miterLimit == b.miterLimit
+            && java.util.Arrays.equals(dash, b.dash) && dashPhase == b.dashPhase;
+    }
+
+    @Override
+    public int hashCode() {
+        int h = Float.floatToIntBits(width);
+        h = h * 31 + cap;
+        h = h * 31 + join;
+        h = h * 31 + Float.floatToIntBits(miterLimit);
+        h = h * 31 + java.util.Arrays.hashCode(dash);
+        return h * 31 + Float.floatToIntBits(dashPhase);
     }
 }

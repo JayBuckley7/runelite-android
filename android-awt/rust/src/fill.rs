@@ -89,6 +89,17 @@ pub fn plot_span(
     }
 }
 
+/// Composite one source colour onto `buf[idx]` under the given AlphaComposite rule.
+#[inline]
+pub fn blend(buf: &mut [i32], idx: usize, argb: jint, composite_rule: jint) {
+    buf[idx] = match composite_rule {
+        SRC => argb,
+        CLEAR => 0,
+        SRC_ATOP => src_atop(argb as u32, buf[idx] as u32) as i32,
+        _ => src_over(argb as u32, buf[idx] as u32) as i32,
+    };
+}
+
 #[inline]
 pub fn plot_pixel(buf: &mut [i32], stride: usize, x: i32, y: i32, img_w: i32, img_h: i32, argb: jint) {
     if x >= 0 && x < img_w && y >= 0 && y < img_h {

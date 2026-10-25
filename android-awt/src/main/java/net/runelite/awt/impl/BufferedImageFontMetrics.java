@@ -80,15 +80,37 @@ public final class BufferedImageFontMetrics extends FontMetrics {
         return -1;
     }
 
-    /** Resolve an AWT Font down to an Android Typeface. If the family is registered
-     *  (e.g. runescape.ttf loaded via Font.createFont), use that Typeface as-is —
-     *  do NOT layer Typeface.BOLD/ITALIC on top, since the loaded face already
-     *  encodes those (RuneLite ships runescape_bold.ttf as its own family). Only
-     *  apply style bits when falling back to the system DEFAULT. */
+    /** Synthesized variants of registered faces, keyed by face then missing style bits. */
+    private static final java.util.concurrent.ConcurrentHashMap<android.graphics.Typeface, android.graphics.Typeface[]> SYNTH =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Resolve an AWT Font down to an Android Typeface. A registered family (e.g.
+     *  runescape.ttf / runescape_bold.ttf via Font.createFont) resolves to its member for
+     *  the requested style; style bits that member doesn't carry itself are synthesized
+     *  (fake bold / skew), as the JDK does — so {@code deriveFont(Font.BOLD, 16)} on a
+     *  face with no bold member gets emboldened, while the real bold face is used untouched.
+     *  Metrics come from the same Typeface, so stringWidth matches what is drawn. */
     static android.graphics.Typeface typefaceFor(Font font) {
-        android.graphics.Typeface registered = net.runelite.awt.impl.AwtFontRegistry.lookup(font.getName());
-        if (registered != null) return registered;
-        int style = font.getStyle();
+        int style = font.getStyle() & (Font.BOLD | Font.ITALIC);
+        android.graphics.Typeface registered = net.runelite.awt.impl.AwtFontRegistry.lookup(font.getName(), style);
+        if (registered != null) {
+            int missing = style & ~net.runelite.awt.impl.AwtFontRegistry.faceStyle(registered);
+            if (missing == 0) return registered;
+            android.graphics.Typeface[] v = SYNTH.get(registered);
+            if (v == null) {
+                v = new android.graphics.Typeface[4];
+                android.graphics.Typeface[] prev = SYNTH.putIfAbsent(registered, v);
+                if (prev != null) v = prev;
+            }
+            android.graphics.Typeface t = v[missing];
+            if (t == null) {
+                int as = missing == (Font.BOLD | Font.ITALIC) ? android.graphics.Typeface.BOLD_ITALIC
+                    : missing == Font.BOLD ? android.graphics.Typeface.BOLD : android.graphics.Typeface.ITALIC;
+                t = android.graphics.Typeface.create(registered, as);
+                v[missing] = t;
+            }
+            return t;
+        }
         if (style == Font.BOLD) return android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
         if (style == Font.ITALIC) return android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.ITALIC);
         if (style == (Font.BOLD | Font.ITALIC)) return android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD_ITALIC);

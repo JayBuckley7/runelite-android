@@ -163,6 +163,70 @@ public class AffineTransform implements Cloneable, Serializable {
         }
     }
 
+    public double getDeterminant() {
+        return m00 * m11 - m01 * m10;
+    }
+
+    public void shear(double shx, double shy) {
+        double n00 = m00 + m01 * shy, n01 = m01 + m00 * shx;
+        double n10 = m10 + m11 * shy, n11 = m11 + m10 * shx;
+        m00 = n00; m01 = n01; m10 = n10; m11 = n11;
+    }
+
+    /** this = this x tx (tx applied first). */
+    public void concatenate(AffineTransform tx) {
+        double n00 = m00 * tx.m00 + m01 * tx.m10;
+        double n01 = m00 * tx.m01 + m01 * tx.m11;
+        double n02 = m00 * tx.m02 + m01 * tx.m12 + m02;
+        double n10 = m10 * tx.m00 + m11 * tx.m10;
+        double n11 = m10 * tx.m01 + m11 * tx.m11;
+        double n12 = m10 * tx.m02 + m11 * tx.m12 + m12;
+        m00 = n00; m01 = n01; m02 = n02; m10 = n10; m11 = n11; m12 = n12;
+    }
+
+    /** this = tx x this (tx applied last). */
+    public void preConcatenate(AffineTransform tx) {
+        AffineTransform r = new AffineTransform(tx);
+        r.concatenate(this);
+        setTransform(r);
+    }
+
+    public Point2D transform(Point2D src, Point2D dst) {
+        double x = src.getX(), y = src.getY();
+        if (dst == null) dst = new Point2D.Double();
+        dst.setLocation(m00 * x + m01 * y + m02, m10 * x + m11 * y + m12);
+        return dst;
+    }
+
+    public Point2D deltaTransform(Point2D src, Point2D dst) {
+        double x = src.getX(), y = src.getY();
+        if (dst == null) dst = new Point2D.Double();
+        dst.setLocation(m00 * x + m01 * y, m10 * x + m11 * y);
+        return dst;
+    }
+
+    public java.awt.Shape createTransformedShape(java.awt.Shape s) {
+        if (s == null) return null;
+        Path2D.Double p = new Path2D.Double();
+        PathIterator it = s.getPathIterator(this);
+        if (it != null) {
+            p.setWindingRule(it.getWindingRule());
+            double[] c = new double[6];
+            while (!it.isDone()) {
+                switch (it.currentSegment(c)) {
+                    case PathIterator.SEG_MOVETO: p.moveTo(c[0], c[1]); break;
+                    case PathIterator.SEG_LINETO: p.lineTo(c[0], c[1]); break;
+                    case PathIterator.SEG_QUADTO: p.quadTo(c[0], c[1], c[2], c[3]); break;
+                    case PathIterator.SEG_CUBICTO: p.curveTo(c[0], c[1], c[2], c[3], c[4], c[5]); break;
+                    case PathIterator.SEG_CLOSE: p.closePath(); break;
+                    default: break;
+                }
+                it.next();
+            }
+        }
+        return p;
+    }
+
     @Override
     public Object clone() {
         return new AffineTransform(this);

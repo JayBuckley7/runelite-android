@@ -3,6 +3,7 @@ package net.runelite.mp.ui.bridge
 import net.runelite.client.externalplugins.ExternalPluginClient
 import net.runelite.client.externalplugins.ExternalPluginManager
 import net.runelite.client.externalplugins.PluginHubManifest
+import net.runelite.mp.plugins.PluginInstallTracker
 
 /**
  * Exposes RuneLite's external plugin hub state to the Compose UI. The mp install talks
@@ -42,6 +43,18 @@ internal data class ExternalPluginEntry(
 
 internal object ExternalPluginBridge
 {
+    /** Hub plugins that convert and load but can't work on Android: desktop OpenGL renderers
+     *  (the client already renders through GLES) and microphone/process access. The jar scan
+     *  in [net.runelite.mp.plugins.PluginDexer] catches other LWJGL/JOGL users at install. */
+    private val ANDROID_UNAVAILABLE = mapOf(
+        "117hd" to "Not available on Android — use the built-in 117 HD renderer",
+        "gpu-experimental" to "Not available on Android (desktop OpenGL renderer)",
+        "voicescape-communication" to "Not available on Android (needs desktop audio capture)",
+        "proximity-chat" to "Not available on Android (needs desktop audio capture)",
+        "quest-voiceover" to "Not available on Android (needs desktop audio capture)",
+        "process-monitor" to "Not available on Android (needs desktop process access)",
+    )
+
     fun installed(): Set<String>
     {
         val mgr = RuneLiteAccess.instance(ExternalPluginManager::class.java) ?: return emptySet()
@@ -69,7 +82,7 @@ internal object ExternalPluginBridge
                     description = d.description ?: "",
                     version = d.version ?: "",
                     warning = d.warning,
-                    unavailableReason = d.unavailableReason,
+                    unavailableReason = d.unavailableReason ?: ANDROID_UNAVAILABLE[d.internalName],
                     installed = installed.contains(d.internalName),
                     iconHash = d.iconHash,
                     userCount = counts[d.internalName] ?: -1,
@@ -79,16 +92,29 @@ internal object ExternalPluginBridge
         catch (t: Throwable) { emptyList() }
     }
 
-    fun install(internalName: String)
+    fun install(internalName: String, displayName: String = internalName)
     {
         val mgr = RuneLiteAccess.instance(ExternalPluginManager::class.java) ?: return
+        PluginInstallTracker.queued(internalName, displayName)
         try { mgr.install(internalName) } catch (t: Throwable) { /* host logs */ }
     }
 
     fun remove(internalName: String)
     {
         val mgr = RuneLiteAccess.instance(ExternalPluginManager::class.java) ?: return
+        PluginInstallTracker.dismiss(internalName)
         try { mgr.remove(internalName) } catch (t: Throwable) { /* host logs */ }
+    }
+
+    /** Re-run the manager's refresh, which retries every installed plugin that isn't loaded
+     *  (re-downloading jars that failed their hash). [internalName] just marks which row the
+     *  user asked about, so its outcome gets a toast. */
+    fun retry(internalName: String, displayName: String)
+    {
+        val mgr = RuneLiteAccess.instance(ExternalPluginManager::class.java) ?: return
+        PluginInstallTracker.queued(internalName, displayName)
+        PluginInstallTracker.clearHubErrors()
+        try { mgr.update() } catch (t: Throwable) { /* host logs */ }
     }
 
     /** Fetch icon PNG bytes via the same OkHttpClient RuneLite uses, hitting the hub

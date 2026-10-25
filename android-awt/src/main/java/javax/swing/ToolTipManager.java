@@ -24,7 +24,14 @@ public class ToolTipManager extends MouseAdapter {
     public int getDismissDelay() { return dismissDelay; }
     public void setReshowDelay(int milliseconds) { this.reshowDelay = milliseconds; }
     public int getReshowDelay() { return reshowDelay; }
-    public void registerComponent(JComponent component) {}
-    public void unregisterComponent(JComponent component) {}
+    // Weak so registering never pins a discarded panel. Desktop registration installs
+    // listeners; here the panel host asks instead, to treat these as tooltip owners.
+    private final java.util.Map<JComponent, Boolean> registered =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    public void registerComponent(JComponent component) { if (component != null) registered.put(component, Boolean.TRUE); }
+    public void unregisterComponent(JComponent component) { if (component != null) registered.remove(component); }
+    /** Host hook (not JDK API): whether {@link #registerComponent} holds this component. */
+    public boolean isRegistered(JComponent component) { return component != null && registered.containsKey(component); }
     public void mouseDragged(java.awt.event.MouseEvent e) {}
 }

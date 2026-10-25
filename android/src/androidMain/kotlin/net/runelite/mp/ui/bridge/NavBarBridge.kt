@@ -59,12 +59,13 @@ internal object NavBarBridge
         } catch (_: Throwable) { null }
     }
 
-    private fun <T> onEdt(read: () -> T): T {
+    /** Null when [read] threw: our EventQueue logs and swallows EDT exceptions instead of
+     *  rethrowing them from invokeAndWait, so a failed read comes back as no result. */
+    private fun <T : Any> onEdt(read: () -> T?): T? {
         if (javax.swing.SwingUtilities.isEventDispatchThread()) return read()
         var result: T? = null
         javax.swing.SwingUtilities.invokeAndWait { result = read() }
-        @Suppress("UNCHECKED_CAST")
-        return result as T
+        return result
     }
 
     private fun buttons(ui: Any): List<NavigationButton> {
@@ -72,7 +73,9 @@ internal object NavBarBridge
         @Suppress("UNCHECKED_CAST")
         val panels = (field.get(ui) as? Collection<NavigationButton>)?.toList().orEmpty()
         // RuneLite stores action-only buttons (including Account login/logout) separately.
+        // ClientUI builds the toolbar during init, after the Compose strip starts polling.
         val toolbar = ui.javaClass.getDeclaredField("toolbarPanel").apply { isAccessible = true }.get(ui)
+            ?: return panels
         val entries = toolbar.javaClass.getDeclaredField("entries").apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
         val actions = (entries.get(toolbar) as? Map<NavigationButton, *>)?.keys.orEmpty()
@@ -89,7 +92,7 @@ internal object NavBarBridge
         catch (t: Throwable) { return emptyList() } ?: return emptyList()
         val entries = try
         {
-            onEdt { buttons(ui) }
+            onEdt { buttons(ui) } ?: return emptyList()
         }
         catch (t: Throwable) { return emptyList() }
 

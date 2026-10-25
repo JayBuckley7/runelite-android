@@ -1,5 +1,6 @@
 package java.awt;
 
+import java.awt.font.TextAttribute;
 import java.io.Serializable;
 
 public class Font implements Serializable {
@@ -18,11 +19,29 @@ public class Font implements Serializable {
     private final String name;
     private final int style;
     private final int size;
+    /** TextAttribute.UNDERLINE value, -1 when off. Decoration only: drawn by
+     *  BufferedImageGraphics2D.drawString, never affects metrics. */
+    private final int underline;
+    private final boolean strikethrough;
 
     public Font(String name, int style, int size) {
+        this(name, style, size, -1, false);
+    }
+
+    private Font(String name, int style, int size, int underline, boolean strikethrough) {
         this.name = name != null ? name : "Default";
         this.style = style;
         this.size = size;
+        this.underline = underline;
+        this.strikethrough = strikethrough;
+    }
+
+    public Font(java.util.Map<? extends java.text.AttributedCharacterIterator.Attribute, ?> attributes) {
+        this(new Font(DIALOG, PLAIN, 12).deriveFont(attributes));
+    }
+
+    protected Font(Font font) {
+        this(font.name, font.style, font.size, font.underline, font.strikethrough);
     }
 
     public String getName()   { return name; }
@@ -31,14 +50,19 @@ public class Font implements Serializable {
     public int getSize()      { return size; }
     public float getSize2D()  { return size; }
 
+    /** Non-JDK accessor: whether TextAttribute.UNDERLINE is on. */
+    public boolean isUnderlined() { return underline >= 0; }
+    /** Non-JDK accessor: whether TextAttribute.STRIKETHROUGH is on. */
+    public boolean isStrikethrough() { return strikethrough; }
+
     /** First unsupported UTF-16 index, or -1 when the rendering font supports all text. */
     public int canDisplayUpTo(String text) {
         return net.runelite.awt.impl.BufferedImageFontMetrics.canDisplayUpTo(this, text);
     }
 
-    public boolean isPlain()  { return style == PLAIN; }
-    public boolean isBold()   { return (style & BOLD) != 0; }
-    public boolean isItalic() { return (style & ITALIC) != 0; }
+    public boolean isPlain()  { return getStyle() == PLAIN; }
+    public boolean isBold()   { return (getStyle() & BOLD) != 0; }
+    public boolean isItalic() { return (getStyle() & ITALIC) != 0; }
 
     public static final int TRUETYPE_FONT = 0;
     public static final int TYPE1_FONT = 1;
@@ -64,73 +88,84 @@ public class Font implements Serializable {
         }
     }
 
+    // derive* keep the decoration attributes, as the JDK's do.
     public Font deriveFont(int style) {
-        return new Font(name, style, size);
+        return new Font(name, style, size, underline, strikethrough);
     }
 
     public Font deriveFont(float size) {
-        return new Font(name, this.style, (int) size);
+        return new Font(name, style, (int) size, underline, strikethrough);
     }
 
     public Font deriveFont(int style, float size) {
-        return new Font(name, style, (int) size);
+        return new Font(name, style, (int) size, underline, strikethrough);
     }
 
     /**
-     * Stub: real AWT exposes the font's full attribute map (family/weight/posture/...).
-     * Plugin code (e.g. quest-helper's Fonts.java) seeds a HashMap with this then adds
-     * its own keys (UNDERLINE, etc.) and calls deriveFont(Map). For us the styling
-     * keys don't matter — Android's Paint handles styling differently — but the call
-     * itself has to succeed for the plugin's static init to complete.
+     * The font's attribute map. quest-helper's Fonts.java seeds a HashMap with this, adds
+     * UNDERLINE and calls deriveFont(Map) for its hover links, so the decoration keys
+     * round-trip.
      */
-    public java.util.Map<java.awt.font.TextAttribute, ?> getAttributes() {
-        java.util.Map<java.awt.font.TextAttribute, Object> m = new java.util.HashMap<>();
-        m.put(java.awt.font.TextAttribute.FAMILY, name);
-        m.put(java.awt.font.TextAttribute.SIZE, (float) size);
-        m.put(java.awt.font.TextAttribute.WEIGHT, isBold() ? java.awt.font.TextAttribute.WEIGHT_BOLD : java.awt.font.TextAttribute.WEIGHT_REGULAR);
-        m.put(java.awt.font.TextAttribute.POSTURE, isItalic() ? java.awt.font.TextAttribute.POSTURE_OBLIQUE : java.awt.font.TextAttribute.POSTURE_REGULAR);
+    public java.util.Map<TextAttribute, ?> getAttributes() {
+        java.util.Map<TextAttribute, Object> m = new java.util.HashMap<>();
+        m.put(TextAttribute.FAMILY, name);
+        m.put(TextAttribute.SIZE, (float) size);
+        m.put(TextAttribute.WEIGHT, isBold() ? TextAttribute.WEIGHT_BOLD : TextAttribute.WEIGHT_REGULAR);
+        m.put(TextAttribute.POSTURE, isItalic() ? TextAttribute.POSTURE_OBLIQUE : TextAttribute.POSTURE_REGULAR);
+        m.put(TextAttribute.UNDERLINE, underline >= 0 ? (Object) underline : null);
+        m.put(TextAttribute.STRIKETHROUGH, strikethrough ? TextAttribute.STRIKETHROUGH_ON : null);
         return m;
     }
 
     /**
-     * Map-based deriveFont companion to getAttributes(). We honor only what we can
-     * meaningfully render through android-awt: family (name), size, and a coarse
-     * bold/italic style flag inferred from WEIGHT/POSTURE if present.
+     * Map-based deriveFont companion to getAttributes(). Honors family, size, a coarse
+     * bold/italic style from WEIGHT/POSTURE, and UNDERLINE / STRIKETHROUGH. A key mapped
+     * to null (or UNDERLINE -1) turns that attribute off; an absent key keeps ours.
      */
     public Font deriveFont(java.util.Map<? extends java.text.AttributedCharacterIterator.Attribute, ?> attrs) {
         if (attrs == null || attrs.isEmpty()) return this;
         String newName = name;
         int newStyle = style;
         int newSize = size;
-        Object fam = attrs.get(java.awt.font.TextAttribute.FAMILY);
+        int newUnderline = underline;
+        boolean newStrike = strikethrough;
+        Object fam = attrs.get(TextAttribute.FAMILY);
         if (fam instanceof String) newName = (String) fam;
-        Object sz = attrs.get(java.awt.font.TextAttribute.SIZE);
+        Object sz = attrs.get(TextAttribute.SIZE);
         if (sz instanceof Number) newSize = ((Number) sz).intValue();
-        Object weight = attrs.get(java.awt.font.TextAttribute.WEIGHT);
+        Object weight = attrs.get(TextAttribute.WEIGHT);
         if (weight instanceof Number) {
-            if (((Number) weight).floatValue() >= java.awt.font.TextAttribute.WEIGHT_BOLD) newStyle |= BOLD;
+            if (((Number) weight).floatValue() >= TextAttribute.WEIGHT_BOLD) newStyle |= BOLD;
             else newStyle &= ~BOLD;
         }
-        Object posture = attrs.get(java.awt.font.TextAttribute.POSTURE);
+        Object posture = attrs.get(TextAttribute.POSTURE);
         if (posture instanceof Number) {
             if (((Number) posture).floatValue() > 0.0f) newStyle |= ITALIC;
             else newStyle &= ~ITALIC;
         }
-        return new Font(newName, newStyle, newSize);
+        if (attrs.containsKey(TextAttribute.UNDERLINE)) {
+            Object u = attrs.get(TextAttribute.UNDERLINE);
+            newUnderline = u instanceof Number ? Math.max(-1, ((Number) u).intValue()) : -1;
+        }
+        if (attrs.containsKey(TextAttribute.STRIKETHROUGH)) {
+            newStrike = Boolean.TRUE.equals(attrs.get(TextAttribute.STRIKETHROUGH));
+        }
+        return new Font(newName, newStyle, newSize, newUnderline, newStrike);
     }
 
     @Override
     public boolean equals(Object obj) {
         if (obj instanceof Font) {
             Font f = (Font) obj;
-            return size == f.size && style == f.style && name.equals(f.name);
+            return size == f.size && style == f.style && name.equals(f.name)
+                && underline == f.underline && strikethrough == f.strikethrough;
         }
         return false;
     }
 
     @Override
     public int hashCode() {
-        return name.hashCode() ^ style ^ size;
+        return name.hashCode() ^ style ^ size ^ ((underline + 1) << 16) ^ (strikethrough ? 0x40000000 : 0);
     }
 
     @Override

@@ -10,6 +10,17 @@ public abstract class Graphics2D extends Graphics {
 
     public abstract void draw(Shape s);
     public abstract void fill(Shape s);
+
+    /** Intersect the clip with {@code s}; null clears the clip (JDK semantics). The default
+     *  is a bounds approximation for Graphics2D subclasses that don't override it. */
+    public void clip(Shape s) {
+        if (s == null) {
+            setClip(null);
+            return;
+        }
+        Rectangle b = s.getBounds();
+        clipRect(b.x, b.y, b.width, b.height);
+    }
     public abstract boolean drawImage(java.awt.Image img, AffineTransform xform, ImageObserver obs);
     public abstract void drawImage(BufferedImage img, int x, int y);
 

@@ -93,7 +93,7 @@ class PluginHubClassLoader extends URLClassLoader implements ReflectUtil.Private
 		{
 			this.stub = gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), PluginHubManifest.Stub.class);
 		}
-		this.dexClassLoader = IS_ANDROID ? createDexClassLoader(jarData.getJarFile()) : null;
+		this.dexClassLoader = IS_ANDROID ? createDexClassLoader(dexed(jarData)) : null;
 		if (this.dexClassLoader != null)
 		{
 			// Plugin classes are defined by dexClassLoader, so identity recovery off a plugin
@@ -101,6 +101,18 @@ class PluginHubClassLoader extends URLClassLoader implements ReflectUtil.Private
 			DEX_OWNERS.put(this.dexClassLoader, this);
 		}
 		ReflectUtil.installLookupHelper(this);
+	}
+
+	/** The upstream hub serves JVM bytecode; the host's {@link PluginHubHooks#dexer} converts
+	 *  it. Resources (and the stub above) keep coming from the original jar via
+	 *  URLClassLoader, so the converted file only has to carry the dex. Without a dexer the
+	 *  jar is expected to be pre-dexed already. */
+	private static File dexed(PluginHubManifest.JarData jarData)
+	{
+		File jar = jarData.getJarFile();
+		PluginHubHooks.Dexer dexer = PluginHubHooks.dexer;
+		return dexer == null ? jar
+			: dexer.dex(jarData.getInternalName(), jarData.getDisplayName(), jarData.getJarHash(), jar);
 	}
 
 	/** Reflective so runelite-client still compiles on a plain JDK (no dalvik.system on

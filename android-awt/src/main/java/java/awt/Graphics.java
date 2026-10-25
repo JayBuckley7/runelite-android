@@ -39,6 +39,11 @@ public abstract class Graphics {
     public abstract Shape getClip();
     public abstract void setClip(Shape clip);
 
+    public boolean hitClip(int x, int y, int width, int height) {
+        Rectangle c = getClipBounds();
+        return c == null || c.intersects(x, y, width, height);
+    }
+
     public abstract void copyArea(int x, int y, int width, int height, int dx, int dy);
     public abstract void drawLine(int x1, int y1, int x2, int y2);
     public abstract void fillRect(int x, int y, int width, int height);

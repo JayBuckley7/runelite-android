@@ -6,7 +6,7 @@ public class JButton extends AbstractButton {
     public JButton() { this(null, null); }
     public JButton(Icon icon) { this(null, icon); }
     public JButton(String text) { this(text, null); }
-    public JButton(Action a) { setAction(a); }
+    public JButton(Action a) { this(); setAction(a); }
     public JButton(String text, Icon icon) {
         setText(text); setIcon(icon);
     }

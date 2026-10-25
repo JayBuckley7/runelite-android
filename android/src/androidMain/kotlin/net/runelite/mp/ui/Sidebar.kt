@@ -47,6 +47,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.runelite.mp.plugins.InstallStatus
+import net.runelite.mp.plugins.PluginInstallTracker
 import net.runelite.mp.ui.bridge.ExternalPluginBridge
 import net.runelite.mp.ui.bridge.ExternalPluginEntry
 import net.runelite.mp.ui.bridge.FavoritesBridge
@@ -407,19 +409,34 @@ private fun ExternalTab()
             if (live != installed.value) installed.value = live
         }
     }
-    val change: (String, Boolean) -> Unit = { name, install ->
+    val change: (ExternalPluginEntry, Boolean) -> Unit = { row, install ->
+        val name = row.internalName
         scope.launch {
             if (remote) withContext(Dispatchers.IO) {
                 runCatching { if (install) WatchLink.install(name) else WatchLink.remove(name) }
             }
-            else if (install) ExternalPluginBridge.install(name) else ExternalPluginBridge.remove(name)
+            else if (install) ExternalPluginBridge.install(name, row.displayName) else ExternalPluginBridge.remove(name)
             readInstalled()?.let { installed.value = it }
         }
+    }
+    // Install asks first; failures open the details dialog from the row or activity card.
+    var confirming by remember { mutableStateOf<ExternalPluginEntry?>(null) }
+    var failureFor by remember { mutableStateOf<String?>(null) }
+    val retry: (InstallStatus) -> Unit = { ExternalPluginBridge.retry(it.internalName, it.displayName) }
+
+    confirming?.let { row ->
+        InstallConfirmDialog(row, onConfirm = { confirming = null; change(row, true) }, onDismiss = { confirming = null })
+    }
+    failureFor?.let { name ->
+        val status = PluginInstallTracker.statuses[name]
+        if (status == null) failureFor = null
+        else InstallFailureDialog(status, onRetry = { retry(status) }, onDismiss = { failureFor = null })
     }
 
     Column(modifier = Modifier.fillMaxSize())
     {
         SearchField(query, "Search external plugins…") { query = it }
+        if (!remote) PluginActivityCard(onRetry = retry, onDetails = { failureFor = it.internalName })
         when
         {
             loading -> EmptyState("Loading manifest…")
@@ -429,9 +446,8 @@ private fun ExternalTab()
                 val live = installed.value
                 // RuneLite's desktop hub panel sort, mirrored: installed first, then
                 // descending install count (so plugins lots of users run float up),
-                // then alphabetical. Unknown counts (-1 — internal name not present
-                // in api.runelite.net's tally because we're on a self-hosted mirror)
-                // fall through to the alphabetical pass.
+                // then alphabetical. Unknown counts (-1 — the api.runelite.net tally
+                // didn't load) fall through to the alphabetical pass.
                 val filtered = entries.asSequence()
                     .filter {
                         query.isBlank() || it.displayName.contains(query, ignoreCase = true) ||
@@ -449,8 +465,11 @@ private fun ExternalTab()
                         ExternalRowItem(
                             row = row.copy(installed = live.contains(row.internalName)),
                             icon = icons[row.internalName],
-                            onInstall = { change(row.internalName, true) },
-                            onRemove = { change(row.internalName, false) },
+                            status = if (remote) null else PluginInstallTracker.statuses[row.internalName],
+                            onInstall = { if (remote) change(row, true) else confirming = row },
+                            onRemove = { change(row, false) },
+                            onRetry = retry,
+                            onDetails = { failureFor = it.internalName },
                             onIconLoaded = { bitmap -> icons[row.internalName] = bitmap },
                         )
                     }
@@ -464,8 +483,11 @@ private fun ExternalTab()
 private fun ExternalRowItem(
     row: ExternalPluginEntry,
     icon: ImageBitmap?,
+    status: InstallStatus?,
     onInstall: () -> Unit,
     onRemove: () -> Unit,
+    onRetry: (InstallStatus) -> Unit,
+    onDetails: (InstallStatus) -> Unit,
     onIconLoaded: (ImageBitmap) -> Unit,
 )
 {
@@ -567,6 +589,7 @@ private fun ExternalRowItem(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (status != null) InstallStatusLine(status, { onRetry(status) }, { onDetails(status) })
         }
         Spacer(Modifier.size(8.dp))
         if (row.installed)

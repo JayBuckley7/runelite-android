@@ -34,7 +34,8 @@ public abstract class AbstractButton extends JComponent {
     private boolean rolloverEnabled;
     private Action action;
 
-    public AbstractButton() {}
+    // Swing's AbstractButton.init(): buttons default to LEFT_ALIGNMENT in BoxLayouts.
+    public AbstractButton() { setAlignmentX(0f); }
 
     public String getText() { return text; }
     public void setText(String text) { this.text = text == null ? "" : text; invalidate(); }
@@ -128,6 +129,18 @@ public abstract class AbstractButton extends JComponent {
         return new java.awt.Dimension(w, h);
     }
 
+    // BasicButtonUI reports min = max = preferred, so a BoxLayout neither stretches nor
+    // squeezes a button unless the caller sets explicit bounds.
+    @Override
+    public java.awt.Dimension getMinimumSize() {
+        return isMinimumSizeSet() ? super.getMinimumSize() : getPreferredSize();
+    }
+
+    @Override
+    public java.awt.Dimension getMaximumSize() {
+        return isMaximumSizeSet() ? super.getMaximumSize() : getPreferredSize();
+    }
+
     public boolean isSelected() { return model.isSelected(); }
     public void setSelected(boolean b) { model.setSelected(b); }
 
@@ -151,6 +164,12 @@ public abstract class AbstractButton extends JComponent {
             for (ItemListener il : new java.util.ArrayList<>(itemListeners)) {
                 try { il.itemStateChanged(iev); } catch (Throwable ignored) {}
             }
+            // Swing pushes the toggled state back into a SELECTED_KEY-bearing Action.
+            Action a = action;
+            if (a != null && a.getValue(Action.SELECTED_KEY) != null && shouldUpdateSelectedStateFromAction()
+                    && Boolean.TRUE.equals(a.getValue(Action.SELECTED_KEY)) != isSelected()) {
+                a.putValue(Action.SELECTED_KEY, isSelected());
+            }
         }
         java.awt.event.ActionEvent ev = new java.awt.event.ActionEvent(
             this, java.awt.event.ActionEvent.ACTION_PERFORMED, getActionCommand());
@@ -168,8 +187,111 @@ public abstract class AbstractButton extends JComponent {
     public void setActionCommand(String s) { model.setActionCommand(s); }
     public String getActionCommand() { return model.getActionCommand() != null ? model.getActionCommand() : text; }
 
-    public void setAction(Action a) { this.action = a; }
+    /**
+     * Swing's Action binding: the button takes its text/icon/tooltip/mnemonic/command/
+     * enabled (and, for toggles, selected) state from the Action, follows later edits to
+     * it, and fires it as an ActionListener. Storing it alone left menu items built as
+     * `new JMenuItem(new AbstractAction("Go to wiki..") {...})` blank and inert.
+     */
+    public void setAction(Action a) {
+        Action old = action;
+        if (old != null && old.equals(a)) return;
+        action = a;
+        if (old != null) {
+            removeActionListener(old);
+            if (actionPropertyListener != null) old.removePropertyChangeListener(actionPropertyListener);
+            actionPropertyListener = null;
+        }
+        configurePropertiesFromAction(a);
+        if (a != null) {
+            if (!actionListeners.contains(a)) addActionListener(a);
+            actionPropertyListener = createActionPropertyChangeListener(a);
+            a.addPropertyChangeListener(actionPropertyListener);
+        }
+    }
     public Action getAction() { return action; }
+
+    private java.beans.PropertyChangeListener actionPropertyListener;
+    private boolean hideActionText;
+
+    public boolean getHideActionText() { return hideActionText; }
+    public void setHideActionText(boolean hide) {
+        if (hide == hideActionText) return;
+        hideActionText = hide;
+        if (action != null) setTextFromAction(action, false);
+    }
+
+    protected void configurePropertiesFromAction(Action a) {
+        setMnemonicFromAction(a);
+        setTextFromAction(a, false);
+        setToolTipText(a != null ? (String) a.getValue(Action.SHORT_DESCRIPTION) : null);
+        setIconFromAction(a);
+        setActionCommand(a != null ? (String) a.getValue(Action.ACTION_COMMAND_KEY) : null);
+        setEnabled(a == null || a.isEnabled());
+        if (a != null && a.getValue(Action.SELECTED_KEY) != null && shouldUpdateSelectedStateFromAction()) {
+            setSelectedFromAction(a);
+        }
+    }
+
+    /** Follows the Action's PropertyChangeEvents. Weakly held, like Swing, so a long-lived
+     *  shared Action doesn't pin every button ever built from it. */
+    protected java.beans.PropertyChangeListener createActionPropertyChangeListener(Action a) {
+        final java.lang.ref.WeakReference<AbstractButton> ref = new java.lang.ref.WeakReference<>(this);
+        return new java.beans.PropertyChangeListener() {
+            @Override public void propertyChange(java.beans.PropertyChangeEvent e) {
+                AbstractButton b = ref.get();
+                Action source = (Action) e.getSource();
+                if (b == null) { source.removePropertyChangeListener(this); return; }
+                if (b.getAction() != source) return;
+                b.actionPropertyChanged(source, e.getPropertyName());
+            }
+        };
+    }
+
+    protected void actionPropertyChanged(Action a, String propertyName) {
+        if (propertyName == null) { configurePropertiesFromAction(a); return; }
+        switch (propertyName) {
+            case Action.NAME: setTextFromAction(a, true); break;
+            case "enabled": setEnabled(a.isEnabled()); break;
+            case Action.SHORT_DESCRIPTION: setToolTipText((String) a.getValue(Action.SHORT_DESCRIPTION)); break;
+            case Action.SMALL_ICON:
+            case Action.LARGE_ICON_KEY: setIconFromAction(a); break;
+            case Action.MNEMONIC_KEY: setMnemonicFromAction(a); break;
+            case Action.ACTION_COMMAND_KEY: setActionCommand((String) a.getValue(Action.ACTION_COMMAND_KEY)); break;
+            case Action.SELECTED_KEY:
+                if (a.getValue(Action.SELECTED_KEY) != null && shouldUpdateSelectedStateFromAction()) setSelectedFromAction(a);
+                break;
+            default: break;
+        }
+    }
+
+    private void setTextFromAction(Action a, boolean propertyChange) {
+        if (!propertyChange) setText(a != null && !hideActionText ? (String) a.getValue(Action.NAME) : null);
+        else if (!hideActionText) setText((String) a.getValue(Action.NAME));
+    }
+
+    /** LARGE_ICON_KEY wins over SMALL_ICON for buttons; JMenuItem only uses SMALL_ICON. */
+    void setIconFromAction(Action a) {
+        Icon ic = null;
+        if (a != null) {
+            ic = (Icon) a.getValue(Action.LARGE_ICON_KEY);
+            if (ic == null) ic = (Icon) a.getValue(Action.SMALL_ICON);
+        }
+        setIcon(ic);
+    }
+
+    private void setMnemonicFromAction(Action a) {
+        Object n = a == null ? null : a.getValue(Action.MNEMONIC_KEY);
+        setMnemonic(n instanceof Integer ? (Integer) n : '\0');
+    }
+
+    private void setSelectedFromAction(Action a) {
+        boolean selected = a != null && Boolean.TRUE.equals(a.getValue(Action.SELECTED_KEY));
+        if (selected != isSelected()) setSelected(selected);
+    }
+
+    /** Only toggle-style buttons mirror Action.SELECTED_KEY. */
+    boolean shouldUpdateSelectedStateFromAction() { return false; }
 
     public void addActionListener(ActionListener l) { if (l != null) actionListeners.add(l); }
     public void removeActionListener(ActionListener l) { actionListeners.remove(l); }

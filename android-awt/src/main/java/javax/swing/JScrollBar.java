@@ -1,6 +1,9 @@
 package javax.swing;
 
+import java.awt.event.AdjustmentEvent;
 import java.awt.event.AdjustmentListener;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 
 public class JScrollBar extends JComponent implements SwingConstants {
     private static final long serialVersionUID = 1L;
@@ -8,19 +11,40 @@ public class JScrollBar extends JComponent implements SwingConstants {
     protected int orientation = VERTICAL;
     protected int unitIncrement = 1;
     protected int blockIncrement = 10;
-    protected BoundedRangeModel model = new DefaultBoundedRangeModel();
+    protected BoundedRangeModel model;
 
-    public JScrollBar() {}
-    public JScrollBar(int orientation) { this.orientation = orientation; }
+    // Swing forwards every model ChangeEvent as an AdjustmentEvent; JScrollPane listens here
+    // to move its viewport, and it survives setModel because we re-register on the new model.
+    private final ChangeListener fwdAdjustmentEvents = new ChangeListener() {
+        @Override public void stateChanged(ChangeEvent e) {
+            Object src = e.getSource();
+            if (src instanceof BoundedRangeModel) {
+                BoundedRangeModel m = (BoundedRangeModel) src;
+                fireAdjustmentValueChanged(AdjustmentEvent.ADJUSTMENT_VALUE_CHANGED, AdjustmentEvent.TRACK,
+                    m.getValue(), m.getValueIsAdjusting());
+            }
+        }
+    };
+    private final java.util.concurrent.CopyOnWriteArrayList<AdjustmentListener> adjustmentListeners =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public JScrollBar() { this(VERTICAL); }
+    public JScrollBar(int orientation) { this(orientation, 0, 10, 0, 100); }
     public JScrollBar(int orientation, int value, int extent, int min, int max) {
         this.orientation = orientation;
-        model = new DefaultBoundedRangeModel(value, extent, min, max);
+        this.blockIncrement = extent == 0 ? 1 : extent;
+        this.model = new DefaultBoundedRangeModel(value, extent, min, max);
+        this.model.addChangeListener(fwdAdjustmentEvents);
     }
 
     public int getOrientation() { return orientation; }
-    public void setOrientation(int orientation) { this.orientation = orientation; }
+    public void setOrientation(int orientation) { this.orientation = orientation; invalidate(); }
     public BoundedRangeModel getModel() { return model; }
-    public void setModel(BoundedRangeModel newModel) { this.model = newModel; }
+    public void setModel(BoundedRangeModel newModel) {
+        if (model != null) model.removeChangeListener(fwdAdjustmentEvents);
+        model = newModel;
+        if (model != null) model.addChangeListener(fwdAdjustmentEvents);
+    }
     public int getUnitIncrement() { return unitIncrement; }
     public int getUnitIncrement(int direction) { return unitIncrement; }
     public void setUnitIncrement(int u) { this.unitIncrement = u; }
@@ -40,6 +64,29 @@ public class JScrollBar extends JComponent implements SwingConstants {
     public void setValues(int newValue, int newExtent, int newMin, int newMax) {
         model.setRangeProperties(newValue, newExtent, newMin, newMax, model.getValueIsAdjusting());
     }
-    public void addAdjustmentListener(AdjustmentListener l) {}
-    public void removeAdjustmentListener(AdjustmentListener l) {}
+
+    public void addAdjustmentListener(AdjustmentListener l) { if (l != null) adjustmentListeners.add(l); }
+    public void removeAdjustmentListener(AdjustmentListener l) { adjustmentListeners.remove(l); }
+    public AdjustmentListener[] getAdjustmentListeners() { return adjustmentListeners.toArray(new AdjustmentListener[0]); }
+
+    protected void fireAdjustmentValueChanged(int id, int type, int value) {
+        fireAdjustmentValueChanged(id, type, value, getValueIsAdjusting());
+    }
+
+    private void fireAdjustmentValueChanged(int id, int type, int value, boolean isAdjusting) {
+        if (adjustmentListeners.isEmpty()) return;
+        AdjustmentEvent e = new AdjustmentEvent(this, id, type, value, isAdjusting);
+        // Last registered first, like EventListenerList-backed Swing listeners.
+        Object[] ls = adjustmentListeners.toArray();
+        for (int i = ls.length - 1; i >= 0; i--) ((AdjustmentListener) ls[i]).adjustmentValueChanged(e);
+    }
+
+    /** Swing stretches a scrollbar only along its own axis. */
+    @Override
+    public java.awt.Dimension getMaximumSize() {
+        if (isMaximumSizeSet()) return super.getMaximumSize();
+        java.awt.Dimension pref = getPreferredSize();
+        return orientation == VERTICAL ? new java.awt.Dimension(pref.width, Short.MAX_VALUE)
+            : new java.awt.Dimension(Short.MAX_VALUE, pref.height);
+    }
 }

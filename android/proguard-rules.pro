@@ -266,6 +266,13 @@
 -dontwarn org.tomlj.**
 -dontwarn org.antlr.**
 
+# D8 (com.android.tools:r8), run in-process by PluginDexer to dex upstream hub jars on the
+# device. It loads parts of itself reflectively and ships its own relocated deps, so shrinking
+# or renaming it is not worth the risk; keep it whole. Code paths we never call (R8 proper,
+# JDK tooling integration) reference classes Android doesn't have.
+-keep class com.android.tools.r8.** { *; }
+-dontwarn com.android.tools.r8.**
+
 # ----------------------------------------------------------------------------
 # Slf4j / Logback. Both ship sources that reference packages we don't bundle.
 # ----------------------------------------------------------------------------

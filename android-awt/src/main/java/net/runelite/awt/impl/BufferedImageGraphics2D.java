@@ -51,7 +51,18 @@ public class BufferedImageGraphics2D extends Graphics2D {
     private Color foreground = Color.BLACK;
     private Color background = Color.WHITE;
     private Font font = DEFAULT_FONT;
+    /** Device-space clip. For a non-rectangular clip this is the bounds of {@link #clipRects}. */
     private Rectangle clip;
+    /** Null for a plain rectangular clip (the zero-cost common case). Otherwise the clip as
+     *  disjoint device rects, (x0, y0, x1, y1) quads, exactly sized — see {@link ClipRegion}.
+     *  Never mutated once assigned, so {@link #create()} and the snapshot stack share it. */
+    private int[] clipRects;
+    /** Single-rect clip handed to natives that take a rect list; see {@link #prepareClip()}. */
+    private final int[] clipScratch = new int[4];
+    private int[] activeClip;
+    /** Rect lists saved by {@link #snapshotClip}, restored LIFO by {@link #restoreClip}. */
+    private int[][] clipStack = new int[8][];
+    private int clipStackDepth;
     private final AffineTransform transform = new AffineTransform();
     private Composite composite = AlphaComposite.SrcOver;
     private Stroke stroke = DEFAULT_STROKE;
@@ -102,6 +113,45 @@ public class BufferedImageGraphics2D extends Graphics2D {
         int nw = Math.min(clip.width, width - nx);
         int nh = Math.min(clip.height, height - ny);
         clip = new Rectangle(nx, ny, Math.max(0, nw), Math.max(0, nh));
+        if (clipRects != null) {
+            setClipRects(ClipRegion.intersect(clipRects, clipRects.length / 4, new int[] {0, 0, width, height}, 1));
+        }
+    }
+
+    private int clipX1() { return (int) Math.min(Integer.MAX_VALUE, (long) clip.x + clip.width); }
+    private int clipY1() { return (int) Math.min(Integer.MAX_VALUE, (long) clip.y + clip.height); }
+
+    /** Install a rect-list clip, collapsing to the rectangular fast path when it's one rect. */
+    private void setClipRects(int[] rects) {
+        int n = rects.length / 4;
+        if (n <= 1) {
+            clip = n == 0 ? new Rectangle(0, 0, 0, 0)
+                : new Rectangle(rects[0], rects[1], rects[2] - rects[0], rects[3] - rects[1]);
+            clipRects = null;
+            return;
+        }
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
+        for (int i = 0; i < rects.length; i += 4) {
+            x0 = Math.min(x0, rects[i]); y0 = Math.min(y0, rects[i + 1]);
+            x1 = Math.max(x1, rects[i + 2]); y1 = Math.max(y1, rects[i + 3]);
+        }
+        clip = new Rectangle(x0, y0, x1 - x0, y1 - y0);
+        clipRects = rects;
+    }
+
+    /** Points {@link #activeClip} at the clip as a native rect list (clipped to the image)
+     *  and returns its rect count; 0 means nothing is drawable. */
+    private int prepareClip() {
+        if (clipRects != null) {
+            activeClip = clipRects;
+            return clipRects.length / 4;
+        }
+        int x0 = Math.max(clip.x, 0), y0 = Math.max(clip.y, 0);
+        int x1 = Math.min(clipX1(), width), y1 = Math.min(clipY1(), height);
+        if (x0 >= x1 || y0 >= y1) return 0;
+        clipScratch[0] = x0; clipScratch[1] = y0; clipScratch[2] = x1; clipScratch[3] = y1;
+        activeClip = clipScratch;
+        return 1;
     }
 
     private Rectangle clipped(int x, int y, int w, int h) {
@@ -123,6 +173,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
         copy.background = background;
         copy.font = font;
         copy.clip = new Rectangle(clip);
+        copy.clipRects = clipRects;
         copy.transform.setTransform(transform);
         copy.composite = composite;
         copy.stroke = stroke;
@@ -223,6 +274,10 @@ public class BufferedImageGraphics2D extends Graphics2D {
         } else {
             ax = devX(x); ay = devY(y); ax2 = devX(x + (double) w); ay2 = devY(y + (double) h);
         }
+        if (clipRects != null) {
+            setClipRects(ClipRegion.intersect(clipRects, clipRects.length / 4, new int[] {ax, ay, ax2, ay2}, 1));
+            return;
+        }
         int x0 = Math.max(clip.x, ax);
         int y0 = Math.max(clip.y, ay);
         int x1 = Math.min(clip.x + clip.width, ax2);
@@ -254,30 +309,101 @@ public class BufferedImageGraphics2D extends Graphics2D {
         transform.setTransform(in[0], in[1], in[2], in[3], in[4], in[5]);
     }
 
-    /** Captures clip into out[0..3] = (x, y, w, h). */
+    /** Captures clip into out[0..3] = (x, y, w, h). A non-rectangular clip's rect list
+     *  can't fit in four ints, so it goes on a LIFO stack that {@link #restoreClip} pops —
+     *  a plugin component painted by hostPaint may leave a shape clip behind. Pushing the
+     *  (shared, immutable) array reference allocates nothing. */
     public void snapshotClip(int[] out) {
         out[0] = clip.x;
         out[1] = clip.y;
         out[2] = clip.width;
         out[3] = clip.height;
+        if (clipStackDepth == clipStack.length) clipStack = java.util.Arrays.copyOf(clipStack, clipStack.length * 2);
+        clipStack[clipStackDepth++] = clipRects;
     }
 
     /** Restores clip from a previous snapshotClip() result. Reuses the existing
      *  Rectangle field via setBounds so no new instance is created. */
     public void restoreClip(int[] in) {
         clip.setBounds(in[0], in[1], in[2], in[3]);
+        if (clipStackDepth > 0) {
+            clipRects = clipStack[--clipStackDepth];
+            clipStack[clipStackDepth] = null;
+        } else {
+            clipRects = null;
+        }
     }
     @Override public void setClip(int x, int y, int w, int h) {
         clip = deviceRect(x, y, w, h);
+        clipRects = null;
     }
-    @Override public Shape getClip() { return getClipBounds(); }
+    @Override public Shape getClip() {
+        if (clipRects == null) return getClipBounds();
+        // Back to user space; the rects are disjoint, so the Area just merges their seams.
+        java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
+        double s = deviceScale, tx = transform.getTranslateX(), ty = transform.getTranslateY();
+        for (int i = 0; i < clipRects.length; i += 4) {
+            double x0 = clipRects[i] / s - tx, y0 = clipRects[i + 1] / s - ty;
+            double x1 = clipRects[i + 2] / s - tx, y1 = clipRects[i + 3] / s - ty;
+            p.moveTo(x0, y0); p.lineTo(x1, y0); p.lineTo(x1, y1); p.lineTo(x0, y1); p.closePath();
+        }
+        return new java.awt.geom.Area(p);
+    }
     @Override public void setClip(Shape shape) {
         syncTarget();
-        if (shape == null) clip = new Rectangle(0, 0, width, height);
-        else {
+        clipRects = null;
+        if (shape == null) {
+            clip = new Rectangle(0, 0, width, height);
+            return;
+        }
+        if (shape instanceof Rectangle) {
+            Rectangle b = (Rectangle) shape;
+            clip = deviceRect(b.x, b.y, b.width, b.height);
+            return;
+        }
+        int[] r = deviceClipFor(shape, 0, 0, width, height);
+        if (r == null) {
             Rectangle b = shape.getBounds();
             clip = deviceRect(b.x, b.y, b.width, b.height);
+            return;
         }
+        setClipRects(r);
+    }
+
+    @Override public void clip(Shape s) {
+        if (s == null) {
+            setClip(null);
+            return;
+        }
+        if (s instanceof Rectangle) {
+            Rectangle r = (Rectangle) s;
+            clipRect(r.x, r.y, r.width, r.height);
+            return;
+        }
+        syncTarget();
+        int bx0 = Math.max(clip.x, 0), by0 = Math.max(clip.y, 0);
+        int bx1 = Math.min(clipX1(), width), by1 = Math.min(clipY1(), height);
+        int[] r = deviceClipFor(s, bx0, by0, bx1, by1);
+        if (r == null) {
+            Rectangle b = s.getBounds();
+            clipRect(b.x, b.y, b.width, b.height);
+            return;
+        }
+        if (clipRects != null) r = ClipRegion.intersect(r, r.length / 4, clipRects, clipRects.length / 4);
+        setClipRects(r);
+    }
+
+    /** Rasterize a clip shape (user space) to device rects within the given bounds, with
+     *  the fill pixel-centre rule; null when the shape has no path to walk. Rectilinear
+     *  shapes with integer edges (Rectangle2D, a rect-minus-rects Area) come out exact. */
+    private int[] deviceClipFor(Shape shape, int bx0, int by0, int bx1, int by1) {
+        java.awt.geom.PathIterator it;
+        try { it = shape.getPathIterator(null); } catch (Throwable t) { it = null; }
+        if (it == null) return null;
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        c.appendFlattened(it, transform, deviceScale, 0.25);
+        return ClipRegion.rasterize(c, c.isEvenOdd(), bx0, by0, bx1, by1);
     }
 
     /** Unclipped device rect for a logical rect. */
@@ -307,9 +433,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     private void drawScaledLine(int x1, int y1, int x2, int y2) {
         if (transformIsTranslateOnly() && (x1 == x2 || y1 == y2)) {
             int lx = Math.min(x1, x2), ly = Math.min(y1, y2);
-            Rectangle r = clippedDevice(lx, ly, Math.max(x1, x2) - lx + 1, Math.max(y1, y2) - ly + 1);
-            if (r.width == 0 || r.height == 0) return;
-            AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
+            fillDevice(clippedDevice(lx, ly, Math.max(x1, x2) - lx + 1, Math.max(y1, y2) - ly + 1),
                 foreground.getRGB(), compositeRule());
             return;
         }
@@ -324,19 +448,23 @@ public class BufferedImageGraphics2D extends Graphics2D {
         double hw = s * 0.5;
         double nx = -dy / len * hw, ny = dx / len * hw;
         double ex = dx / len * hw, ey = dy / len * hw;
-        int[][] scratch = THICK_SCRATCH.get();
-        int[] xs = scratch[0];
-        int[] ys = scratch[1];
-        xs[0] = (int) Math.round(ax - ex + nx); ys[0] = (int) Math.round(ay - ey + ny);
-        xs[1] = (int) Math.round(ax - ex - nx); ys[1] = (int) Math.round(ay - ey - ny);
-        xs[2] = (int) Math.round(bx + ex - nx); ys[2] = (int) Math.round(by + ey - ny);
-        xs[3] = (int) Math.round(bx + ex + nx); ys[3] = (int) Math.round(by + ey + ny);
-        AwtNative.fillPolygon(pixels, width, height, xs, ys, 4, 0, 0, foreground.getRGB(), compositeRule());
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        c.moveTo(ax - ex + nx, ay - ey + ny);
+        c.lineTo(ax - ex - nx, ay - ey - ny);
+        c.lineTo(bx + ex - nx, by + ey - ny);
+        c.lineTo(bx + ex + nx, by + ey + ny);
+        c.end(true);
+        fillContours(c, false);
     }
 
     @Override
     public void drawLine(int x1, int y1, int x2, int y2) {
         syncTarget();
+        if (!plainThinStroke()) {
+            strokeUserPolyline(new double[] {x1, y1, x2, y2}, 2, false);
+            return;
+        }
         if (deviceScale != 1f) { drawScaledLine(x1, y1, x2, y2); return; }
         int sx1, sy1, sx2, sy2;
         if (transformIsTranslateOnly()) {
@@ -347,38 +475,220 @@ public class BufferedImageGraphics2D extends Graphics2D {
             sx1 = transformX(x1, y1); sy1 = transformY(x1, y1);
             sx2 = transformX(x2, y2); sy2 = transformY(x2, y2);
         }
-        AwtNative.drawLine(pixels, width, height, sx1, sy1, sx2, sy2, foreground.getRGB());
+        drawLineDevice(sx1, sy1, sx2, sy2, 0);
+    }
+
+    /** 1px device-space line through the clip (every rect of a rect-list clip). The native
+     *  solves the visible span against each rect, so far-off endpoints cost nothing. */
+    private void drawLineDevice(int x0, int y0, int x1, int y1, int flags) {
+        int argb = foreground.getRGB(), rule = compositeRule();
+        if (clipRects == null) {
+            AwtNative.drawLine(pixels, width, height, x0, y0, x1, y1, argb, rule,
+                clip.x, clip.y, clipX1(), clipY1(), flags);
+            return;
+        }
+        int[] cr = clipRects;
+        for (int i = 0; i < cr.length; i += 4) {
+            AwtNative.drawLine(pixels, width, height, x0, y0, x1, y1, argb, rule,
+                cr[i], cr[i + 1], cr[i + 2], cr[i + 3], flags);
+        }
+    }
+
+    /** Fill device-space contours through the clip in one pass. */
+    private void fillContours(Contours c, boolean evenOdd) {
+        if (c.n == 0) return;
+        int n = prepareClip();
+        if (n == 0) return;
+        AwtNative.fillPath(pixels, width, height, c.xy, c.counts, c.n, evenOdd,
+            activeClip, n, foreground.getRGB(), compositeRule());
+    }
+
+    /** Fill a device rect already intersected with the clip bounds and image. */
+    private void fillDevice(Rectangle r, int argb, int rule) {
+        if (r.width == 0 || r.height == 0) return;
+        if (clipRects == null) {
+            AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height, argb, rule);
+            return;
+        }
+        int x1 = r.x + r.width, y1 = r.y + r.height;
+        int[] cr = clipRects;
+        for (int i = 0; i < cr.length; i += 4) {
+            int a = Math.max(r.x, cr[i]), b = Math.max(r.y, cr[i + 1]);
+            int c = Math.min(x1, cr[i + 2]), d = Math.min(y1, cr[i + 3]);
+            if (a < c && b < d) AwtNative.fillRect(pixels, width, height, a, b, c - a, d - b, argb, rule);
+        }
     }
 
     @Override
     public void fillRect(int x, int y, int w, int h) {
         syncTarget();
         Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
-        if (r.width == 0 || r.height == 0) return;
-        AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
-            foreground.getRGB(), compositeRule());
+        fillDevice(r, foreground.getRGB(), compositeRule());
     }
 
     @Override
     public void clearRect(int x, int y, int w, int h) {
         syncTarget();
         Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
-        if (r.width == 0 || r.height == 0) return;
-        AwtNative.fillRect(pixels, width, height, r.x, r.y, r.width, r.height,
-            background.getRGB(), AlphaComposite.SRC);
+        fillDevice(r, background.getRGB(), AlphaComposite.SRC);
+    }
+
+    @Override
+    public void drawRect(int x, int y, int w, int h) {
+        if (w < 0 || h < 0) return;
+        if (plainThinStroke()) {
+            super.drawRect(x, y, w, h);
+            return;
+        }
+        syncTarget();
+        strokeUserPolyline(new double[] {x, y, x + w, y, x + w, y + h, x, y + h}, 4, true);
     }
 
     private boolean strokeWidthIsOne() {
         return !(stroke instanceof BasicStroke) || ((BasicStroke) stroke).getLineWidth() <= 1f;
     }
 
+    /** sqrt(|det|) of the user transform: how much a user-space stroke width grows. */
+    private double userScale() {
+        if (transformIsTranslateOnly()) return 1.0;
+        return Math.sqrt(Math.abs(transform.getScaleX() * transform.getScaleY()
+            - transform.getShearX() * transform.getShearY()));
+    }
+
+    /** JDK "thin" stroke: a solid BasicStroke no wider than one pixel after the user
+     *  transform. Those draw as 1px Bresenham lines; everything else is stroked. */
+    private boolean plainThinStroke() {
+        if (!(stroke instanceof BasicStroke)) return false;
+        BasicStroke bs = (BasicStroke) stroke;
+        return bs.getLineWidth() * userScale() <= 1.0 && bs.getDashArray() == null;
+    }
+
+    /** Stroke a user-space polyline with the current stroke. */
+    private void strokeUserPolyline(double[] pts, int n, boolean closed) {
+        if (!(stroke instanceof BasicStroke)) {
+            java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
+            for (int i = 0; i < n; i++) {
+                if (i == 0) p.moveTo(pts[0], pts[1]); else p.lineTo(pts[i * 2], pts[i * 2 + 1]);
+            }
+            if (closed) p.closePath();
+            strokeShape(p);
+            return;
+        }
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        double s = deviceScale;
+        for (int i = 0; i < n; i++) {
+            double x = pts[i * 2], y = pts[i * 2 + 1];
+            double dx = (transform.getScaleX() * x + transform.getShearX() * y + transform.getTranslateX()) * s;
+            double dy = (transform.getShearY() * x + transform.getScaleY() * y + transform.getTranslateY()) * s;
+            if (i == 0) c.moveTo(dx, dy); else c.lineTo(dx, dy);
+        }
+        c.end(closed);
+        strokeDevice(c);
+    }
+
+    /** draw(Shape) for everything that isn't a plain thin stroke fast path. */
+    private void strokeShape(Shape s) {
+        if (!(stroke instanceof BasicStroke)) {
+            // Custom Stroke: its outline is what gets filled, as in the JDK.
+            Shape outline = stroke.createStrokedShape(s);
+            if (outline != null) fill(outline);
+            return;
+        }
+        java.awt.geom.PathIterator it;
+        try { it = s.getPathIterator(null); } catch (Throwable t) { it = null; }
+        if (it == null) {
+            Rectangle b = s.getBounds();
+            super.drawRect(b.x, b.y, b.width, b.height);
+            return;
+        }
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        c.appendFlattened(it, transform, deviceScale, 0.25);
+        strokeDevice(c);
+    }
+
+    /**
+     * Stroke a device-space path with the current BasicStroke. The path is first snapped
+     * the way Java2D's non-AA stroke normalization does (coordinates to the nearest
+     * quarter-pixel, {@code floor(v + 0.25) + 0.25}), so a 2px line on integer
+     * coordinates covers the same two pixel rows as on desktop. Thin strokes go to the
+     * Bresenham path (one LOGICAL pixel wide at deviceScale); thick ones are emitted by
+     * {@link Stroker} as overlapping pieces and filled in a single non-zero pass, so a
+     * translucent outline blends once at its corners.
+     */
+    private void strokeDevice(Contours path) {
+        BasicStroke bs = (BasicStroke) stroke;
+        if (renderingHints.get(RenderingHints.KEY_STROKE_CONTROL) != RenderingHints.VALUE_STROKE_PURE) normalize(path);
+        double scale = userScale() * deviceScale;
+        Contours[] scratch = CONTOUR_SCRATCH.get();
+        Contours src = path;
+        float[] dash = bs.getDashArray();
+        if (dash != null && dash.length > 0) {
+            Contours dashed = scratch[1];
+            dashed.reset();
+            Stroker.dash(path, dash, scale, bs.getDashPhase() * scale, dashed);
+            src = dashed;
+        }
+        double w = bs.getLineWidth() * scale;
+        if (deviceScale != 1f) {
+            w = Math.max(w, deviceScale);
+        } else if (w <= 1.0) {
+            drawThinDevice(src);
+            return;
+        }
+        Contours pieces = scratch[2];
+        pieces.reset();
+        Stroker.stroke(src, w / 2, bs.getEndCap(), bs.getLineJoin(), bs.getMiterLimit(), pieces);
+        fillContours(pieces, false);
+    }
+
+    private static void normalize(Contours c) {
+        double[] xy = c.xy;
+        for (int i = 0; i < c.nCoords; i++) xy[i] = Math.floor(xy[i] + 0.25) + 0.25;
+    }
+
+    /** Device-space polylines as 1px lines; shared vertices are plotted once. */
+    private void drawThinDevice(Contours c) {
+        int off = 0;
+        for (int k = 0; k < c.n; k++) {
+            int cnt = c.counts[k];
+            if (cnt == 1) {
+                int x = (int) Math.floor(c.xy[off]), y = (int) Math.floor(c.xy[off + 1]);
+                drawLineDevice(x, y, x, y, 0);
+            }
+            int segs = c.closed[k] && cnt > 2 ? cnt : cnt - 1;
+            for (int s = 0; s < segs; s++) {
+                int j = (s + 1) % cnt;
+                int flags = s == 0 ? 0 : LINE_SKIP_FIRST;
+                if (c.closed[k] && cnt > 2 && s == segs - 1) flags |= LINE_SKIP_LAST;
+                drawLineDevice((int) Math.floor(c.xy[off + s * 2]), (int) Math.floor(c.xy[off + s * 2 + 1]),
+                    (int) Math.floor(c.xy[off + j * 2]), (int) Math.floor(c.xy[off + j * 2 + 1]), flags);
+            }
+            off += cnt * 2;
+        }
+    }
+
+    private static final int LINE_SKIP_FIRST = 1;
+    private static final int LINE_SKIP_LAST = 2;
+
     @Override public void drawRoundRect(int x, int y, int w, int h, int aw, int ah) {
         rasterizeShape(x, y, w, h, false, (c, p, sw, sh) -> c.drawRoundRect(
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
+    /** The oval / round-rect natives only clamp to the image, so they're used only when the
+     *  shape (plus one pixel of slack) lies inside a rectangular clip; otherwise the
+     *  clipped rasterizeShape path draws it. */
+    private boolean nativeShapeFits(int x, int y, int w, int h) {
+        if (clipRects != null) return false;
+        long dx = (long) x + tx(), dy = (long) y + ty();
+        return dx - 1 >= clip.x && dy - 1 >= clip.y
+            && dx + w + 1 <= clipX1() && dy + h + 1 <= clipY1();
+    }
+
     @Override public void fillRoundRect(int x, int y, int w, int h, int aw, int ah) {
-        if (transformIsTranslateOnly() && deviceScale == 1f) {
-            syncTarget();
+        syncTarget();
+        if (transformIsTranslateOnly() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.fillRoundRect(pixels, width, height, x + tx(), y + ty(), w, h, aw, ah,
                 foreground.getRGB(), compositeRule());
             return;
@@ -387,8 +697,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
     @Override public void drawOval(int x, int y, int w, int h) {
-        if (transformIsTranslateOnly() && strokeWidthIsOne() && deviceScale == 1f) {
-            syncTarget();
+        syncTarget();
+        if (transformIsTranslateOnly() && strokeWidthIsOne() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.drawOval(pixels, width, height, x + tx(), y + ty(), w, h, foreground.getRGB());
             return;
         }
@@ -396,8 +706,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), p));
     }
     @Override public void fillOval(int x, int y, int w, int h) {
-        if (transformIsTranslateOnly() && deviceScale == 1f) {
-            syncTarget();
+        syncTarget();
+        if (transformIsTranslateOnly() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.fillOval(pixels, width, height, x + tx(), y + ty(), w, h,
                 foreground.getRGB(), compositeRule());
             return;
@@ -530,53 +840,161 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
         int dstX = adx - pad;
         int dstY = ady - pad;
-        int cx0 = clip.x, cy0 = clip.y;
-        int cx1 = clip.x + clip.width, cy1 = clip.y + clip.height;
-        int ndx = Math.max(dstX, cx0);
-        int ndy = Math.max(dstY, cy0);
-        int ndx2 = Math.min(dstX + bw, cx1);
-        int ndy2 = Math.min(dstY + bh, cy1);
-        int ndw = ndx2 - ndx;
-        int ndh = ndy2 - ndy;
-        if (ndw <= 0 || ndh <= 0) return;
-
-        AwtNative.blit(sp, bw, bh, ndx - dstX, ndy - dstY, ndw, ndh,
-            pixels, width, height, ndx, ndy, ndw, ndh,
+        blitDevice(sp, bw, bh, 0, 0, bw, bh, dstX, dstY, dstX + bw, dstY + bh,
             compositeRule(), compositeAlpha());
+    }
+
+    /**
+     * Blit {@code src[sx, sy, sw, sh]} onto the device rect [adx, adx2) x [ady, ady2)
+     * through the clip — every rect of a rect-list clip. The source window is shifted
+     * proportionally to what the clip cuts off, so the same source pixels land at the
+     * same device positions whatever the clip.
+     */
+    private void blitDevice(int[] src, int srcW, int srcH, int sx, int sy, int sw, int sh,
+                            int adx, int ady, int adx2, int ady2, int rule, float alpha) {
+        if (clipRects == null) {
+            blitInto(clip.x, clip.y, clipX1(), clipY1(), src, srcW, srcH, sx, sy, sw, sh, adx, ady, adx2, ady2, rule, alpha);
+            return;
+        }
+        int[] cr = clipRects;
+        for (int i = 0; i < cr.length; i += 4) {
+            blitInto(cr[i], cr[i + 1], cr[i + 2], cr[i + 3], src, srcW, srcH, sx, sy, sw, sh, adx, ady, adx2, ady2, rule, alpha);
+        }
+    }
+
+    private void blitInto(int cx0, int cy0, int cx1, int cy1, int[] src, int srcW, int srcH,
+                          int sx, int sy, int sw, int sh, int adx, int ady, int adx2, int ady2,
+                          int rule, float alpha) {
+        int dw = adx2 - adx, dh = ady2 - ady;
+        if (dw <= 0 || dh <= 0) return;
+        int ndx = Math.max(adx, cx0);
+        int ndy = Math.max(ady, cy0);
+        int ndw = Math.min(adx2, cx1) - ndx;
+        int ndh = Math.min(ady2, cy1) - ndy;
+        if (ndw <= 0 || ndh <= 0) return;
+        // Source shift in destination-pixel units. With non-1:1 scaling the source
+        // advance per dest pixel is sw/dw, so multiply the dst clip offset by that ratio.
+        // Use long to avoid intermediate overflow.
+        int nsx = sx + (int) ((long) (ndx - adx) * sw / dw);
+        int nsy = sy + (int) ((long) (ndy - ady) * sh / dh);
+        int nsw = (int) ((long) ndw * sw / dw);
+        int nsh = (int) ((long) ndh * sh / dh);
+        if (nsw <= 0 || nsh <= 0) return;
+        AwtNative.blit(src, srcW, srcH, nsx, nsy, nsw, nsh,
+            pixels, width, height, ndx, ndy, ndw, ndh, rule, alpha);
     }
 
     @Override
     public void drawPolyline(int[] xs, int[] ys, int n) {
-        for (int i = 1; i < n; i++) drawLine(xs[i - 1], ys[i - 1], xs[i], ys[i]);
+        drawIntPath(xs, ys, n, false);
     }
 
     @Override
     public void drawPolygon(int[] xs, int[] ys, int n) {
-        for (int i = 0; i < n; i++) {
+        drawIntPath(xs, ys, n, true);
+    }
+
+    /**
+     * Outline an int polyline / polygon with the current stroke. Thin strokes are 1px
+     * lines with each shared vertex plotted once (a translucent outline would otherwise
+     * show darker dots at every corner); anything wider, dashed, or a custom Stroke goes
+     * through the stroker as one path, so joins follow BasicStroke's join style.
+     */
+    private void drawIntPath(int[] xs, int[] ys, int n, boolean closed) {
+        if (xs == null || ys == null) return;
+        n = Math.min(n, Math.min(xs.length, ys.length));
+        if (n <= 0 || (!closed && n < 2)) return;
+        syncTarget();
+        if (!plainThinStroke()) {
+            double[] pts = new double[n * 2];
+            for (int i = 0; i < n; i++) { pts[i * 2] = xs[i]; pts[i * 2 + 1] = ys[i]; }
+            strokeUserPolyline(pts, n, closed);
+            return;
+        }
+        if (deviceScale != 1f) {
+            int segs = closed ? n : n - 1;
+            for (int i = 0; i < segs; i++) {
+                int j = (i + 1) % n;
+                drawScaledLine(xs[i], ys[i], xs[j], ys[j]);
+            }
+            return;
+        }
+        boolean translateOnly = transformIsTranslateOnly();
+        int dx = tx(), dy = ty();
+        int segs = closed ? n : n - 1;
+        int px = translateOnly ? xs[0] + dx : transformX(xs[0], ys[0]);
+        int py = translateOnly ? ys[0] + dy : transformY(xs[0], ys[0]);
+        if (segs == 0) {
+            drawLineDevice(px, py, px, py, 0);
+            return;
+        }
+        for (int i = 0; i < segs; i++) {
             int j = (i + 1) % n;
-            drawLine(xs[i], ys[i], xs[j], ys[j]);
+            int qx = translateOnly ? xs[j] + dx : transformX(xs[j], ys[j]);
+            int qy = translateOnly ? ys[j] + dy : transformY(xs[j], ys[j]);
+            int flags = i == 0 ? 0 : LINE_SKIP_FIRST;
+            if (closed && i == segs - 1 && n > 1) flags |= LINE_SKIP_LAST;
+            drawLineDevice(px, py, qx, qy, flags);
+            px = qx;
+            py = qy;
         }
     }
 
     @Override
     public void fillPolygon(int[] xs, int[] ys, int n) {
-        if (n < 3 || xs == null || ys == null) return;
+        if (xs == null || ys == null) return;
+        n = Math.min(n, Math.min(xs.length, ys.length));
+        if (n < 3) return;
         syncTarget();
-        if (transformIsTranslateOnly() && deviceScale == 1f) {
-            AwtNative.fillPolygon(pixels, width, height, xs, ys, n, tx(), ty(), foreground.getRGB(), compositeRule());
-        } else {
-            // Rotation/scale/shear present: must run each vertex through the full
-            // matrix. Quest Helper's minimap-arrow head goes through this branch
-            // (Polygon → fill → fillPolygon under a translate+rotate transform).
-            int[] sx = new int[n];
-            int[] sy = new int[n];
-            for (int i = 0; i < n; i++) {
-                sx[i] = transformX(xs[i], ys[i]);
-                sy[i] = transformY(xs[i], ys[i]);
-            }
-            AwtNative.fillPolygon(pixels, width, height, sx, sy, n, 0, 0, foreground.getRGB(), compositeRule());
+        // Full matrix per vertex (rotation included: quest-helper's minimap arrow head is
+        // a Polygon filled under a translate+rotate transform), then the same quarter-pixel
+        // normalization Java2D applies to non-AA fills; on integer vertices that's +0.25,
+        // which leaves axis-aligned edges on the same pixels.
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        c.ensureCoords(n * 2);
+        double m00 = transform.getScaleX(), m01 = transform.getShearX(), m02 = transform.getTranslateX();
+        double m10 = transform.getShearY(), m11 = transform.getScaleY(), m12 = transform.getTranslateY();
+        double s = deviceScale;
+        boolean pure = renderingHints.get(RenderingHints.KEY_STROKE_CONTROL) == RenderingHints.VALUE_STROKE_PURE;
+        double[] xy = c.xy;
+        for (int i = 0; i < n; i++) {
+            double x = xs[i], y = ys[i];
+            double dx = (m00 * x + m01 * y + m02) * s, dy = (m10 * x + m11 * y + m12) * s;
+            xy[i * 2] = pure ? dx : Math.floor(dx + 0.25) + 0.25;
+            xy[i * 2 + 1] = pure ? dy : Math.floor(dy + 0.25) + 0.25;
         }
+        c.nCoords = n * 2;
+        c.counts[0] = n;
+        c.closed[0] = true;
+        c.n = 1;
+        fillContours(c, true);
     }
+
+    /** fill(Shape) for anything without a dedicated fast path: flatten in device space and
+     *  fill all subpaths in one pass under the path's own winding rule (holes stay holes). */
+    private void fillShape(Shape s) {
+        java.awt.geom.PathIterator it;
+        try { it = s.getPathIterator(null); } catch (Throwable t) { it = null; }
+        if (it == null) {
+            Rectangle b = s.getBounds();
+            fillRect(b.x, b.y, b.width, b.height);
+            return;
+        }
+        syncTarget();
+        Contours c = CONTOUR_SCRATCH.get()[0];
+        c.reset();
+        c.appendFlattened(it, transform, deviceScale, 0.25);
+        if (renderingHints.get(RenderingHints.KEY_STROKE_CONTROL) != RenderingHints.VALUE_STROKE_PURE) normalize(c);
+        fillContours(c, c.isEvenOdd());
+    }
+
+    /** Per-thread path scratch: [0] path, [1] dashed path, [2] stroke pieces. */
+    private static final ThreadLocal<Contours[]> CONTOUR_SCRATCH = new ThreadLocal<Contours[]>() {
+        @Override protected Contours[] initialValue() {
+            return new Contours[] { new Contours(), new Contours(), new Contours() };
+        }
+    };
 
 
     @Override
@@ -597,21 +1015,34 @@ public class BufferedImageGraphics2D extends Graphics2D {
         int dx = baseX + r.boundsLeft - TextCache.PADDING;
         int dy = baseY + r.boundsTop - TextCache.PADDING;
         // Honor the clip — text in a scrolled JViewport otherwise paints
-        // outside the viewport bounds (same bug pattern as blit()). 1:1 scale
-        // here so source shift == dst clip offset.
-        int cx0 = clip.x, cy0 = clip.y;
-        int cx1 = clip.x + clip.width, cy1 = clip.y + clip.height;
-        int ndx = Math.max(dx, cx0);
-        int ndy = Math.max(dy, cy0);
-        int ndx2 = Math.min(dx + r.w, cx1);
-        int ndy2 = Math.min(dy + r.h, cy1);
-        int ndw = ndx2 - ndx;
-        int ndh = ndy2 - ndy;
-        if (ndw <= 0 || ndh <= 0) return;
-        int nsx = ndx - dx;
-        int nsy = ndy - dy;
-        AwtNative.blit(r.pixels, r.w, r.h, nsx, nsy, ndw, ndh,
-            pixels, width, height, ndx, ndy, ndw, ndh, compositeRule(), compositeAlpha());
+        // outside the viewport bounds (same bug pattern as blit()). 1:1 scale.
+        blitDevice(r.pixels, r.w, r.h, 0, 0, r.w, r.h, dx, dy, dx + r.w, dy + r.h,
+            compositeRule(), compositeAlpha());
+        if (font.isUnderlined() || font.isStrikethrough()) drawTextDecorations(str, baseX, baseY);
+    }
+
+    /**
+     * TextAttribute.UNDERLINE / STRIKETHROUGH, drawn as rects over the string's advance:
+     * the underline about a twelfth of the size below the baseline, the strikethrough a
+     * third of the ascent above it, both size/12 thick (1px at UI sizes) — close to what
+     * the JDK derives from the font's post/OS-2 tables. Quest-helper's hover links
+     * (JTextArea / JButton text) reach this through drawString.
+     */
+    private void drawTextDecorations(String str, int baseX, int baseY) {
+        BufferedImageFontMetrics fm = BufferedImageFontMetrics.forFont(font);
+        float s = deviceScale;
+        int w = Math.round(fm.stringWidth(str) * s);
+        float size = BufferedImageFontMetrics.pxSize(font) * s;
+        int thick = Math.max(1, Math.round(size / 12f));
+        int argb = foreground.getRGB(), rule = compositeRule();
+        if (font.isUnderlined()) {
+            int y = baseY + Math.max(1, Math.round(size / 12f));
+            fillDevice(clipped(baseX, y, w, thick), argb, rule);
+        }
+        if (font.isStrikethrough()) {
+            int y = baseY - Math.max(1, Math.round(fm.getAscent() * s / 3f)) - thick / 2;
+            fillDevice(clipped(baseX, y, w, thick), argb, rule);
+        }
     }
 
     /**
@@ -899,17 +1330,6 @@ public class BufferedImageGraphics2D extends Graphics2D {
             return;
         }
 
-        // Source shift in destination-pixel units. With non-1:1 scaling the
-        // source advance per dest pixel is sw/dw, so multiply the dst clip
-        // offset by that ratio. Use long to avoid intermediate overflow.
-        int leftCut = ndx - adx;
-        int topCut = ndy - ady;
-        int nsx = sx + (int) ((long) leftCut * sw / dw);
-        int nsy = sy + (int) ((long) topCut * sh / dh);
-        int nsw = (int) ((long) ndw * sw / dw);
-        int nsh = (int) ((long) ndh * sh / dh);
-        if (nsw <= 0 || nsh <= 0) return;
-
         int ruleDiag = compositeRuleFor(src);
 
         // TEMP DIAGNOSTIC: software-mode present into a Canvas backbuffer. Logs whether the
@@ -933,9 +1353,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
             }
         }
 
-        AwtNative.blit(srcPixels, src.getWidth(), src.getHeight(), nsx, nsy, nsw, nsh,
-            pixels, width, height, ndx, ndy, ndw, ndh,
-            ruleDiag, compositeAlpha());
+        blitDevice(srcPixels, src.getWidth(), src.getHeight(), sx, sy, sw, sh,
+            adx, ady, adx2, ady2, ruleDiag, compositeAlpha());
     }
 
     private static long lastSwBlitLog = 0;
@@ -1005,8 +1424,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
         }
         // The resampled run carries real alpha (opaque sources come out 0xFF), so the
         // opaque-source SRC promotion isn't needed; a SRC_OVER of an opaque pixel is a copy.
-        AwtNative.blit(out, ndw, ndh, 0, 0, ndw, ndh,
-            pixels, width, height, ndx, ndy, ndw, ndh, compositeRule(), compositeAlpha());
+        blitDevice(out, ndw, ndh, 0, 0, ndw, ndh, ndx, ndy, ndx + ndw, ndy + ndh,
+            compositeRule(), compositeAlpha());
     }
 
     /**
@@ -1053,6 +1472,10 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     @Override public void draw(Shape s) {
+        if (s == null) return;
+        // Polygon / Rectangle honour the stroke inside drawPolygon / drawRect (thin fast
+        // path, or the stroker for width > 1 — OverlayUtil.renderPolygon draws tile
+        // outlines with BasicStroke(2)).
         if (s instanceof Polygon) {
             Polygon p = (Polygon) s;
             drawPolygon(p.xpoints, p.ypoints, p.npoints);
@@ -1063,105 +1486,24 @@ public class BufferedImageGraphics2D extends Graphics2D {
             drawRect(r.x, r.y, r.width, r.height);
             return;
         }
-        if (s instanceof java.awt.geom.Ellipse2D) {
+        boolean solidBasic = stroke instanceof BasicStroke && ((BasicStroke) stroke).getDashArray() == null;
+        if (solidBasic && s instanceof java.awt.geom.Ellipse2D) {
             java.awt.geom.Ellipse2D e = (java.awt.geom.Ellipse2D) s;
             drawOval((int) e.getX(), (int) e.getY(), (int) e.getWidth(), (int) e.getHeight());
             return;
         }
-        if (s instanceof java.awt.geom.Arc2D) {
+        if (solidBasic && s instanceof java.awt.geom.Arc2D) {
             java.awt.geom.Arc2D a = (java.awt.geom.Arc2D) s;
             drawArc((int) a.getX(), (int) a.getY(), (int) a.getWidth(), (int) a.getHeight(),
                 (int) Math.round(a.getAngleStart()), (int) Math.round(a.getAngleExtent()));
             return;
         }
-        float strokeWidth = 1f;
-        int cap = BasicStroke.CAP_SQUARE;
-        if (stroke instanceof BasicStroke) {
-            BasicStroke bs = (BasicStroke) stroke;
-            strokeWidth = bs.getLineWidth();
-            cap = bs.getEndCap();
-        }
-        if (strokeWidth > 1f && strokeAndFillPath(s, strokeWidth, cap)) {
-            return;
-        }
-        if (walkShape(s, false)) return;
-        Rectangle b = s.getBounds();
-        drawRect(b.x, b.y, b.width, b.height);
-    }
-
-    private static final ThreadLocal<float[]> COORDS_SCRATCH = new ThreadLocal<float[]>() {
-        @Override protected float[] initialValue() { return new float[6]; }
-    };
-
-    private static final ThreadLocal<int[][]> THICK_SCRATCH = new ThreadLocal<int[][]>() {
-        @Override protected int[][] initialValue() { return new int[][] { new int[4], new int[4] }; }
-    };
-
-    private static final ThreadLocal<int[][]> WALK_SCRATCH = new ThreadLocal<int[][]>() {
-        @Override protected int[][] initialValue() { return new int[][] { new int[64], new int[64] }; }
-    };
-
-    private boolean strokeAndFillPath(Shape s, float width, int cap) {
-        java.awt.geom.PathIterator it = s.getPathIterator(null, 1.0);
-        if (it == null) return false;
-        float[] coords = COORDS_SCRATCH.get();
-        float firstX = 0f, firstY = 0f, curX = 0f, curY = 0f;
-        boolean hasCur = false;
-        boolean any = false;
-        while (!it.isDone()) {
-            int seg = it.currentSegment(coords);
-            switch (seg) {
-                case java.awt.geom.PathIterator.SEG_MOVETO:
-                    firstX = coords[0]; firstY = coords[1];
-                    curX = firstX; curY = firstY;
-                    hasCur = true;
-                    break;
-                case java.awt.geom.PathIterator.SEG_LINETO:
-                    if (hasCur && emitThickSegment(curX, curY, coords[0], coords[1], width, cap)) any = true;
-                    curX = coords[0]; curY = coords[1];
-                    hasCur = true;
-                    break;
-                case java.awt.geom.PathIterator.SEG_CLOSE:
-                    if (hasCur && emitThickSegment(curX, curY, firstX, firstY, width, cap)) any = true;
-                    curX = firstX; curY = firstY;
-                    break;
-                default:
-                    break;
-            }
-            it.next();
-        }
-        return any;
-    }
-
-    private boolean emitThickSegment(float x1, float y1, float x2, float y2, float width, int cap) {
-        float dx = x2 - x1;
-        float dy = y2 - y1;
-        float len = (float) Math.sqrt(dx * dx + dy * dy);
-        if (len < 1e-3f) return false;
-        float hw = width * 0.5f;
-        float nx = -dy / len * hw;
-        float ny = dx / len * hw;
-        float ex = 0f, ey = 0f;
-        if (cap == BasicStroke.CAP_SQUARE || cap == BasicStroke.CAP_ROUND) {
-            ex = dx / len * hw;
-            ey = dy / len * hw;
-        }
-        int[][] scratch = THICK_SCRATCH.get();
-        int[] xs = scratch[0];
-        int[] ys = scratch[1];
-        xs[0] = Math.round(x1 - ex + nx);
-        xs[1] = Math.round(x1 - ex - nx);
-        xs[2] = Math.round(x2 + ex - nx);
-        xs[3] = Math.round(x2 + ex + nx);
-        ys[0] = Math.round(y1 - ey + ny);
-        ys[1] = Math.round(y1 - ey - ny);
-        ys[2] = Math.round(y2 + ey - ny);
-        ys[3] = Math.round(y2 + ey + ny);
-        fillPolygon(xs, ys, 4);
-        return true;
+        syncTarget();
+        strokeShape(s);
     }
 
     @Override public void fill(Shape s) {
+        if (s == null) return;
         if (s instanceof Polygon) {
             Polygon p = (Polygon) s;
             fillPolygon(p.xpoints, p.ypoints, p.npoints);
@@ -1183,99 +1525,11 @@ public class BufferedImageGraphics2D extends Graphics2D {
                 (int) Math.round(a.getAngleStart()), (int) Math.round(a.getAngleExtent()));
             return;
         }
-        if (walkShape(s, true)) return;
-        Rectangle b = s.getBounds();
-        fillRect(b.x, b.y, b.width, b.height);
-    }
-
-    private boolean walkShape(Shape s, boolean fill) {
-        java.awt.geom.PathIterator it = s.getPathIterator(null, 1.0);
-        if (it == null) return false;
-        int[][] scratch = WALK_SCRATCH.get();
-        int[] xs = scratch[0];
-        int[] ys = scratch[1];
-        int n = 0;
-        boolean closed = false;
-        float[] coords = COORDS_SCRATCH.get();
-        boolean any = false;
-        while (!it.isDone()) {
-            int seg = it.currentSegment(coords);
-            switch (seg) {
-                case java.awt.geom.PathIterator.SEG_MOVETO:
-                    if (emitSubPath(xs, ys, n, fill, closed)) any = true;
-                    n = 0;
-                    closed = false;
-                    xs[n] = (int) coords[0]; ys[n] = (int) coords[1]; n++;
-                    break;
-                case java.awt.geom.PathIterator.SEG_LINETO:
-                    if (n >= xs.length) {
-                        // Publish the grown arrays back into the scratch. Without this the
-                        // growth was thrown away at the end of the call, so every path with
-                        // more than 64 vertices re-grew from scratch — two array allocations
-                        // per doubling, per draw.
-                        xs = grow(xs); ys = grow(ys);
-                        scratch[0] = xs; scratch[1] = ys;
-                    }
-                    xs[n] = (int) coords[0]; ys[n] = (int) coords[1]; n++;
-                    break;
-                case java.awt.geom.PathIterator.SEG_CLOSE:
-                    closed = true;
-                    if (emitSubPath(xs, ys, n, fill, closed)) any = true;
-                    n = 0;
-                    closed = false;
-                    break;
-                default:
-                    break;
-            }
-            it.next();
-        }
-        if (emitSubPath(xs, ys, n, fill, closed)) any = true;
-        return any;
-    }
-
-
-    /**
-     * Rasterize a single sub-path. Three shapes are possible per emission:
-     *   - n == 2 → a single straight segment (stroked as drawLine, never filled)
-     *   - n  > 2 with SEG_CLOSE → a closed polygon (fillPolygon if fill, else closed polyline)
-     *   - n  > 2 without SEG_CLOSE → an open polyline (stroked as a chain of drawLines; fills
-     *     are still rasterized as polygons because that's what Graphics2D.fill(Shape) implies)
-     * The previous implementation gated everything on {@code n >= 3} and always drew closed,
-     * so paths that were a sequence of two-vertex {@code moveTo + lineTo} pairs (NPC unaggro
-     * area boundary lines, etc.) emitted nothing.
-     */
-    private boolean emitSubPath(int[] xs, int[] ys, int n, boolean fill, boolean closed) {
-        if (fill) {
-            if (n < 3) return false;
-            fillPolygon(xs, ys, n);
-            return true;
-        }
-        if (n < 2) return false;
-        if (n == 2) {
-            drawLine(xs[0], ys[0], xs[1], ys[1]);
-            return true;
-        }
-        if (closed) {
-            drawClosedPolyline(xs, ys, n);
-        } else {
-            drawOpenPolyline(xs, ys, n);
-        }
-        return true;
-    }
-
-    private void drawOpenPolyline(int[] xs, int[] ys, int n) {
-        for (int i = 0; i < n - 1; i++) drawLine(xs[i], ys[i], xs[i + 1], ys[i + 1]);
-    }
-
-    private void drawClosedPolyline(int[] xs, int[] ys, int n) {
-        for (int i = 0; i < n - 1; i++) drawLine(xs[i], ys[i], xs[i + 1], ys[i + 1]);
-        drawLine(xs[n - 1], ys[n - 1], xs[0], ys[0]);
-    }
-
-    private static int[] grow(int[] a) {
-        int[] n = new int[a.length * 2];
-        System.arraycopy(a, 0, n, 0, a.length);
-        return n;
+        // Everything else (paths with holes, Areas, Rectangle2D.Double, ...) is filled in
+        // one pass under its own winding rule. Moveto/lineto pairs (NPC unaggro area
+        // boundary lines) are open two-point subpaths here: nothing to fill, but draw()
+        // keeps them as segments.
+        fillShape(s);
     }
 
     @Override public Composite getComposite() { return composite; }

@@ -42,12 +42,13 @@ public abstract class Arc2D extends RectangularShape {
 
     @Override
     public PathIterator getPathIterator(AffineTransform at) {
-        return new Ellipse2D.EmptyPathIterator();
+        return ArcIterator.arc(getX(), getY(), getWidth(), getHeight(),
+            getAngleStart(), getAngleExtent(), getArcType(), at);
     }
 
     @Override
     public PathIterator getPathIterator(AffineTransform at, double flatness) {
-        return new Ellipse2D.EmptyPathIterator();
+        return getPathIterator(at);
     }
 
     public static class Double extends Arc2D implements Serializable {

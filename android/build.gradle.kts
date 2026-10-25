@@ -101,7 +101,7 @@ configurations.configureEach {
 // data/<target>.jar the desugar chain below consumes.
 val versionMajor = 1
 val versionMinor = 0
-val versionPatch = 52
+val versionPatch = 53
 val target = "runelite-1.13.4-injected-40104541855.297"
 
 // --------------------------------------------------------------------------------------
@@ -348,6 +348,9 @@ if (androidSdkAvailable) {
         // resource-packs plugin needs — without it it dies at injector creation with
         // NoClassDefFoundError: org/tomlj/TomlTable.
         "implementation"("org.tomlj:tomlj:1.1.1")
+        // D8, run in-process by PluginDexer to convert upstream hub jars (JVM bytecode) to
+        // dex on the device. Pure Java; kept whole in proguard-rules.pro.
+        "implementation"("com.android.tools:r8:9.5.28")
         "implementation"(files(androidH2.flatMap { it.archiveFile }))
         // Patched RS client (RuneLite's injected-client artifact). The raw jar has
         // invokedynamic makeConcatWithConstants sites whose recipes use constant

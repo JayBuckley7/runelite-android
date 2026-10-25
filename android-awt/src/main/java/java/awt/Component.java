@@ -76,7 +76,18 @@ public abstract class Component implements ImageObserver, Serializable {
     public int getHeight()        { return height; }
 
     public Point getLocation()    { return new Point(x, y); }
-    public Point getLocationOnScreen() { return getLocation(); }
+    /**
+     * "Screen" is the coordinate space of the topmost ancestor: every origin up the chain
+     * is summed, including the root's own location (a Window's bounds are its screen
+     * position on desktop). A JViewport scrolls its view via a negative location, so
+     * scrolled content comes out right. The JDK throws when not showing; hosts here
+     * mount and paint trees that are never "shown", so this always answers.
+     */
+    public Point getLocationOnScreen() {
+        int sx = 0, sy = 0;
+        for (Component c = this; c != null; c = c.parent) { sx += c.x; sy += c.y; }
+        return new Point(sx, sy);
+    }
     public Dimension getSize()    { return new Dimension(width, height); }
 
     private Dimension preferredSize;
@@ -245,10 +256,19 @@ public abstract class Component implements ImageObserver, Serializable {
      * is invalid then so is every ancestor, so there is nothing left to propagate.
      */
     public void invalidate() {
+        // Bumped even when already invalid: a second change (new text on a label that is
+        // still pending layout) must still discard measurements layouts have cached.
+        layoutGeneration++;
         if (!valid) return;
         valid = false;
         invalidateParent();
     }
+
+    /** Counts every invalidate() anywhere. Layout managers stamp cached child measurements
+     *  with it (see javax.swing.BoxLayout): equal stamps mean no component changed since. */
+    private static int layoutGeneration;
+
+    public static int layoutGeneration() { return layoutGeneration; }
 
     /** Walk up marking ancestors invalid, stopping at the first already-invalid one — by the
      *  invariant above, everything above it is invalid too. */

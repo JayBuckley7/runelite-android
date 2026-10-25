@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -153,9 +154,23 @@ private fun ConfigRow(field: ConfigForm.Field, current: String?, set: (String, S
         ConfigControl(field, current) { key, value ->
             if (field.warning.isNotBlank()) pending = field.warning to value else set(key, value)
         }
-        if (field.hasDefault) androidx.compose.material3.TextButton(onClick = {
-            pending = ("Reset ${field.name} to its default?" + if (field.warning.isBlank()) "" else "\n${field.warning}") to field.defaultValue
-        }) { Text("Reset to default") }
+        // Only once the value has been changed, and small: a full-size button under every
+        // setting doubled the length of every config panel. (Unset reads as the default.)
+        if (field.hasDefault && current != null && current != field.defaultValue) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                Text(
+                    "↺ Reset",
+                    color = RlPalette.TextSecondary,
+                    fontSize = 10.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(3.dp))
+                        .clickable {
+                            pending = ("Reset ${field.name} to its default?" + if (field.warning.isBlank()) "" else "\n${field.warning}") to field.defaultValue
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
     }
     pending?.let { change ->
         androidx.compose.material3.AlertDialog(onDismissRequest = { pending = null },

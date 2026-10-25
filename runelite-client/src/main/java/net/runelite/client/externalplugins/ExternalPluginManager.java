@@ -232,31 +232,39 @@ public class ExternalPluginManager
 				{
 					HttpUrl url = externalPluginClient.getJarURL(jarData);
 
+					PluginHubHooks.notify(l -> l.downloadStarted(jarData.getInternalName(), jarData.getDisplayName(), jarData.getJarSize()));
 					try (Response res = okHttpClient.newCall(new Request.Builder().url(url).build()).execute())
 					{
 						int fdownloaded = downloaded;
 						downloaded += jarData.getJarSize();
 						HashingInputStream his = new HashingInputStream(Hashing.sha256(),
 							new CountingInputStream(res.body().byteStream(), i ->
+							{
 								SplashScreen.stage(splashStart + (splashLength * .2), splashStart + (splashLength * .8),
 									null, "Downloading " + jarData.getDisplayName(),
-									i + fdownloaded, toDownload, true)));
+									i + fdownloaded, toDownload, true);
+								PluginHubHooks.notify(l -> l.downloadProgress(jarData.getInternalName(), i, jarData.getJarSize()));
+							}));
 						Files.asByteSink(jarData.getJarFile()).writeFrom(his);
 						if (!PluginHubManifest.HASH_ENCODER.encodeToString(his.hash().asBytes()).equals(jarData.getJarHash()))
 						{
 							throw new VerificationException("Plugin " + jarData.getInternalName() + " didn't match its hash");
 						}
+						PluginHubHooks.notify(l -> l.downloadFinished(jarData.getInternalName()));
 					}
 					catch (IOException | VerificationException e)
 					{
 						externalPlugins.remove(jarData);
 						log.error("Unable to download external plugin \"{}\"", jarData.getInternalName(), e);
+						PluginHubHooks.Stage stage = e instanceof VerificationException ? PluginHubHooks.Stage.VERIFY : PluginHubHooks.Stage.DOWNLOAD;
+						PluginHubHooks.notify(l -> l.failed(jarData.getInternalName(), jarData.getDisplayName(), stage, e));
 					}
 				}
 			}
 			catch (IOException | VerificationException e)
 			{
 				log.error("Unable to download external plugins", e);
+				PluginHubHooks.notify(l -> l.failed(null, null, PluginHubHooks.Stage.MANIFEST, e));
 				return;
 			}
 
@@ -310,6 +318,7 @@ public class ExternalPluginManager
 				log.info("Loading external plugin \"{}\" jar \"{}\"", jarData.getInternalName(), jarData.getJarHash());
 
 				List<Plugin> newPlugins = null;
+				PluginHubHooks.Stage stage = PluginHubHooks.Stage.LOAD;
 				try
 				{
 					PluginHubClassLoader cl = new PluginHubClassLoader(jarData, new URL[]{jarData.getJarFile().toURI().toURL()}, gson);
@@ -330,6 +339,7 @@ public class ExternalPluginManager
 					{
 						pluginManager.loadDefaultPluginConfiguration(newPlugins);
 
+						stage = PluginHubHooks.Stage.START;
 						SwingUtilities.invokeAndWait(() ->
 						{
 							try
@@ -345,6 +355,12 @@ public class ExternalPluginManager
 							}
 						});
 					}
+					List<String> names = new ArrayList<>();
+					for (Plugin p : newPlugins)
+					{
+						names.add(p.getName());
+					}
+					PluginHubHooks.notify(l -> l.loaded(jarData.getInternalName(), jarData.getDisplayName(), names));
 				}
 				catch (ThreadDeath e)
 				{
@@ -353,6 +369,8 @@ public class ExternalPluginManager
 				catch (Throwable e)
 				{
 					log.warn("Unable to start or load external plugin \"{}\"", jarData.getInternalName(), e);
+					PluginHubHooks.Stage failedStage = e instanceof PluginHubHooks.DexException ? PluginHubHooks.Stage.DEX : stage;
+					PluginHubHooks.notify(l -> l.failed(jarData.getInternalName(), jarData.getDisplayName(), failedStage, e));
 					if (newPlugins != null)
 					{
 						for (Plugin p : newPlugins)

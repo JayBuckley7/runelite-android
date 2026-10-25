@@ -32,7 +32,21 @@ public final class AwtFontRegistry
 {
 	private static final String TAG = "AwtFontRegistry";
 
-	private static final ConcurrentHashMap<String, Typeface> FAMILIES = new ConcurrentHashMap<>();
+	/** Family → faces indexed by java.awt.Font style bits (PLAIN, BOLD, ITALIC, BOLD|ITALIC).
+	 *  Arrays are replaced, never mutated, once published. */
+	private static final ConcurrentHashMap<String, Typeface[]> FAMILIES = new ConcurrentHashMap<>();
+	/** java.awt.Font style bits the registered face itself already carries (BOLD from
+	 *  OS/2 usWeightClass >= 600 / fsSelection / subfamily, ITALIC likewise). Decides
+	 *  whether a styled Font needs synthesis — RuneLite's FontManager asks for the bold
+	 *  RuneScape face with Font.BOLD and it must not be emboldened a second time. */
+	private static final ConcurrentHashMap<Typeface, Integer> FACE_STYLES = new ConcurrentHashMap<>();
+
+	/** Style bits {@code tf} already renders with; 0 for faces not registered here. */
+	public static int faceStyle(Typeface tf)
+	{
+		Integer s = tf != null ? FACE_STYLES.get(tf) : null;
+		return s != null ? s : 0;
+	}
 	private static final AtomicInteger SYNTHETIC_COUNTER = new AtomicInteger();
 
 	private AwtFontRegistry() {}
@@ -65,17 +79,14 @@ public final class AwtFontRegistry
 		String family = parseFamilyName(bytes);
 		String subfamily = parseSubfamilyName(bytes);
 		if (family == null) family = "rl-font-" + SYNTHETIC_COUNTER.incrementAndGet();
-		// Compose a unique key per file: RuneLite ships runescape.ttf + runescape_bold.ttf
-		// both with Family="RuneScape" and only differing in Subfamily ("Regular"/"Bold").
-		// Without this, the bold TTF gets silently dropped because the family name was
-		// already taken — meaning runescapeBoldFont renders in the regular face. Strip
-		// the subfamily when it's the trivial "Regular"/"Plain" so the primary face
-		// stays at the bare family name (what desktop OpenJDK reports).
-		if (subfamily != null && !subfamily.isEmpty()
-			&& !subfamily.equalsIgnoreCase("Regular")
-			&& !subfamily.equalsIgnoreCase("Plain")
-			&& !subfamily.equalsIgnoreCase("Book")
-			&& !subfamily.equalsIgnoreCase("Normal"))
+		int style = parseFaceStyle(bytes, subfamily);
+		// RIBBI faces (regular / bold / italic / bold italic) are members of their family,
+		// as on desktop: runescape_bold.ttf declares Family "RuneScape", Subfamily
+		// "Regular", and is bold only by OS/2 weight 700 + fsSelection, so a family-name
+		// key alone dropped it as a duplicate and every RuneScape BOLD request rendered
+		// the regular face. Other subfamilies ("Light", "Condensed") are distinct faces,
+		// so they keep a suffixed family name.
+		if (subfamily != null && !subfamily.isEmpty() && !isRibbi(subfamily))
 		{
 			// Avoid double-suffix when Family already ends in the same word ("RuneScape Small").
 			if (!family.toLowerCase().endsWith(" " + subfamily.toLowerCase()))
@@ -84,16 +95,47 @@ public final class AwtFontRegistry
 			}
 		}
 
-		// Re-registering the same family is a no-op — RuneLite's FontManager runs
+		// Re-registering the same face is a no-op — RuneLite's FontManager runs
 		// createFont in a static block, so each process start hits this path once
 		// per font. Reuse the existing Typeface rather than rewriting the temp file.
-		if (FAMILIES.containsKey(family)) return family;
+		Typeface[] slots = FAMILIES.get(family);
+		if (slots != null && slots[style] != null) return family;
 
 		Typeface tf = loadTypeface(bytes, family);
 		if (tf == null) return null;
-		FAMILIES.put(family, tf);
-		Log.i(TAG, "font: registered \"" + family + "\" (" + bytes.length + " bytes)");
+		FACE_STYLES.put(tf, style);
+		synchronized (FAMILIES)
+		{
+			slots = FAMILIES.get(family);
+			Typeface[] next = slots != null ? slots.clone() : new Typeface[4];
+			if (next[style] == null) next[style] = tf;
+			FAMILIES.put(family, next);
+		}
+		Log.i(TAG, "font: registered \"" + family + "\" style=" + style + " (" + bytes.length + " bytes)");
 		return family;
+	}
+
+	private static boolean isRibbi(String subfamily)
+	{
+		String s = subfamily.toLowerCase().replace("-", " ").trim();
+		return s.equals("regular") || s.equals("plain") || s.equals("book") || s.equals("normal")
+			|| s.equals("roman") || s.equals("bold") || s.equals("italic") || s.equals("oblique")
+			|| s.equals("bold italic") || s.equals("bolditalic") || s.equals("bold oblique");
+	}
+
+	/** Best registered face of {@code family} for java.awt.Font style bits: the exact
+	 *  member if registered, else the closest one (the caller synthesizes the rest, see
+	 *  {@link #faceStyle}). Same family fallbacks as {@link #lookup(String)}. */
+	public static Typeface lookup(String family, int style)
+	{
+		Typeface[] slots = slotsFor(family);
+		if (slots == null) return null;
+		style &= 3;
+		if (slots[style] != null) return slots[style];
+		if (slots[style & java.awt.Font.BOLD] != null) return slots[style & java.awt.Font.BOLD];
+		if (slots[style & java.awt.Font.ITALIC] != null) return slots[style & java.awt.Font.ITALIC];
+		for (Typeface t : slots) if (t != null) return t;
+		return null;
 	}
 
 	private static final java.util.Set<String> WARNED = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
@@ -107,17 +149,22 @@ public final class AwtFontRegistry
 	 *  so it's easy to spot in logcat. */
 	public static Typeface lookup(String family)
 	{
+		return lookup(family, java.awt.Font.PLAIN);
+	}
+
+	private static Typeface[] slotsFor(String family)
+	{
 		if (family == null) return null;
-		Typeface t = FAMILIES.get(family);
+		Typeface[] t = FAMILIES.get(family);
 		if (t != null) return t;
 		// case-insensitive
-		for (java.util.Map.Entry<String, Typeface> e : FAMILIES.entrySet())
+		for (java.util.Map.Entry<String, Typeface[]> e : FAMILIES.entrySet())
 		{
 			if (e.getKey().equalsIgnoreCase(family)) return e.getValue();
 		}
 		// substring / prefix
 		String fl = family.toLowerCase();
-		for (java.util.Map.Entry<String, Typeface> e : FAMILIES.entrySet())
+		for (java.util.Map.Entry<String, Typeface[]> e : FAMILIES.entrySet())
 		{
 			String kl = e.getKey().toLowerCase();
 			if (kl.startsWith(fl) || fl.startsWith(kl)) return e.getValue();
@@ -129,9 +176,9 @@ public final class AwtFontRegistry
 		// Last-resort: hand back whichever primary RS face is registered (prefer
 		// the unstyled "RuneScape" if available; otherwise any registered TTF).
 		// This trades strict fidelity for "the screen looks like OSRS" on Android.
-		Typeface primary = FAMILIES.get("RuneScape");
+		Typeface[] primary = FAMILIES.get("RuneScape");
 		if (primary != null) return primary;
-		java.util.Iterator<Typeface> it = FAMILIES.values().iterator();
+		java.util.Iterator<Typeface[]> it = FAMILIES.values().iterator();
 		return it.hasNext() ? it.next() : null;
 	}
 
@@ -169,6 +216,44 @@ public final class AwtFontRegistry
 	// TTF/OTF 'name' table parser — extracts the family name. Spec:
 	//   https://learn.microsoft.com/en-us/typography/opentype/spec/name
 	// ---------------------------------------------------------------------------
+
+	private static int parseFaceStyle(byte[] bytes, String subfamily)
+	{
+		int style = 0;
+		String sub = subfamily != null ? subfamily.toLowerCase() : "";
+		if (sub.contains("bold") || sub.contains("black") || sub.contains("heavy")) style |= java.awt.Font.BOLD;
+		if (sub.contains("italic") || sub.contains("oblique")) style |= java.awt.Font.ITALIC;
+		try
+		{
+			int os2 = findTable(bytes, 0x4F532F32 /* 'OS/2' */);
+			if (os2 >= 0 && os2 + 64 <= bytes.length)
+			{
+				ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
+				int weight = bb.getShort(os2 + 4) & 0xFFFF;
+				int fsSelection = bb.getShort(os2 + 62) & 0xFFFF;
+				if (weight >= 600 || (fsSelection & 0x20) != 0) style |= java.awt.Font.BOLD;
+				if ((fsSelection & 0x01) != 0) style |= java.awt.Font.ITALIC;
+			}
+		}
+		catch (Throwable t)
+		{
+			Log.w(TAG, "font: OS/2 parse failed", t);
+		}
+		return style;
+	}
+
+	private static int findTable(byte[] bytes, int wantTag)
+	{
+		ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
+		int numTables = bb.getShort(4) & 0xFFFF;
+		for (int i = 0; i < numTables; i++)
+		{
+			int rec = 12 + i * 16;
+			if (rec + 16 > bytes.length) break;
+			if (bb.getInt(rec) == wantTag) return bb.getInt(rec + 8);
+		}
+		return -1;
+	}
 
 	private static String parseFamilyName(byte[] bytes)    { return parseName(bytes, 1); }
 	private static String parseSubfamilyName(byte[] bytes) { return parseName(bytes, 2); }

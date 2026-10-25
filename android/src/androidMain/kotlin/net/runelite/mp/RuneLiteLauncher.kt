@@ -17,18 +17,13 @@ import net.runelite.mp.crash.AndroidCrashReporter
 private const val TAG = "RuneLiteLauncher"
 
 /**
- * Where ExternalPluginClient pulls plugin manifests / icons / jars from. Override at
- * build time by editing this constant — `runelite.pluginhub.url` from a properties file
- * would also work, but a constant keeps the override visible. The path layout below the
- * base must match the upstream contract:
- *   <base>/manifest/<version>_lite.js
- *   <base>/manifest/<version>_full.js
- *   <base>/icon/<internalName>_<iconHash>.png
- *   <base>/jar/<internalName>_<jarHash>.jar
- * Produced by `pluginhub-lib :publishHub` under data/output/site/, then pushed to a
- * public GitHub repo whose raw URL goes here.
+ * Where ExternalPluginClient pulls plugin manifests / icons / jars from: RuneLite's own
+ * hub, the same signed manifest and jars desktop uses. Jars are JVM bytecode with their
+ * dependencies bundled; [net.runelite.mp.plugins.PluginDexer] converts each one to dex on
+ * the device the first time its hash is seen. Set explicitly (it is also the client's
+ * default) because ExternalPluginBridge reads it back for icon URLs.
  */
-private const val ANDROID_PLUGIN_HUB_URL = "https://raw.githubusercontent.com/zeruth/plugin-hub-dex/main"
+private const val ANDROID_PLUGIN_HUB_URL = "https://repo.runelite.net/plugins"
 
 /**
  * Drives RuneLite's headless boot from a Compose UI: kicks off `net.runelite.client.RuneLite.main`
@@ -79,13 +74,17 @@ class RuneLiteLauncher(private val context: android.content.Context? = null) {
 
                 installLogTaps()
 
-                // Point the external plugin hub at our GitHub-hosted bundle. The unmodified
-                // ExternalPluginClient reads this via System.getProperty before its Guice
-                // injector binds the @Named("runelite.pluginhub.url") HttpUrl — must be set
-                // before RuneLite.main runs. Set to a raw.githubusercontent.com URL whose
-                // contents are produced by `pluginhub-lib :publishHub` (manifest/, jar/, icon/).
+                // Read via System.getProperty when Guice binds @Named("runelite.pluginhub.url"),
+                // so it must be set before RuneLite.main runs.
                 System.setProperty("runelite.pluginhub.url", ANDROID_PLUGIN_HUB_URL)
                 logLine("pluginhub.url → $ANDROID_PLUGIN_HUB_URL")
+                // Hub jars are JVM bytecode: PluginHubClassLoader hands each to this dexer
+                // (D8, in-process, cached per jar hash) and reports progress to the tracker
+                // the External tab renders.
+                if (context != null) {
+                    net.runelite.mp.plugins.PluginDexer.install(context)
+                    logLine("plugin hub: on-device dexing enabled")
+                }
                 // ClientUI checks this static-init time — must be set *before* RuneLite.main
                 // touches that class. With this on, ClientUI never adds its JTabbedPane
                 // sidebar or ClientToolbarPanel to the visible component tree and
@@ -94,13 +93,8 @@ class RuneLiteLauncher(private val context: android.content.Context? = null) {
                 // and occasionally paint into the bitmap blit.
                 System.setProperty("runelite.headlessChrome", "true")
                 logLine("headlessChrome → true (AWT sidebar/toolbar suppressed at source)")
-                // The bundled trust anchor is upstream RL's 4096-bit cert that signs the
-                // official hub. Our manifest is signed by the 2048-bit keystore that
-                // `pluginhub-lib :generateKeys` produces — ship that cert as a sibling
-                // resource (`externalplugins-android.crt`) and point ExternalPluginClient
-                // at it. Desktop never sets this property and stays on upstream's cert.
-                System.setProperty("runelite.pluginhub.cert", "externalplugins-android.crt")
-                logLine("pluginhub.cert → externalplugins-android.crt")
+                // The manifest is verified against the bundled upstream externalplugins.crt,
+                // exactly as on desktop — no runelite.pluginhub.cert override any more.
 
                 try {
                     beforeSeed?.invoke()

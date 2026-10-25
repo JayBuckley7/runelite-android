@@ -39,16 +39,24 @@ object AwtNative {
         argb: Int, compositeRule: Int,
     )
 
+    /** 1px Bresenham line, clipped to the half-open device rect [clipX0,clipX1)x[clipY0,clipY1).
+     *  [flags]: 1 = skip the first pixel, 2 = skip the last (shared polyline vertices). */
     @JvmStatic external fun drawLine(
         pixels: IntArray, imgW: Int, imgH: Int,
         x0: Int, y0: Int, x1: Int, y1: Int,
-        argb: Int,
+        argb: Int, compositeRule: Int,
+        clipX0: Int, clipY0: Int, clipX1: Int, clipY1: Int,
+        flags: Int,
     )
 
-    @JvmStatic external fun fillPolygon(
+    /** Pixel-centre scanline fill of [nContours] implicitly closed contours (device-space
+     *  x,y pairs in [coords], vertex counts in [counts]) under even-odd or non-zero, clipped
+     *  to [nClip] disjoint (x0, y0, x1, y1) rects in [clip]. */
+    @JvmStatic external fun fillPath(
         pixels: IntArray, imgW: Int, imgH: Int,
-        xs: IntArray, ys: IntArray, n: Int,
-        tx: Int, ty: Int,
+        coords: DoubleArray, counts: IntArray, nContours: Int,
+        evenOdd: Boolean,
+        clip: IntArray, nClip: Int,
         argb: Int, compositeRule: Int,
     )
 

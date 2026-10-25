@@ -150,10 +150,49 @@ public class EventQueue {
      * on missing Swing API, NPE on half-constructed components, etc.).
      */
     private static void runGuarded(Runnable r) {
+        boolean outermost = taskDepth++ == 0;
+        if (outermost) {
+            edtThread = Thread.currentThread();
+            taskStart = android.os.SystemClock.uptimeMillis();
+        }
         try {
             r.run();
         } catch (Throwable e) {
             android.util.Log.w("AWT-EDT", "Uncaught exception on " + Thread.currentThread().getName(), e);
+        } finally {
+            if (--taskDepth == 0) taskStart = 0;
         }
+    }
+
+    // ---- EDT watchdog -------------------------------------------------------------------
+    // One stuck task freezes every Swing panel and anything that invokeAndWaits on the EDT,
+    // and a release build can't be thread-dumped from adb. So when a single task runs past
+    // STALL_MS, log the EDT's stack (again every REPEAT_MS while it stays stuck).
+
+    private static final long STALL_MS = 4000, REPEAT_MS = 10_000;
+    private static int taskDepth; // EDT only
+    private static volatile Thread edtThread;
+    private static volatile long taskStart; // uptime of the outermost running task, 0 when idle
+
+    static {
+        Thread watchdog = new Thread(() -> {
+            long reportedFor = 0, lastReport = 0;
+            while (true) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
+                long start = taskStart;
+                Thread edt = edtThread;
+                if (start == 0 || edt == null) continue;
+                long now = android.os.SystemClock.uptimeMillis();
+                if (now - start < STALL_MS) continue;
+                if (start == reportedFor && now - lastReport < REPEAT_MS) continue;
+                reportedFor = start;
+                lastReport = now;
+                StringBuilder sb = new StringBuilder("EDT blocked for ").append(now - start).append(" ms in one task:");
+                for (StackTraceElement e : edt.getStackTrace()) sb.append("\n\tat ").append(e);
+                android.util.Log.w("AWT-EDT", sb.toString());
+            }
+        }, "AWT-EDT-Watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
     }
 }

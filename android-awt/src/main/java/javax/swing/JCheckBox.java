@@ -8,7 +8,7 @@ public class JCheckBox extends JToggleButton {
     public JCheckBox(Icon icon, boolean selected) { this(null, icon, selected); }
     public JCheckBox(String text) { this(text, null, false); }
     public JCheckBox(String text, boolean selected) { this(text, null, selected); }
-    public JCheckBox(Action a) { super(a); }
+    public JCheckBox(Action a) { this(); setAction(a); }
     public JCheckBox(String text, Icon icon) { this(text, icon, false); }
     public JCheckBox(String text, Icon icon, boolean selected) { super(text, icon, selected); }
 

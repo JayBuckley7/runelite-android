@@ -33,9 +33,9 @@ public class JLabel extends JComponent implements SwingConstants {
     public int getVerticalAlignment() { return verticalAlignment; }
     public void setVerticalAlignment(int a) { this.verticalAlignment = a; }
     public int getHorizontalTextPosition() { return horizontalTextPosition; }
-    public void setHorizontalTextPosition(int p) { this.horizontalTextPosition = p; }
+    public void setHorizontalTextPosition(int p) { this.horizontalTextPosition = p; cachedPref = null; invalidate(); }
     public int getVerticalTextPosition() { return verticalTextPosition; }
-    public void setVerticalTextPosition(int p) { this.verticalTextPosition = p; }
+    public void setVerticalTextPosition(int p) { this.verticalTextPosition = p; cachedPref = null; invalidate(); }
     public int getIconTextGap() { return iconTextGap; }
     public void setIconTextGap(int g) { this.iconTextGap = g; cachedPref = null; invalidate(); }
     public void setLabelFor(java.awt.Component c) {}
@@ -46,73 +46,180 @@ public class JLabel extends JComponent implements SwingConstants {
     /** JShadowedLabel and friends call the typed overload — accept and discard. */
     public void setUI(javax.swing.plaf.LabelUI ui) { super.setUI(ui); }
 
-    /** Cached preferred size — invalidated when text/icon/font changes. Without this every
-     * BorderLayout layout pass remeasures the text via JNI/Minikin, which dominated profile. */
+    /** Cached content size (text + icon, no insets) — invalidated when text/icon/font
+     * changes. Without this every BorderLayout layout pass remeasures the text via
+     * JNI/Minikin, which dominated profile. Insets are added per call so a border change
+     * needs no extra invalidation. */
     private java.awt.Dimension cachedPref;
+
+    // Swing's JLabel constructor ends with setAlignmentX(LEFT_ALIGNMENT).
+    { setAlignmentX(0f); }
+
+    /** BasicHTML honours the "html.disable" client property: such labels show their
+     *  markup as plain text (quest-helper's JGenerator relies on it). */
+    private boolean isHtmlText() {
+        return HtmlTextRenderer.isHtml(text) && !Boolean.TRUE.equals(getClientProperty("html.disable"));
+    }
+
+    @Override
+    protected void onClientPropertySet(Object key, Object value) {
+        super.onClientPropertySet(key, value);
+        if ("html.disable".equals(key)) { cachedPref = null; invalidate(); }
+    }
 
     @Override
     public java.awt.Dimension getPreferredSize() {
         if (isPreferredSizeSet()) return super.getPreferredSize();
+        java.awt.Insets in = getInsets();
+        boolean html = isHtmlText();
         java.awt.Dimension c = cachedPref;
-        if (c != null && !HtmlTextRenderer.isHtml(text)) return new java.awt.Dimension(c);
-        java.awt.FontMetrics fm = getFontMetrics(getFont());
-        int textW, textH;
-        if (HtmlTextRenderer.isHtml(text)) {
-            HtmlTextRenderer.Layout layout = HtmlTextRenderer.measure(text, fm, getWidth() - 2);
-            textW = layout.width;
-            textH = layout.height;
-        } else {
-            textW = text == null ? 0 : fm.stringWidth(text);
-            textH = fm.getHeight();
+        if (c == null || html) {
+            java.awt.FontMetrics fm = getFontMetrics(getFont());
+            int textW = 0, textH = 0;
+            if (html) {
+                HtmlTextRenderer.Layout layout = HtmlTextRenderer.measure(text, fm, getWidth() - in.left - in.right - 2);
+                textW = layout.width;
+                textH = layout.height;
+            } else if (text != null && !text.isEmpty()) {
+                textW = fm.stringWidth(text);
+                textH = fm.getHeight();
+            }
+            int w, h;
+            if (icon == null) {
+                w = textW; h = textH;
+            } else if (textW == 0 && textH == 0) {
+                w = icon.getIconWidth(); h = icon.getIconHeight();
+            } else {
+                // Same compound layout as paint, in an unbounded view, so text above/below
+                // the icon measures correctly too.
+                java.awt.Rectangle iconR = new java.awt.Rectangle(), textR = new java.awt.Rectangle();
+                layoutLabel(fm, textW, textH, false, new java.awt.Rectangle(0, 0, Short.MAX_VALUE, Short.MAX_VALUE), iconR, textR);
+                int x0 = Math.min(iconR.x, textR.x), y0 = Math.min(iconR.y, textR.y);
+                w = Math.max(iconR.x + iconR.width, textR.x + textR.width) - x0;
+                h = Math.max(iconR.y + iconR.height, textR.y + textR.height) - y0;
+            }
+            // Like BasicLabelUI an empty label is 0x0 (plus insets); the +2 slack on real
+            // content absorbs measurement rounding so labels at preferred width never clip.
+            c = w == 0 && h == 0 ? new java.awt.Dimension() : new java.awt.Dimension(w + 2, h + 2);
+            if (!html) cachedPref = c;
         }
-        int iconW = icon == null ? 0 : icon.getIconWidth();
-        int gap = (text != null && !text.isEmpty() && icon != null) ? iconTextGap : 0;
-        int w = iconW + gap + textW;
-        int iconH = icon == null ? 0 : icon.getIconHeight();
-        int h = Math.max(textH, iconH);
-        c = new java.awt.Dimension(w + 2, h + 2);
-        cachedPref = c;
-        return new java.awt.Dimension(c);
+        return new java.awt.Dimension(c.width + in.left + in.right, c.height + in.top + in.bottom);
+    }
+
+    // BasicLabelUI reports min = max = preferred.
+    @Override
+    public java.awt.Dimension getMinimumSize() {
+        return isMinimumSizeSet() ? super.getMinimumSize() : getPreferredSize();
+    }
+
+    @Override
+    public java.awt.Dimension getMaximumSize() {
+        return isMaximumSizeSet() ? super.getMaximumSize() : getPreferredSize();
+    }
+
+    /**
+     * SwingUtilities.layoutCompoundLabel for a left-to-right label: positions icon and text
+     * inside viewR by alignment / text position / gap, and (when `clip`) truncates plain
+     * text that doesn't fit, returning the possibly shortened "..." string. textW/textH
+     * describe the unclipped text block.
+     */
+    private String layoutLabel(java.awt.FontMetrics fm, int textW, int textH, boolean clip,
+                               java.awt.Rectangle viewR, java.awt.Rectangle iconR, java.awt.Rectangle textR) {
+        int hAlign = horizontalAlignment == LEADING ? LEFT : horizontalAlignment == TRAILING ? RIGHT : horizontalAlignment;
+        int hTextPos = horizontalTextPosition == LEADING ? LEFT : horizontalTextPosition == TRAILING ? RIGHT : horizontalTextPosition;
+        int vAlign = verticalAlignment, vTextPos = verticalTextPosition;
+        iconR.x = iconR.y = 0;
+        iconR.width = icon == null ? 0 : icon.getIconWidth();
+        iconR.height = icon == null ? 0 : icon.getIconHeight();
+        String shown = text == null ? "" : text;
+        int gap;
+        if (shown.isEmpty()) {
+            textR.width = textR.height = 0;
+            gap = 0;
+        } else {
+            gap = icon == null ? 0 : iconTextGap;
+            int availTextWidth = hTextPos == CENTER ? viewR.width : viewR.width - (iconR.width + gap);
+            textR.width = textW;
+            textR.height = textH;
+            if (clip && textW > availTextWidth) {
+                shown = clipString(fm, shown, availTextWidth);
+                textR.width = fm.stringWidth(shown);
+            }
+        }
+        if (vTextPos == TOP) textR.y = hTextPos != CENTER ? 0 : -(textR.height + gap);
+        else if (vTextPos == CENTER) textR.y = (iconR.height / 2) - (textR.height / 2);
+        else textR.y = hTextPos != CENTER ? iconR.height - textR.height : iconR.height + gap;
+
+        if (hTextPos == LEFT) textR.x = -(textR.width + gap);
+        else if (hTextPos == CENTER) textR.x = (iconR.width / 2) - (textR.width / 2);
+        else textR.x = iconR.width + gap;
+
+        int labelX = Math.min(iconR.x, textR.x);
+        int labelW = Math.max(iconR.x + iconR.width, textR.x + textR.width) - labelX;
+        int labelY = Math.min(iconR.y, textR.y);
+        int labelH = Math.max(iconR.y + iconR.height, textR.y + textR.height) - labelY;
+
+        int dy;
+        if (vAlign == TOP) dy = viewR.y - labelY;
+        else if (vAlign == CENTER) dy = (viewR.y + viewR.height / 2) - (labelY + labelH / 2);
+        else dy = (viewR.y + viewR.height) - (labelY + labelH);
+        int dx;
+        if (hAlign == LEFT) dx = viewR.x - labelX;
+        else if (hAlign == RIGHT) dx = (viewR.x + viewR.width) - (labelX + labelW);
+        else dx = (viewR.x + viewR.width / 2) - (labelX + labelW / 2);
+
+        textR.x += dx; textR.y += dy;
+        iconR.x += dx; iconR.y += dy;
+        return shown;
+    }
+
+    /** SwingUtilities2.clipString: the longest prefix that fits with "..." appended. */
+    private static String clipString(java.awt.FontMetrics fm, String s, int availTextWidth) {
+        String clip = "...";
+        availTextWidth -= fm.stringWidth(clip);
+        if (availTextWidth <= 0) return clip;
+        int width = 0, n = 0;
+        for (int len = s.length(); n < len; n++) {
+            int cp = s.codePointAt(n);
+            int cw = fm.stringWidth(new String(Character.toChars(cp)));
+            if (width + cw > availTextWidth) break;
+            width += cw;
+            if (Character.charCount(cp) == 2) n++;
+        }
+        // Per-char widths ignore kerning; settle on the real measured prefix.
+        while (n > 0 && fm.stringWidth(s.substring(0, n)) > availTextWidth) n--;
+        return s.substring(0, n) + clip;
     }
 
     @Override
     protected void paintComponent(java.awt.Graphics g) {
         super.paintComponent(g);
         java.awt.FontMetrics fm = g.getFontMetrics(getFont());
-        boolean html = HtmlTextRenderer.isHtml(text);
-        HtmlTextRenderer.Layout htmlLayout = html ? HtmlTextRenderer.measure(text, fm, getWidth() - 2) : null;
-        int textW = htmlLayout != null ? htmlLayout.width
-            : (text == null ? 0 : fm.stringWidth(text));
-        int textH = htmlLayout != null ? htmlLayout.height : fm.getHeight();
-        int iconW = icon == null ? 0 : icon.getIconWidth();
-        int iconH = icon == null ? 0 : icon.getIconHeight();
-        int gap = (text != null && !text.isEmpty() && icon != null) ? iconTextGap : 0;
-        int contentW = iconW + gap + textW;
-        int x;
-        switch (horizontalAlignment) {
-            case CENTER:   x = (getWidth() - contentW) / 2; break;
-            case RIGHT:
-            case TRAILING: x = getWidth() - contentW; break;
-            default:       x = 0;
-        }
-        int y = (getHeight() - Math.max(textH, iconH)) / 2;
+        java.awt.Insets in = getInsets();
+        java.awt.Rectangle viewR = new java.awt.Rectangle(in.left, in.top,
+            getWidth() - in.left - in.right, getHeight() - in.top - in.bottom);
+        boolean html = isHtmlText();
+        HtmlTextRenderer.Layout htmlLayout = html ? HtmlTextRenderer.measure(text, fm, viewR.width - 2) : null;
+        boolean hasText = text != null && !text.isEmpty();
+        int textW = htmlLayout != null ? htmlLayout.width : (hasText ? fm.stringWidth(text) : 0);
+        int textH = htmlLayout != null ? htmlLayout.height : (hasText ? fm.getHeight() : 0);
+        java.awt.Rectangle iconR = new java.awt.Rectangle(), textR = new java.awt.Rectangle();
+        // HTML wraps/clips inside its own layout; only plain text gets the "..." treatment.
+        String shown = layoutLabel(fm, textW, textH, htmlLayout == null, viewR, iconR, textR);
         if (icon != null) {
-            int iy = y + (Math.max(textH, iconH) - iconH) / 2;
-            try { icon.paintIcon(this, g, x, iy); } catch (Throwable ignored) {}
-            x += iconW + gap;
+            try { icon.paintIcon(this, g, iconR.x, iconR.y); } catch (Throwable ignored) {}
         }
-        if (text != null && !text.isEmpty()) {
+        if (hasText) {
             java.awt.Color saved = g.getColor();
             g.setFont(getFont());
             if (htmlLayout != null) {
                 // HTML: each run paints with its own color (or label foreground when
                 // no span override). y is the top of the text block; HtmlTextRenderer
                 // applies the per-line baseline shift internally.
-                HtmlTextRenderer.paint(g, htmlLayout, fm, x, y, getForeground());
+                HtmlTextRenderer.paint(g, htmlLayout, fm, textR.x, textR.y, getForeground());
             } else {
                 g.setColor(getForeground());
-                int baseline = y + fm.getAscent();
-                g.drawString(text, x, baseline);
+                g.drawString(shown, textR.x, textR.y + fm.getAscent());
             }
             if (saved != null) g.setColor(saved);
         }

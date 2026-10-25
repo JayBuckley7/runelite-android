@@ -2,9 +2,17 @@ package javax.swing;
 
 import java.awt.event.ActionListener;
 import java.awt.event.ItemListener;
+import javax.swing.event.ListDataEvent;
+import javax.swing.event.ListDataListener;
 import javax.swing.event.PopupMenuListener;
 
-public class JComboBox<E> extends JComponent {
+/**
+ * Selection lives in the model, as in Swing: the combo listens to its ComboBoxModel and
+ * turns contentsChanged/interval events into ItemEvents (DESELECTED old, SELECTED new) and
+ * "comboBoxChanged" ActionEvents. Keeping a private copy of the selection here meant
+ * array-built combos started blank and removeAllItems() never cleared anything.
+ */
+public class JComboBox<E> extends JComponent implements ListDataListener {
     private static final long serialVersionUID = -2378717525866512215L;
 
     public interface KeySelectionManager {
@@ -13,83 +21,146 @@ public class JComboBox<E> extends JComponent {
 
     protected ComboBoxModel<E> dataModel;
     protected ListCellRenderer<? super E> renderer = new DefaultListCellRenderer();
-    private Object selectedItem;
-    private boolean editable;
-    private int maximumRowCount = 8;
+    protected Object selectedItemReminder;
+    protected boolean isEditable;
+    protected int maximumRowCount = 8;
+    protected String actionCommand = "comboBoxChanged";
+    private boolean selectingItem;
 
-    public JComboBox() { this.dataModel = new DefaultComboBoxModel<>(); }
-    public JComboBox(ComboBoxModel<E> model) { this.dataModel = model; }
-    public JComboBox(E[] items) {
-        DefaultComboBoxModel<E> m = new DefaultComboBoxModel<>();
-        for (E i : items) m.addElement(i);
-        this.dataModel = m;
-    }
-    public JComboBox(java.util.Vector<E> items) {
-        DefaultComboBoxModel<E> m = new DefaultComboBoxModel<>();
-        for (E i : items) m.addElement(i);
-        this.dataModel = m;
-    }
+    public JComboBox() { setModel(new DefaultComboBoxModel<>()); }
+    public JComboBox(ComboBoxModel<E> model) { setModel(model); }
+    public JComboBox(E[] items) { setModel(new DefaultComboBoxModel<>(items)); }
+    public JComboBox(java.util.Vector<E> items) { setModel(new DefaultComboBoxModel<>(items)); }
 
     public ComboBoxModel<E> getModel() { return dataModel; }
-    public void setModel(ComboBoxModel<E> aModel) { this.dataModel = aModel; invalidate(); }
+    public void setModel(ComboBoxModel<E> aModel) {
+        ComboBoxModel<E> old = dataModel;
+        if (old != null) old.removeListDataListener(this);
+        dataModel = aModel;
+        dataModel.addListDataListener(this);
+        // Swing takes the model's current selection without firing for it.
+        selectedItemReminder = dataModel.getSelectedItem();
+        invalidate();
+    }
     public ListCellRenderer<? super E> getRenderer() { return renderer; }
-    public void setRenderer(ListCellRenderer<? super E> r) { this.renderer = r; }
+    public void setRenderer(ListCellRenderer<? super E> r) { this.renderer = r; invalidate(); }
 
-    public boolean isEditable() { return editable; }
-    public void setEditable(boolean b) { this.editable = b; }
+    public boolean isEditable() { return isEditable; }
+    public void setEditable(boolean b) { this.isEditable = b; }
     public int getItemCount() { return dataModel.getSize(); }
     public E getItemAt(int index) { return dataModel.getElementAt(index); }
-    public void addItem(E item) {
-        if (dataModel instanceof MutableComboBoxModel) ((MutableComboBoxModel<E>) dataModel).addElement(item);
+
+    public String getActionCommand() { return actionCommand; }
+    public void setActionCommand(String aCommand) { this.actionCommand = aCommand; }
+
+    private MutableComboBoxModel<E> mutableModel() {
+        if (!(dataModel instanceof MutableComboBoxModel)) {
+            throw new RuntimeException("Cannot use this method with a non-Mutable data model.");
+        }
+        return (MutableComboBoxModel<E>) dataModel;
     }
-    public void removeItem(Object anObject) {
-        if (dataModel instanceof MutableComboBoxModel) ((MutableComboBoxModel<E>) dataModel).removeElement(anObject);
+
+    public void addItem(E item) { mutableModel().addElement(item); }
+    public void insertItemAt(E item, int index) { mutableModel().insertElementAt(item, index); }
+    public void removeItem(Object anObject) { mutableModel().removeElement(anObject); }
+    public void removeItemAt(int anIndex) { mutableModel().removeElementAt(anIndex); }
+    public void removeAllItems() {
+        MutableComboBoxModel<E> model = mutableModel();
+        int size = model.getSize();
+        if (model instanceof DefaultComboBoxModel) {
+            ((DefaultComboBoxModel<E>) model).removeAllElements();
+        } else {
+            for (int i = 0; i < size; ++i) model.removeElement(model.getElementAt(0));
+        }
+        selectedItemReminder = null;
     }
-    public void removeAllItems() {}
-    public void removeItemAt(int anIndex) {
-        if (dataModel instanceof MutableComboBoxModel) ((MutableComboBoxModel<E>) dataModel).removeElementAt(anIndex);
-    }
-    public Object getSelectedItem() { return selectedItem; }
+
+    public Object getSelectedItem() { return dataModel.getSelectedItem(); }
     public void setSelectedItem(Object anObject) {
-        if (java.util.Objects.equals(this.selectedItem, anObject)) return;
-        Object old = this.selectedItem;
-        this.selectedItem = anObject;
-        dataModel.setSelectedItem(anObject);
-        invalidate();
-        if (old != null) {
-            java.awt.event.ItemEvent dev = new java.awt.event.ItemEvent(
-                this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED, old,
-                java.awt.event.ItemEvent.DESELECTED);
-            for (java.awt.event.ItemListener l : new java.util.ArrayList<>(itemListeners)) {
-                try { l.itemStateChanged(dev); } catch (Throwable ignored) {}
+        Object objectToSelect = anObject;
+        if (selectedItemReminder == null || !selectedItemReminder.equals(anObject)) {
+            if (anObject != null && !isEditable()) {
+                // A non-editable combo rejects items that aren't in its list.
+                boolean found = false;
+                for (int i = 0; i < dataModel.getSize(); i++) {
+                    E element = dataModel.getElementAt(i);
+                    if (anObject.equals(element)) {
+                        found = true;
+                        objectToSelect = element;
+                        break;
+                    }
+                }
+                if (!found) return;
             }
+            selectingItem = true;
+            dataModel.setSelectedItem(objectToSelect);
+            selectingItem = false;
+            // For models that don't fire on selection.
+            if (selectedItemReminder != dataModel.getSelectedItem()) selectedItemChanged();
         }
-        if (anObject != null) {
-            java.awt.event.ItemEvent sev = new java.awt.event.ItemEvent(
-                this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED, anObject,
-                java.awt.event.ItemEvent.SELECTED);
-            for (java.awt.event.ItemListener l : new java.util.ArrayList<>(itemListeners)) {
-                try { l.itemStateChanged(sev); } catch (Throwable ignored) {}
-            }
-        }
-        java.awt.event.ActionEvent aev = new java.awt.event.ActionEvent(
-            this, java.awt.event.ActionEvent.ACTION_PERFORMED, "comboBoxChanged");
-        for (java.awt.event.ActionListener l : new java.util.ArrayList<>(actionListeners)) {
-            try { l.actionPerformed(aev); } catch (Throwable ignored) {}
-        }
+        fireActionEvent();
     }
     public int getSelectedIndex() {
-        if (selectedItem == null || dataModel == null) return -1;
+        Object sObject = dataModel.getSelectedItem();
         for (int i = 0; i < dataModel.getSize(); i++) {
-            if (java.util.Objects.equals(dataModel.getElementAt(i), selectedItem)) return i;
+            E obj = dataModel.getElementAt(i);
+            if (obj != null && obj.equals(sObject)) return i;
         }
         return -1;
     }
     public void setSelectedIndex(int anIndex) {
-        if (dataModel == null || anIndex < 0 || anIndex >= dataModel.getSize()) return;
-        setSelectedItem(dataModel.getElementAt(anIndex));
+        int size = dataModel.getSize();
+        if (anIndex == -1) setSelectedItem(null);
+        else if (anIndex < -1 || anIndex >= size) throw new IllegalArgumentException("setSelectedIndex: " + anIndex + " out of bounds");
+        else setSelectedItem(dataModel.getElementAt(anIndex));
     }
-    public Object[] getSelectedObjects() { return selectedItem == null ? new Object[0] : new Object[]{selectedItem}; }
+    public Object[] getSelectedObjects() {
+        Object selectedObject = getSelectedItem();
+        return selectedObject == null ? new Object[0] : new Object[]{selectedObject};
+    }
+
+    protected void selectedItemChanged() {
+        if (selectedItemReminder != null) {
+            fireItemStateChanged(new java.awt.event.ItemEvent(this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED,
+                selectedItemReminder, java.awt.event.ItemEvent.DESELECTED));
+        }
+        selectedItemReminder = dataModel.getSelectedItem();
+        if (selectedItemReminder != null) {
+            fireItemStateChanged(new java.awt.event.ItemEvent(this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED,
+                selectedItemReminder, java.awt.event.ItemEvent.SELECTED));
+        }
+        invalidate();
+    }
+
+    protected void fireItemStateChanged(java.awt.event.ItemEvent e) {
+        for (ItemListener l : new java.util.ArrayList<>(itemListeners)) {
+            try { l.itemStateChanged(e); } catch (Throwable ignored) {}
+        }
+    }
+
+    protected void fireActionEvent() {
+        java.awt.event.ActionEvent e = new java.awt.event.ActionEvent(
+            this, java.awt.event.ActionEvent.ACTION_PERFORMED, getActionCommand());
+        for (ActionListener l : new java.util.ArrayList<>(actionListeners)) {
+            try { l.actionPerformed(e); } catch (Throwable ignored) {}
+        }
+    }
+
+    // ListDataListener — Swing's JComboBox reacts to its own model exactly like this.
+    @Override public void contentsChanged(ListDataEvent e) {
+        Object oldSelection = selectedItemReminder;
+        Object newSelection = dataModel.getSelectedItem();
+        if (oldSelection == null || !oldSelection.equals(newSelection)) {
+            selectedItemChanged();
+            if (!selectingItem) fireActionEvent();
+        }
+        invalidate();
+    }
+    @Override public void intervalAdded(ListDataEvent e) {
+        if (selectedItemReminder != dataModel.getSelectedItem()) selectedItemChanged();
+        invalidate();
+    }
+    @Override public void intervalRemoved(ListDataEvent e) { contentsChanged(e); }
 
     public int getMaximumRowCount() { return maximumRowCount; }
     public void setMaximumRowCount(int count) { this.maximumRowCount = count; }
@@ -118,22 +189,96 @@ public class JComboBox<E> extends JComponent {
     public void addPopupMenuListener(PopupMenuListener l) {}
     public void removePopupMenuListener(PopupMenuListener l) {}
 
+    /** Stand-in for BasicComboBoxUI's popup list: renderers are handed a real JList and
+     *  some (quest-helper's DropdownRenderer) read its colours. */
+    private transient JList<E> renderList;
+
+    private JList<E> renderList() {
+        JList<E> list = renderList;
+        if (list == null) renderList = list = new JList<>(dataModel);
+        else if (list.getModel() != dataModel) list.setModel(dataModel);
+        list.setFont(getFont());
+        list.setForeground(getForeground());
+        list.setBackground(getBackground());
+        return list;
+    }
+
+    /** The plugin's renderer component for `item`, or null if it throws. */
+    @SuppressWarnings("unchecked")
+    private java.awt.Component rendererComponent(Object item, int index) {
+        ListCellRenderer<? super E> r = renderer;
+        if (r == null) return null;
+        try {
+            return r.getListCellRendererComponent(renderList(), (E) item, index, false, false);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String textOf(java.awt.Component c, Object item) {
+        if (c instanceof JLabel) return ((JLabel) c).getText();
+        if (c instanceof AbstractButton) return ((AbstractButton) c).getText();
+        return item == null ? "" : item.toString();
+    }
+
+    /**
+     * Text the combo's cell renderer shows for `item` (at list `index`, -1 for the
+     * current value) — what desktop Swing draws, e.g. quest-helper's title-cased enum names
+     * rather than toString()'s SHOW_MEETS_REQS. The Android panel host builds its picker
+     * from this.
+     */
+    public String hostDisplayText(Object item, int index) {
+        return textOf(rendererComponent(item, index), item);
+    }
+
     @Override public java.awt.Dimension getPreferredSize() {
         if (isPreferredSizeSet()) return super.getPreferredSize();
         java.awt.FontMetrics fm = getFontMetrics(getFont());
         int width = 60;
-        for (int i = 0; i < getItemCount(); i++) width = Math.max(width, fm.stringWidth(String.valueOf(getItemAt(i))));
+        for (int i = 0; i < getItemCount(); i++) width = Math.max(width, fm.stringWidth(hostDisplayText(getItemAt(i), i)));
         return new java.awt.Dimension(width + 24, fm.getHeight() + 10);
     }
 
+    /**
+     * BasicComboBoxUI.paintCurrentValue: the renderer component paints the selected value,
+     * with the combo's font and colours forced on it, left of the arrow.
+     */
     @Override protected void paintComponent(java.awt.Graphics g) {
         g.setColor(getBackground());
         g.fillRect(0, 0, getWidth(), getHeight());
-        g.setColor(isEnabled() ? getForeground() : java.awt.Color.GRAY);
+        java.awt.Color fg = isEnabled() ? getForeground() : java.awt.Color.GRAY;
+        g.setColor(fg);
         g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
         g.setFont(getFont());
         java.awt.FontMetrics fm = g.getFontMetrics();
-        if (selectedItem != null) g.drawString(selectedItem.toString(), 4, (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
-        g.drawString("v", Math.max(0, getWidth() - 13), (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
+        int baseline = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
+        Object selected = getSelectedItem();
+        java.awt.Component c = rendererComponent(selected, -1);
+        int cellW = Math.max(0, getWidth() - 4 - 16), cellH = Math.max(0, getHeight() - 2);
+        boolean painted = false;
+        if (c instanceof JComponent && cellW > 0 && cellH > 0) {
+            c.setFont(getFont());
+            c.setForeground(fg);
+            c.setBackground(getBackground());
+            c.setBounds(0, 0, cellW, cellH);
+            if (c instanceof java.awt.Container) ((java.awt.Container) c).validate();
+            java.awt.Graphics cg = g.create(4, 1, cellW, cellH);
+            try {
+                c.paint(cg);
+                painted = true;
+            } catch (Throwable ignored) {
+            } finally {
+                cg.dispose();
+            }
+        }
+        if (!painted) {
+            String text = textOf(c, selected);
+            if (text != null && !text.isEmpty()) {
+                g.setColor(fg);
+                g.drawString(text, 4, baseline);
+            }
+        }
+        g.setColor(fg);
+        g.drawString("v", Math.max(0, getWidth() - 13), baseline);
     }
 }

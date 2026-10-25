@@ -29,12 +29,12 @@ public abstract class Ellipse2D extends RectangularShape {
 
     @Override
     public PathIterator getPathIterator(AffineTransform at) {
-        return new EmptyPathIterator();
+        return ArcIterator.arc(getX(), getY(), getWidth(), getHeight(), 0, 360, Arc2D.CHORD, at);
     }
 
     @Override
     public PathIterator getPathIterator(AffineTransform at, double flatness) {
-        return new EmptyPathIterator();
+        return getPathIterator(at);
     }
 
     public static class Double extends Ellipse2D implements Serializable {

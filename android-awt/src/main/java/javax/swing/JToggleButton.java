@@ -12,10 +12,12 @@ public class JToggleButton extends AbstractButton {
     public JToggleButton(Icon icon, boolean selected) { this(null, icon, selected); }
     public JToggleButton(String text) { this(text, null, false); }
     public JToggleButton(String text, boolean selected) { this(text, null, selected); }
-    public JToggleButton(Action a) { setAction(a); }
+    public JToggleButton(Action a) { this(); setAction(a); }
     public JToggleButton(String text, Icon icon) { this(text, icon, false); }
     public JToggleButton(String text, Icon icon, boolean selected) {
         setModel(new ToggleButtonModel());
         setText(text); setIcon(icon); setSelected(selected);
     }
+
+    @Override boolean shouldUpdateSelectedStateFromAction() { return true; }
 }

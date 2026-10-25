@@ -44,6 +44,36 @@ public class JComponent extends Container {
     // wide despite both being set to 25, eating into the plugin name label. Removing the
     // shadows fixes that for every JComponent subclass.
 
+    /**
+     * Swing's resolution when nothing was set explicitly: a container answers from its
+     * layout manager (even 0x0, as the JDK does), and a leaf from its preferred size — the
+     * ComponentUI default that the label/list/combo delegates inherit. Component's "current
+     * size" fallback made BoxLayout's min-driven shrinking feed on its own output.
+     */
+    @Override
+    public Dimension getMinimumSize() {
+        if (isMinimumSizeSet()) return super.getMinimumSize();
+        java.awt.LayoutManager lm = getLayout();
+        if (lm != null) {
+            Dimension d = lm.minimumLayoutSize(this);
+            if (d != null) return d;
+        }
+        return getPreferredSize();
+    }
+
+    /** Container.getMaximumSize: a LayoutManager2 answers, otherwise Component's
+     *  Short.MAX_VALUE square. Labels and buttons override this with their preferred size. */
+    @Override
+    public Dimension getMaximumSize() {
+        if (isMaximumSizeSet()) return super.getMaximumSize();
+        java.awt.LayoutManager lm = getLayout();
+        if (lm instanceof java.awt.LayoutManager2) {
+            Dimension d = ((java.awt.LayoutManager2) lm).maximumLayoutSize(this);
+            if (d != null) return d;
+        }
+        return new Dimension(Short.MAX_VALUE, Short.MAX_VALUE);
+    }
+
     public boolean isDoubleBuffered() { return doubleBuffered; }
     public void setDoubleBuffered(boolean d) { this.doubleBuffered = d; }
     public boolean isOpaque() { return opaque; }
@@ -91,6 +121,45 @@ public class JComponent extends Container {
     }
     /** Subclass hook. Called whenever a client property is set, after the value is stored. */
     protected void onClientPropertySet(Object key, Object value) {}
+
+    /**
+     * Swing forwards to the nearest JComponent ancestor in its coordinates; JViewport
+     * overrides this to do the actual scrolling.
+     */
+    public void scrollRectToVisible(java.awt.Rectangle aRect) {
+        if (aRect == null) return;
+        int dx = getX(), dy = getY();
+        Container parent = getParent();
+        while (parent != null && !(parent instanceof JComponent)) {
+            dx += parent.getX();
+            dy += parent.getY();
+            parent = parent.getParent();
+        }
+        if (parent != null) {
+            aRect.x += dx;
+            aRect.y += dy;
+            ((JComponent) parent).scrollRectToVisible(aRect);
+            aRect.x -= dx;
+            aRect.y -= dy;
+        }
+    }
+
+    /** Swing's visible rect: our bounds intersected with each ancestor's, in our coordinates. */
+    public java.awt.Rectangle getVisibleRect() {
+        java.awt.Rectangle r = new java.awt.Rectangle(0, 0, getWidth(), getHeight());
+        int ox = 0, oy = 0;
+        java.awt.Component c = this;
+        Container p = getParent();
+        while (p != null && !(p instanceof java.awt.Window)) {
+            ox -= c.getX();
+            oy -= c.getY();
+            r = r.intersection(new java.awt.Rectangle(ox, oy, p.getWidth(), p.getHeight()));
+            c = p;
+            p = p.getParent();
+        }
+        if (r.width < 0 || r.height < 0) r.setSize(0, 0);
+        return r;
+    }
 
     public boolean requestFocusInWindow() { return false; }
     public void grabFocus() {}

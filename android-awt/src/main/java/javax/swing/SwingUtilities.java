@@ -43,12 +43,57 @@ public class SwingUtilities implements SwingConstants {
     public static boolean isMiddleMouseButton(MouseEvent e) { return e.getButton() == MouseEvent.BUTTON2; }
     public static boolean isRightMouseButton(MouseEvent e) { return e.getButton() == MouseEvent.BUTTON3; }
 
-    public static Point convertPoint(Component src, Point pt, Component dest) { return pt; }
-    public static Point convertPoint(Component src, int x, int y, Component dest) { return new Point(x, y); }
-    public static Rectangle convertRectangle(Component src, Rectangle r, Component dest) { return r; }
-    public static MouseEvent convertMouseEvent(Component src, MouseEvent ev, Component dest) { return ev; }
-    public static void convertPointFromScreen(Point p, Component c) {}
-    public static void convertPointToScreen(Point p, Component c) {}
+    // Conversions go through Component.getLocationOnScreen, whose "screen" is the topmost
+    // ancestor's space, so they agree with MouseEvent.getLocationOnScreen. A null end is
+    // the other end's root, as the JDK falls back to the window ancestor.
+    public static Point convertPoint(Component src, Point pt, Component dest) {
+        return convertPoint(src, pt.x, pt.y, dest);
+    }
+
+    public static Point convertPoint(Component src, int x, int y, Component dest) {
+        Point p = new Point(x, y);
+        if (src == dest || (src == null && dest == null)) return p;
+        convertPointToScreen(p, src != null ? src : topmost(dest));
+        convertPointFromScreen(p, dest != null ? dest : topmost(src));
+        return p;
+    }
+
+    public static Rectangle convertRectangle(Component src, Rectangle r, Component dest) {
+        Point p = convertPoint(src, r.x, r.y, dest);
+        return new Rectangle(p.x, p.y, r.width, r.height);
+    }
+
+    public static MouseEvent convertMouseEvent(Component src, MouseEvent ev, Component dest) {
+        Point p = convertPoint(src, ev.getX(), ev.getY(), dest);
+        Component source = dest != null ? dest : src;
+        if (ev instanceof java.awt.event.MouseWheelEvent) {
+            java.awt.event.MouseWheelEvent we = (java.awt.event.MouseWheelEvent) ev;
+            return new java.awt.event.MouseWheelEvent(source, we.getID(), we.getWhen(), we.getModifiers(),
+                p.x, p.y, we.getXOnScreen(), we.getYOnScreen(), we.getClickCount(), we.isPopupTrigger(),
+                we.getScrollType(), we.getScrollAmount(), we.getWheelRotation(), we.getPreciseWheelRotation());
+        }
+        return new MouseEvent(source, ev.getID(), ev.getWhen(), ev.getModifiers(), p.x, p.y,
+            ev.getXOnScreen(), ev.getYOnScreen(), ev.getClickCount(), ev.isPopupTrigger(), ev.getButton());
+    }
+
+    public static void convertPointFromScreen(Point p, Component c) {
+        if (c == null) return;
+        Point origin = c.getLocationOnScreen();
+        p.x -= origin.x;
+        p.y -= origin.y;
+    }
+
+    public static void convertPointToScreen(Point p, Component c) {
+        if (c == null) return;
+        Point origin = c.getLocationOnScreen();
+        p.x += origin.x;
+        p.y += origin.y;
+    }
+
+    private static Component topmost(Component c) {
+        while (c != null && c.getParent() != null) c = c.getParent();
+        return c;
+    }
 
     public static Rectangle computeUnion(int x, int y, int w, int h, Rectangle dest) {
         if (dest == null) return new Rectangle(x, y, w, h);

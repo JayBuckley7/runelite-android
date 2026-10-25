@@ -50,7 +50,17 @@ public class JEditorPane extends JTextComponent {
         } finally { copy.dispose(); }
     }
 
-    public EditorKit getEditorKitForContentType(String type) { return null; }
-    public void setEditorKitForContentType(String type, EditorKit k) {}
-    public static EditorKit createEditorKitForContentType(String type) { return null; }
+    // Swing hands back a kit for any registered type and callers cast without checking:
+    // InfoPlugin's JRichTextPane does ((HTMLEditorKit) getEditorKitForContentType("text/html"))
+    // .getStyleSheet() in its constructor, so a null here kept the Info panel from starting.
+    private final java.util.Map<String, EditorKit> kits = new java.util.HashMap<>();
+    public EditorKit getEditorKitForContentType(String type) {
+        EditorKit k = kits.get(type);
+        if (k == null && (k = createEditorKitForContentType(type)) != null) kits.put(type, k);
+        return k;
+    }
+    public void setEditorKitForContentType(String type, EditorKit k) { if (type != null) kits.put(type, k); }
+    public static EditorKit createEditorKitForContentType(String type) {
+        return "text/html".equals(type) ? new javax.swing.text.html.HTMLEditorKit() : null;
+    }
 }

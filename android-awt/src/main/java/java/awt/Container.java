@@ -28,8 +28,24 @@ public class Container extends Component {
         return add(comp, -1);
     }
 
+    /**
+     * A component has one parent: adding it elsewhere first takes it out of the old one, as
+     * the JDK's addImpl does. Without this it stayed listed in both, and the old parent's
+     * later removeAll() nulled its parent while the new one still painted it — quest-helper's
+     * AssistLevelPanel adds its title to mainPanel, then to northPanel, then clears mainPanel.
+     */
+    private void detach(Component comp) {
+        Container old = comp.getParent();
+        if (old == null) return;
+        if (old != this) old.remove(comp);
+        else if (children.remove(comp) && layout != null) layout.removeLayoutComponent(comp);
+    }
+
     public Component add(Component comp, int index) {
         if (comp == null) return null;
+        int at = children.indexOf(comp);
+        if (at >= 0 && at < index) index--;
+        detach(comp);
         if (index < 0 || index >= children.size()) children.add(comp);
         else children.add(index, comp);
         comp.setParent(this);
@@ -50,6 +66,7 @@ public class Container extends Component {
         if (children.contains(comp)) {
             // add(comp, -1) already added; just register constraint
         } else {
+            detach(comp);
             children.add(comp);
             comp.setParent(this);
         }
@@ -108,8 +125,11 @@ public class Container extends Component {
         // compute a smaller intrinsic size.
         if (isPreferredSizeSet()) return super.getPreferredSize();
         if (layout != null) {
+            // The layout's answer stands even at 0×0 (an emptied or all-hidden panel), as in
+            // the JDK. Falling back to the current size here made emptied panels keep their old
+            // height forever: preferred = current = whatever the parent last gave it.
             Dimension d = layout.preferredLayoutSize(this);
-            if (d != null && (d.width > 0 || d.height > 0)) return d;
+            if (d != null) return d;
         }
         return super.getPreferredSize();
     }

@@ -31,6 +31,24 @@ public class MouseWheelEvent extends MouseEvent {
         this.preciseWheelRotation = preciseWheelRotation;
     }
 
+    public MouseWheelEvent(Component source, int id, long when, int modifiers,
+                            int x, int y, int xAbs, int yAbs, int clickCount, boolean popupTrigger,
+                            int scrollType, int scrollAmount, int wheelRotation) {
+        this(source, id, when, modifiers, x, y, xAbs, yAbs, clickCount, popupTrigger,
+            scrollType, scrollAmount, wheelRotation, (double) wheelRotation);
+    }
+
+    public MouseWheelEvent(Component source, int id, long when, int modifiers,
+                            int x, int y, int xAbs, int yAbs, int clickCount, boolean popupTrigger,
+                            int scrollType, int scrollAmount, int wheelRotation,
+                            double preciseWheelRotation) {
+        super(source, id, when, modifiers, x, y, xAbs, yAbs, clickCount, popupTrigger, NOBUTTON);
+        this.scrollType = scrollType;
+        this.scrollAmount = scrollAmount;
+        this.wheelRotation = wheelRotation;
+        this.preciseWheelRotation = preciseWheelRotation;
+    }
+
     public int getScrollType()   { return scrollType; }
     public int getScrollAmount() { return scrollAmount; }
     public int getWheelRotation() { return wheelRotation; }
