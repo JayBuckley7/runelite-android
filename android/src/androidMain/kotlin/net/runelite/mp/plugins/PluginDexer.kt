@@ -53,6 +53,26 @@ internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
         val tmpDir = File(workDir, "${internalName}_$jarHash").apply { deleteRecursively(); mkdirs() }
         try
         {
+            val compatibleJar = File(tmpDir, "compatible.jar")
+            ZipFile(jar).use { input ->
+                val jarClasses = input.entries().asSequence()
+                    .filter { it.name.endsWith(".class") }
+                    .map { it.name.removeSuffix(".class") }.toSet()
+                ZipOutputStream(compatibleJar.outputStream().buffered()).use { output ->
+                    for (entry in input.entries())
+                    {
+                        if (entry.isDirectory) continue
+                        val bytes = input.getInputStream(entry).use { it.readBytes() }
+                        output.putNextEntry(ZipEntry(entry.name))
+                        try {
+                            output.write(DesktopRegexTransformer.rewrite(entry.name, bytes, jarClasses))
+                        } catch (e: IllegalArgumentException) {
+                            throw PluginHubHooks.DexException("desktop regex compatibility: ${e.message}", e)
+                        }
+                        output.closeEntry()
+                    }
+                }
+            }
             val errors = mutableListOf<String>()
             val handler = object : DiagnosticsHandler
             {
@@ -63,7 +83,7 @@ internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
             {
                 D8.run(
                     D8Command.builder(handler)
-                        .addProgramFiles(jar.toPath())
+                        .addProgramFiles(compatibleJar.toPath())
                         .setMinApiLevel(26)
                         .setMode(CompilationMode.RELEASE)
                         .setOutput(tmpDir.toPath(), OutputMode.DexIndexed)
@@ -151,8 +171,8 @@ internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
 
     companion object
     {
-        /** v2: resources copied alongside the dex (v1 jars held only the dex). */
-        private const val FORMAT = "v2"
+        /** v3: external JVM regex APIs use the isolated desktop engine. */
+        private const val FORMAT = "v3-regex21"
         private val DEX_NAME = Regex("""classes\d*\.dex""")
         private val DESKTOP_ONLY = listOf(
             "org/lwjgl/" to "LWJGL (desktop OpenGL)",

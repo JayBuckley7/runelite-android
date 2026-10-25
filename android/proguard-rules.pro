@@ -63,6 +63,10 @@
 -keep class net.runelite.mp.util.** { *; }
 -keep class runelite.desugar.** { *; }
 
+# Referenced by hub bytecode rewritten on the device, outside R8's input graph.
+-keep class net.runelite.mp.plugins.DesktopRegexStrings { *; }
+-keep class net.runelite.mp.compat.regex.** { *; }
+
 # Downloaded hub plugins reach H2 through the parent loader after APK shrinking.
 -keep class org.h2.** { *; }
 # Optional paths inside the retained engine: JDBC 4.2 SQLType overloads, scripted
