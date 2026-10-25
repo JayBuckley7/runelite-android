@@ -1,59 +1,44 @@
 # runelite-android
 
-An unofficial Android port of [RuneLite](https://runelite.net) — the open-source Old School RuneScape client — packaged as a standalone APK (`net.runelite.mp`).
-
----  
-  
-## Info
-`android` runs the upstream RuneLite client — the same `runelite-client`, the same plugin system, the same `runelite-api` surface — on Android, against the live OSRS gamepack. Behavior is effectively 1:1 with desktop RuneLite where the platform allows.
-
-The base GPU plugin is intact via GLES. [Experimental 117 HD support](android-hd/README.md) is available as an opt-in renderer.
-
-The **RuneLite plugin hub is mostly untested** on this client. The loader is wired up and individual plugins do load, but the catalogue as a whole hasn't been exercised — expect rough edges and please file an issue (with the plugin name) if something misbehaves.
+An unofficial Android port of [RuneLite](https://runelite.net), the open-source Old School RuneScape client, packaged as a standalone APK (`net.runelite.mp`).
 
 ---
 
-## Toolchain
+## What it is
 
-| Tool | Version |
-|---|---|
-| JDK | 17 |
-| Kotlin | 2.1.0 |
-| Android Gradle Plugin | 8.6.1 |
-| compileSdk | 34 |
-| minSdk | 26 |
-| targetSdk | 34 |
-| Jetpack Compose | 1.7.3 |
-| Android NDK | 28.2.13676358 |
-| Rust | stable, via `rust-android-gradle` 0.9.6 (target: `arm64-v8a` only) |
-| ASM | 9.6 (used by build-time desugarers) |
-| Firebase BoM | 34.14.0 |
+`runelite-android` runs upstream RuneLite on Android: the same `runelite-client`, plugin system and `runelite-api`, against the live OSRS game. It's built to behave 1:1 with desktop RuneLite wherever the platform allows.
+
+- **Official sources only.** On first launch of each RuneLite version, the app downloads the official RuneLite game client from RuneLite's servers, verifies it, and prepares it for Android on your device. It's cached after that, so later launches work offline.
+- **The official Plugin Hub.** External plugins come straight from RuneLite's Plugin Hub, the same list desktop shows, so it's never behind. Each plugin is prepared on your device the first time you install or update it.
+- **Rendering.** The stock GPU plugin runs on GLES. [117 HD](android-hd/README.md) is available as an opt-in renderer (experimental).
+- **Touch-first UI.** A native sidebar, plugin panels, configuration and the Plugin Hub, with mouse, Bluetooth and stylus support.
+- **Wear OS.** A companion watch app can mirror and configure plugins.
+
+A handful of hub plugins can't work on Android (desktop OpenGL renderers, microphone capture). They're marked as unavailable in the hub.
 
 ---
 
 ## Install
 
 1. Grab the latest APK from [Releases](../../releases).
-2. Enable "Install unknown apps" for your browser / file manager on Android.
-3. Install.
+2. Allow "Install unknown apps" for your browser or file manager.
+3. Install, then open it. The first launch downloads and prepares the game client, which takes about 20 seconds.
 
-`minSdk 26` (Android 8.0). `arm64-v8a` only — no `x86_64`/emulator build is shipped.
+The app checks for updates on launch and installs them before starting.
+
+Requires Android 8.0+ (API 26). Ships `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86`.
 
 ---
 
-## Logging in (importing credentials from desktop RuneLite)
+## Logging in
 
-OSRS login on the modern client goes through Jagex Accounts — there's no username/password prompt in the game itself anymore. `runelite-android` reuses the same `credentials.properties` file that desktop RuneLite generates, so the flow is "log in once on desktop, copy the file to your phone, import it."
+OSRS uses Jagex Accounts. Sign in from the **Accounts** screen on the splash; the login runs in-app and your session is saved on the device.
 
-If you've never set up a Jagex Account against desktop RuneLite, follow the upstream guide first: <https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts>.
+You can also import a `credentials.properties` file from desktop RuneLite, if you already have one ([Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts)).
 
-You must copy the credentials.properties file to your phone to import an account.  
-
-**Notes:**
-
-- The file is stored in the app's private storage (`/data/data/net.runelite.mp/files/accounts/`) — not readable by other apps and not backed up to Google Drive.
-- The tokens in `credentials.properties` are long-lived but not eternal; if a login starts failing after weeks/months, re-run the desktop login and re-import.
-- Deleting the app deletes the imported accounts. There's no cloud sync.
+- Accounts are stored in the app's private storage. Other apps can't read them, and they aren't backed up.
+- If a saved session stops working, use **Re-authorize** on the account.
+- Uninstalling the app removes saved accounts.
 
 ---
 
@@ -61,13 +46,35 @@ You must copy the credentials.properties file to your phone to import an account
 
 File a GitHub issue with:
 
-- Device model + Android version
-- The full crash log (the Crashlytics console will already have a deobfuscated stack trace if it's a release build — including the issue ID from the in-app crash dialog is enough)
-- Reproducer steps and which plugins are enabled
+- Device model and Android version
+- The crash ID from the in-app crash dialog (release builds report to Crashlytics), or a logcat
+- Steps to reproduce, and which plugins are enabled (name the plugin if one misbehaves)
 
 ---
 
-## Source access / contributing
+## Building
+
+| Tool | Version |
+|---|---|
+| JDK | 21 (for Gradle) |
+| Kotlin | 2.4.20 |
+| Android Gradle Plugin | 9.1.0 |
+| Compose Multiplatform | 1.12.0 |
+| compileSdk / targetSdk | 37 |
+| minSdk | 26 |
+| Android NDK | 27.1.12297006 (app), 28.2.13676358 (`android-awt`) |
+| Rust | stable, via `rust-android-gradle` 0.10.0 |
+| Firebase BoM | 34.19.0 |
+
+```
+./gradlew :android:assembleRelease
+```
+
+Release signing reads `runeliteMp.signing.*` from `local.properties`; without it the build falls back to the debug key.
+
+---
+
+## Contributing
 
 Ping me on Discord at **@therealnull**.
 
@@ -75,6 +82,6 @@ Ping me on Discord at **@therealnull**.
 
 ## Legal
 
-RuneLite's own code is BSD 2 licensed; the Android-specific layer is mine.
+RuneLite's code is BSD 2-Clause licensed; the Android-specific layer is mine.
 
-This is not affiliated with, endorsed by, or supported by Jagex Ltd. or RuneLite. "RuneScape", "Old School RuneScape", and related marks are trademarks of Jagex Ltd. The RuneLite name and logo are trademarks of RuneLite.
+This project is not affiliated with, endorsed by, or supported by Jagex Ltd. or RuneLite. "RuneScape", "Old School RuneScape" and related marks are trademarks of Jagex Ltd. The RuneLite name and logo are trademarks of RuneLite.
