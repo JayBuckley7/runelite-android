@@ -1,0 +1,6 @@
+OpenJDK regex engine, Eclipse Temurin 21.0.6+7. GPLv2 with Classpath exception.
+Sources retain their original copyright and license headers.
+Adaptations: isolated package; Android ICU combining classes; local array growth;
+generated JDK 21 emoji property ranges. Other Character properties use Android.
+Regeneration: tools-src/vendor-desktop-regex.py and GenerateEmojiProperties.java.
+src.zip SHA256: b143e58d7eb0a8d7d7ba0c4d484c1046ad34e469eaea9a8b5436ce1bc5727f7e
