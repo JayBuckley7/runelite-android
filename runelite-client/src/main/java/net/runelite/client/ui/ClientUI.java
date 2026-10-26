@@ -1057,13 +1057,25 @@ public class ClientUI
 	 */
 	public void paintOverlays(final Graphics2D graphics)
 	{
-		if (withTitleBar)
+		// Mobile supplies its own sidebar; this desktop toggle must not draw there.
+		if (HEADLESS_CHROME || withTitleBar)
 		{
+			sidebarButtonPosition.setBounds(0, 0, 0, 0);
+			return;
+		}
+
+		final BufferedImage openIcon = sidebarOpenIcon;
+		final BufferedImage closeIcon = sidebarCloseIcon;
+		final JTabbedPane sidebarPane = sidebar;
+		// The game can draw before Swing has finished initializing the sidebar.
+		if (openIcon == null || closeIcon == null || sidebarPane == null)
+		{
+			sidebarButtonPosition.setBounds(0, 0, 0, 0);
 			return;
 		}
 
 		final Client client = (Client) this.client;
-		final int x = client.getRealDimensions().width - sidebarOpenIcon.getWidth() - 5;
+		final int x = client.getRealDimensions().width - openIcon.getWidth() - 5;
 
 		// Offset sidebar button if resizable mode logout is visible
 		final Widget logoutButton = client.getWidget(InterfaceID.ToplevelPreEoc.STONE10);
@@ -1071,7 +1083,7 @@ public class ClientUI
 			? logoutButton.getHeight() + logoutButton.getRelativeY()
 			: 5;
 
-		final BufferedImage image = sidebar.isVisible() ? sidebarCloseIcon : sidebarOpenIcon;
+		final BufferedImage image = sidebarPane.isVisible() ? closeIcon : openIcon;
 
 		final Rectangle sidebarButtonRange = new Rectangle(x - 15, 0, image.getWidth() + 25, client.getRealDimensions().height);
 		final Point mousePosition = new Point(
