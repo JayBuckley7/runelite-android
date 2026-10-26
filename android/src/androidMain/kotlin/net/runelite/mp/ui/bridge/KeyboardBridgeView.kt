@@ -16,6 +16,24 @@ object SoftKeyboardController {
     val isKeyboardVisible = mutableStateOf(false)
     private var attachedViewRef: WeakReference<KeyboardInputView>? = null
 
+    var isPasswordProtectedInput = true
+        private set
+
+    fun updatePasswordMode(restricted: Boolean) {
+        val view = attachedViewRef?.get()
+        if (view == null) {
+            isPasswordProtectedInput = restricted
+            return
+        }
+        view.post {
+            if (isPasswordProtectedInput != restricted) {
+                isPasswordProtectedInput = restricted
+                val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.restartInput(view)
+            }
+        }
+    }
+
     fun registerView(view: KeyboardInputView) {
         attachedViewRef = WeakReference(view)
     }
@@ -101,9 +119,12 @@ class KeyboardInputView @JvmOverloads constructor(
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
-        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
+        outAttrs.inputType = if (SoftKeyboardController.isPasswordProtectedInput) {
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        } else {
+            InputType.TYPE_CLASS_TEXT
+        }
         outAttrs.imeOptions = EditorInfo.IME_ACTION_DONE or
                 EditorInfo.IME_FLAG_NO_EXTRACT_UI or
                 EditorInfo.IME_FLAG_NO_FULLSCREEN

@@ -1,5 +1,10 @@
 package net.runelite.client.plugins.mobile;
 
+import com.google.inject.Provides;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.mp.ui.bridge.SoftKeyboardController;
 import java.awt.Dimension;
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -45,12 +50,39 @@ public class MobileInputPlugin extends Plugin
 	@Inject private Client client;
 	@Inject private net.runelite.client.callback.ClientThread clientThread;
 
+    @Inject private MobileInputConfig config;
+
+    @Provides
+    MobileInputConfig provideConfig(ConfigManager manager)
+    {
+        return manager.getConfig(MobileInputConfig.class);
+    }
+
+    @Override
+    protected void startUp() { updateKeyboardMode(); }
+
+    @Subscribe
+    public void onGameStateChanged(GameStateChanged event) { updateKeyboardMode(); }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
+    {
+        if (MobileInputConfig.GROUP.equals(event.getGroup())) updateKeyboardMode();
+    }
+
+    private void updateKeyboardMode()
+    {
+        SoftKeyboardController.INSTANCE.updatePasswordMode(
+            client.getGameState() != GameState.LOGGED_IN || config.passwordProtectedInput());
+    }
+
 	private long lastLogMs;
 	private int lastLoggedCount = -1;
 
 	@Override
 	protected void shutDown()
 	{
+        SoftKeyboardController.INSTANCE.updatePasswordMode(true);
 		MobileHitTest.setInterfaceRects(null);
 		MobileScrollbars.publish(new MobileScrollbars.Target[0]);
             MobileSwipeScroll.publish(new MobileSwipeScroll.Target[0]);
