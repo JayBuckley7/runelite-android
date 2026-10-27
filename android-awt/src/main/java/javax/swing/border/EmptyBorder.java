@@ -15,6 +15,8 @@ public class EmptyBorder extends AbstractBorder {
         this(insets.top, insets.left, insets.bottom, insets.right);
     }
 
+    public Insets getBorderInsets() { return new Insets(top, left, bottom, right); }
+
     @Override
     public Insets getBorderInsets(Component c) {
         return new Insets(top, left, bottom, right);

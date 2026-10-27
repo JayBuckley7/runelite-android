@@ -10,6 +10,8 @@ import java.awt.FontRenderContext;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Paint;
+import java.awt.PaintContext;
+import java.awt.TexturePaint;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
@@ -497,6 +499,12 @@ public class BufferedImageGraphics2D extends Graphics2D {
     /** Fill device-space contours through the clip in one pass. */
     private void fillContours(Contours c, boolean evenOdd) {
         if (c.n == 0) return;
+        if (paint instanceof TexturePaint) {
+            int[] rects = ClipRegion.rasterize(c, evenOdd, clip.x, clip.y, clipX1(), clipY1());
+            for (int i = 0; i < rects.length; i += 4)
+                fillTexture(new Rectangle(rects[i], rects[i + 1], rects[i + 2] - rects[i], rects[i + 3] - rects[i + 1]));
+            return;
+        }
         int n = prepareClip();
         if (n == 0) return;
         AwtNative.fillPath(pixels, width, height, c.xy, c.counts, c.n, evenOdd,
@@ -522,8 +530,31 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override
     public void fillRect(int x, int y, int w, int h) {
         syncTarget();
+        if (paint instanceof TexturePaint) {
+            if (w > 0 && h > 0) fillShape(new Rectangle(x, y, w, h));
+            return;
+        }
         Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         fillDevice(r, foreground.getRGB(), compositeRule());
+    }
+
+    /** Sample visible strips and reuse the image compositor for alpha and shape clips. */
+    private void fillTexture(Rectangle r) {
+        if (r.width <= 0 || r.height <= 0) return;
+        double s = deviceScale;
+        AffineTransform device = new AffineTransform(transform.getScaleX() * s,
+            transform.getShearY() * s, transform.getShearX() * s,
+            transform.getScaleY() * s, transform.getTranslateX() * s, transform.getTranslateY() * s);
+        PaintContext context = paint.createContext(null, r, r, device, renderingHints);
+        try {
+            for (int y = r.y; y < r.y + r.height; y += 32) {
+                int h = Math.min(32, r.y + r.height - y);
+                java.awt.image.Raster raster = context.getRaster(r.x, y, r.width, h);
+                int[] data = ((java.awt.image.DataBufferInt) raster.getDataBuffer()).getData();
+                blitDevice(data, r.width, h, 0, 0, r.width, h,
+                    r.x, y, r.x + r.width, y + h, compositeRule(), compositeAlpha());
+            }
+        } finally { context.dispose(); }
     }
 
     @Override
@@ -558,6 +589,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     /** JDK "thin" stroke: a solid BasicStroke no wider than one pixel after the user
      *  transform. Those draw as 1px Bresenham lines; everything else is stroked. */
     private boolean plainThinStroke() {
+        if (paint instanceof TexturePaint) return false;
         if (!(stroke instanceof BasicStroke)) return false;
         BasicStroke bs = (BasicStroke) stroke;
         return bs.getLineWidth() * userScale() <= 1.0 && bs.getDashArray() == null;
@@ -688,6 +720,25 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override public void fillRoundRect(int x, int y, int w, int h, int aw, int ah) {
         syncTarget();
+        if (paint instanceof TexturePaint) {
+            if (w <= 0 || h <= 0) return;
+            double rx = Math.min(w, Math.abs((double) aw)) / 2;
+            double ry = Math.min(h, Math.abs((double) ah)) / 2;
+            double k = 0.5522847498307933;
+            java.awt.geom.Path2D.Double path = new java.awt.geom.Path2D.Double();
+            path.moveTo(x + rx, y);
+            path.lineTo(x + w - rx, y);
+            path.curveTo(x + w - rx + k * rx, y, x + w, y + ry - k * ry, x + w, y + ry);
+            path.lineTo(x + w, y + h - ry);
+            path.curveTo(x + w, y + h - ry + k * ry, x + w - rx + k * rx, y + h, x + w - rx, y + h);
+            path.lineTo(x + rx, y + h);
+            path.curveTo(x + rx - k * rx, y + h, x, y + h - ry + k * ry, x, y + h - ry);
+            path.lineTo(x, y + ry);
+            path.curveTo(x, y + ry - k * ry, x + rx - k * rx, y, x + rx, y);
+            path.closePath();
+            fillShape(path);
+            return;
+        }
         if (transformIsTranslateOnly() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.fillRoundRect(pixels, width, height, x + tx(), y + ty(), w, h, aw, ah,
                 foreground.getRGB(), compositeRule());
@@ -707,6 +758,10 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
     @Override public void fillOval(int x, int y, int w, int h) {
         syncTarget();
+        if (paint instanceof TexturePaint) {
+            fillShape(new java.awt.geom.Ellipse2D.Double(x, y, w, h));
+            return;
+        }
         if (transformIsTranslateOnly() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.fillOval(pixels, width, height, x + tx(), y + ty(), w, h,
                 foreground.getRGB(), compositeRule());

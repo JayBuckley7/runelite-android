@@ -99,6 +99,10 @@ public class JComponent extends Container {
 
     public void updateUI() {}
 
+    public void repaint(java.awt.Rectangle r) {
+        repaint(0, r.x, r.y, r.width, r.height);
+    }
+
     public ActionMap getActionMap() { return new ActionMap(); }
     public void setActionMap(ActionMap am) {}
     public InputMap getInputMap() { return new InputMap(); }
