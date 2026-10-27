@@ -14,6 +14,28 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     public static final int AUTO_RESIZE_LAST_COLUMN = 3;
     public static final int AUTO_RESIZE_ALL_COLUMNS = 4;
 
+    private RowSorter<? extends TableModel> sorter;
+    private java.awt.Color selectionBackground = new java.awt.Color(0x3875D6), selectionForeground = java.awt.Color.WHITE, gridColor = java.awt.Color.GRAY;
+    private boolean showGrid = true;
+    private final javax.swing.event.RowSorterListener sortListener = e -> { revalidate(); repaint(); };
+    public RowSorter<? extends TableModel> getRowSorter() { return sorter; }
+    public void setRowSorter(RowSorter<? extends TableModel> value) {
+        if (sorter != null) sorter.removeRowSorterListener(sortListener);
+        sorter = value;
+        if (sorter != null) sorter.addRowSorterListener(sortListener);
+        revalidate(); repaint();
+    }
+    public int convertRowIndexToModel(int row) { return sorter == null ? row : sorter.convertRowIndexToModel(row); }
+    public int convertRowIndexToView(int row) { return sorter == null ? row : sorter.convertRowIndexToView(row); }
+    public int rowAtPoint(java.awt.Point p) { int row = p.y / rowHeight; return p.y < 0 || row >= getRowCount() ? -1 : row; }
+    public void setGridColor(java.awt.Color c) { gridColor = c; repaint(); }
+    public java.awt.Color getGridColor() { return gridColor; }
+    public void setShowGrid(boolean value) { showGrid = value; repaint(); }
+    public void setSelectionBackground(java.awt.Color c) { selectionBackground = c; repaint(); }
+    public java.awt.Color getSelectionBackground() { return selectionBackground; }
+    public void setSelectionForeground(java.awt.Color c) { selectionForeground = c; repaint(); }
+    public java.awt.Color getSelectionForeground() { return selectionForeground; }
+    public void setTableHeader(javax.swing.table.JTableHeader header) { tableHeader = header; if (header != null) header.setTable(this); revalidate(); }
     protected TableModel dataModel;
     private javax.swing.table.TableColumnModel columnModel = new javax.swing.table.DefaultTableColumnModel();
     private javax.swing.table.JTableHeader tableHeader = new javax.swing.table.JTableHeader(columnModel);
@@ -54,15 +76,19 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
             column.setHeaderValue(dataModel.getColumnName(i));
             column.addPropertyChangeListener(event -> {
                 if ("preferredWidth".equals(event.getPropertyName())) column.setWidth(column.getPreferredWidth());
-                revalidate(); repaint(); tableHeader.revalidate(); tableHeader.repaint();
+                revalidate(); repaint(); if (tableHeader != null) { tableHeader.revalidate(); tableHeader.repaint(); }
             });
             columnModel.addColumn(column);
         }
-        tableHeader.revalidate(); tableHeader.repaint();
+        if (tableHeader != null) { tableHeader.revalidate(); tableHeader.repaint(); }
     }
     @Override public void tableChanged(javax.swing.event.TableModelEvent event) {
         if ((event == null || event.getFirstRow() == javax.swing.event.TableModelEvent.HEADER_ROW)
                 && autoCreateColumnsFromModel) createDefaultColumnsFromModel();
+        if (sorter != null) {
+            if (event == null || event.getFirstRow() == javax.swing.event.TableModelEvent.HEADER_ROW) sorter.modelStructureChanged();
+            else sorter.allRowsChanged();
+        }
         revalidate(); repaint();
     }
     public javax.swing.table.TableCellRenderer getCellRenderer(int row, int column) {
@@ -84,6 +110,7 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
             Component cell = prepareRenderer(getCellRenderer(row, col), row, col);
             java.awt.Graphics cg = g.create(bounds.x, bounds.y, bounds.width, bounds.height);
             cell.setBounds(0, 0, bounds.width, bounds.height); cell.paint(cg); cg.dispose();
+            if (showGrid) { g.setColor(gridColor); g.drawRect(bounds.x, bounds.y, bounds.width, bounds.height); }
         }
     }
     public int getRowHeight() { return rowHeight; }
@@ -111,9 +138,9 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     public boolean isCellSelected(int row, int col) { return false; }
     public void clearSelection() {}
     public void selectAll() {}
-    public Object getValueAt(int row, int col) { return dataModel.getValueAt(row, columnModel.getColumn(col).getModelIndex()); }
-    public void setValueAt(Object value, int row, int col) { dataModel.setValueAt(value, row, columnModel.getColumn(col).getModelIndex()); }
-    public int getRowCount() { return dataModel.getRowCount(); }
+    public Object getValueAt(int row, int col) { return dataModel.getValueAt(convertRowIndexToModel(row), columnModel.getColumn(col).getModelIndex()); }
+    public void setValueAt(Object value, int row, int col) { dataModel.setValueAt(value, convertRowIndexToModel(row), columnModel.getColumn(col).getModelIndex()); }
+    public int getRowCount() { return sorter == null ? dataModel.getRowCount() : sorter.getViewRowCount(); }
     public int getColumnCount() { return columnModel.getColumnCount(); }
     public String getColumnName(int col) { return dataModel.getColumnName(col); }
     public Class<?> getColumnClass(int col) { return dataModel.getColumnClass(col); }

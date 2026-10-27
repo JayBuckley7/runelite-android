@@ -22,12 +22,12 @@ public class JOptionPane extends JComponent {
     public static final int QUESTION_MESSAGE = 3;
     public static final int PLAIN_MESSAGE = -1;
 
-    public interface DialogHandler { int show(String message, String title, int optionType, Object[] options); }
+    public interface DialogHandler { int show(Object message, String title, int optionType, Object[] options); }
     private static volatile DialogHandler dialogHandler;
     public static void setDialogHandler(DialogHandler handler) { dialogHandler = handler; }
     private static int show(Object message, String title, int optionType, Object[] options) {
         DialogHandler handler = dialogHandler;
-        return handler == null ? CLOSED_OPTION : handler.show(String.valueOf(message), title, optionType, options);
+        return handler == null ? CLOSED_OPTION : handler.show(message, title, optionType, options);
     }
     public static int showConfirmDialog(Component parent, Object message) { return show(message, "Confirm", YES_NO_CANCEL_OPTION, null); }
     public static int showConfirmDialog(Component parent, Object message, String title, int optionType) { return show(message, title, optionType, null); }

@@ -16,9 +16,24 @@ public class JSpinner extends JComponent {
         }
         public JFormattedTextField getTextField() { return textField; }
         public JSpinner getSpinner() { return spinner; }
-        public void commitEdit() {}
+        public void commitEdit() throws java.text.ParseException {}
     }
 
+    public static class DateEditor extends DefaultEditor {
+        private final java.text.SimpleDateFormat format;
+        public DateEditor(JSpinner spinner) { this(spinner, "yyyy-MM-dd"); }
+        public DateEditor(JSpinner spinner, String pattern) {
+            super(spinner);
+            if (!(spinner.getModel() instanceof SpinnerDateModel)) throw new IllegalArgumentException("date model required");
+            format = new java.text.SimpleDateFormat(pattern); format.setLenient(false);
+            getTextField().setText(format.format(spinner.getValue()));
+            spinner.addChangeListener(e -> getTextField().setText(format.format(spinner.getValue())));
+            getTextField().addActionListener(e -> { try { commitEdit(); } catch (java.text.ParseException ignored) {} });
+        }
+        public java.text.SimpleDateFormat getFormat() { return format; }
+        public SpinnerDateModel getModel() { return (SpinnerDateModel)getSpinner().getModel(); }
+        @Override public void commitEdit() throws java.text.ParseException { getSpinner().setValue(format.parse(getTextField().getText())); }
+    }
     public static class NumberEditor extends DefaultEditor {
         private static final long serialVersionUID = 1L;
         public NumberEditor(JSpinner spinner) { super(spinner); }
@@ -42,7 +57,7 @@ public class JSpinner extends JComponent {
     public Object getPreviousValue() { return model.getPreviousValue(); }
     public JComponent getEditor() { return editor; }
     public void setEditor(JComponent editor) { this.editor = editor; }
-    public void commitEdit() throws java.text.ParseException {}
+    public void commitEdit() throws java.text.ParseException { if (editor instanceof DefaultEditor) ((DefaultEditor)editor).commitEdit(); }
     public void addChangeListener(ChangeListener l) { if (model != null) model.addChangeListener(l); }
     public void removeChangeListener(ChangeListener l) { if (model != null) model.removeChangeListener(l); }
     @Override public java.awt.Dimension getPreferredSize() {

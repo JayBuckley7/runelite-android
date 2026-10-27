@@ -45,7 +45,7 @@ internal fun PluginPanelHost(key: String)
     }
 }
 
-internal class SwingPanelView(context: Context, private val panelKey: String) : View(context)
+internal class SwingPanelView(context: Context, private val panelKey: String, private val hostedRoot: JComponent? = null) : View(context)
 {
     private var panel: PluginPanel? = null // AWT thread only
     private var root: JComponent? = null
@@ -123,7 +123,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                 // between them, so text and borders are rasterized at native density.
                 val pw = width
                 val ph = height
-                val lw = Math.round(BASE_LOGICAL_WIDTH / sidebarScale())
+                val lw = if (hostedRoot != null) 600 else Math.round(BASE_LOGICAL_WIDTH / sidebarScale())
                 logicalWidth = lw
                 val h = (ph * lw / pw).coerceAtLeast(1)
                 SwingUtilities.invokeLater {
@@ -132,7 +132,9 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                     var renderedMount = mountSerial
                     try {
                         if (running && attachment == attachmentSerial) {
-                            mountPanel(NavBarBridge.panel(panelKey), panelGeneration())
+                            if (hostedRoot != null) {
+                                if (root !== hostedRoot) { root = hostedRoot; mountSerial++ }
+                            } else mountPanel(NavBarBridge.panel(panelKey), panelGeneration())
                             renderedMount = mountSerial
                             val component = root
                             if (component == null) failure = "Panel unavailable: $panelKey"
@@ -241,7 +243,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
 
     /** Revalidate on the EDT even when input arrives before the next repaint. */
     private fun isCurrentMount(serial: Long): Boolean = running && serial == mountSerial &&
-        panel === NavBarBridge.panel(panelKey) && mountedGeneration == panelGeneration()
+        (hostedRoot != null && root === hostedRoot || panel === NavBarBridge.panel(panelKey) && mountedGeneration == panelGeneration())
 
     override fun onDraw(canvas: Canvas) {
         val saved = canvas.save()
@@ -836,10 +838,45 @@ internal class SwingPanelView(context: Context, private val panelKey: String) : 
                 post {
                     if (!running || serial != mountSerial) return@post
                     inputPopup?.dismiss()
-                    inputPopup = dialogBuilder().setTitle("Select value")
+                    val picker = dialogBuilder().setTitle("Select value")
                         .setItems(labels) { _, index ->
                             SwingUtilities.invokeLater { if (isCurrentMount(serial) && control.isEnabled) control.selectedItem = items[index] }
-                        }.show()
+                        }
+                    if (control.isEditable) picker.setNeutralButton("Edit value") { _, _ ->
+                        SwingUtilities.invokeLater {
+                            val field = control.editor?.editorComponent as? JTextComponent
+                            if (isCurrentMount(serial) && control.isEnabled && field != null) {
+                                val value = field.text
+                                post {
+                                    if (running && serial == mountSerial)
+                                        showTextInput(serial, field, value, false, null, false)
+                                }
+                            }
+                        }
+                    }
+                    inputPopup = picker.show()
+                }
+                return
+            }
+            is javax.swing.JSlider -> {
+                val min = control.minimum
+                val max = control.maximum
+                val value = control.value
+                post {
+                    if (!running || serial != mountSerial) return@post
+                    inputPopup?.dismiss()
+                    val seek = android.widget.SeekBar(context).apply { this.max = (max.toLong() - min).coerceIn(0, Int.MAX_VALUE.toLong()).toInt(); progress = value - min }
+                    seek.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                        override fun onStartTrackingTouch(bar: android.widget.SeekBar) { SwingUtilities.invokeLater { if (isCurrentMount(serial)) control.valueIsAdjusting = true } }
+                        override fun onProgressChanged(bar: android.widget.SeekBar, progress: Int, fromUser: Boolean) {
+                            if (fromUser) SwingUtilities.invokeLater { if (isCurrentMount(serial) && control.isEnabled) control.value = min + progress }
+                        }
+                        override fun onStopTrackingTouch(bar: android.widget.SeekBar) { SwingUtilities.invokeLater { if (isCurrentMount(serial)) control.valueIsAdjusting = false } }
+                    })
+                    inputPopup = dialogBuilder().setTitle("Adjust value").setView(seek).setPositiveButton("Done", null).create().also { dialog ->
+                        dialog.setOnDismissListener { SwingUtilities.invokeLater { control.valueIsAdjusting = false } }
+                        dialog.show()
+                    }
                 }
                 return
             }

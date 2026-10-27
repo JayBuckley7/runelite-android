@@ -23,6 +23,14 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     protected ListCellRenderer<? super E> renderer = new DefaultListCellRenderer();
     protected Object selectedItemReminder;
     protected boolean isEditable;
+    protected ComboBoxEditor editor;
+    private final ActionListener editorListener = event -> {
+        if (!isEditable || editor == null) return;
+        setSelectedItem(editor.getItem());
+        String previous = this.actionCommand;
+        try { actionCommand = "comboBoxEdited"; fireActionEvent(); }
+        finally { actionCommand = previous; }
+    };
     protected int maximumRowCount = 8;
     protected String actionCommand = "comboBoxChanged";
     private boolean selectingItem;
@@ -41,7 +49,24 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
         if (delegate != null) delegate.installUI(this);
         revalidate(); repaint();
     }
-    @Override public void updateUI() { setUI(new javax.swing.plaf.basic.BasicComboBoxUI()); }
+    @Override public void updateUI() {
+        setUI(new javax.swing.plaf.basic.BasicComboBoxUI());
+        if (editor == null || editor instanceof javax.swing.plaf.UIResource)
+            setEditor(new javax.swing.plaf.basic.BasicComboBoxEditor.UIResource());
+    }
+    public ComboBoxEditor getEditor() { return editor; }
+    public void setEditor(ComboBoxEditor value) {
+        ComboBoxEditor old = editor;
+        if (old != null) old.removeActionListener(editorListener);
+        editor = value;
+        if (editor != null) {
+            editor.addActionListener(editorListener);
+            configureEditor(editor, getSelectedItem());
+        }
+        firePropertyChange("editor", old, value);
+        invalidate(); repaint();
+    }
+    public void configureEditor(ComboBoxEditor editor, Object item) { editor.setItem(item); }
 
     public ComboBoxModel<E> getModel() { return dataModel; }
     public void setModel(ComboBoxModel<E> aModel) {
@@ -51,13 +76,20 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
         dataModel.addListDataListener(this);
         // Swing takes the model's current selection without firing for it.
         selectedItemReminder = dataModel.getSelectedItem();
+        if (editor != null) configureEditor(editor, selectedItemReminder);
         invalidate();
     }
     public ListCellRenderer<? super E> getRenderer() { return renderer; }
     public void setRenderer(ListCellRenderer<? super E> r) { this.renderer = r; invalidate(); }
 
     public boolean isEditable() { return isEditable; }
-    public void setEditable(boolean b) { this.isEditable = b; }
+    public void setEditable(boolean b) {
+        boolean old = isEditable;
+        isEditable = b;
+        if (editor != null) configureEditor(editor, getSelectedItem());
+        firePropertyChange("editable", old, b);
+        invalidate(); repaint();
+    }
     public int getItemCount() { return dataModel.getSize(); }
     public E getItemAt(int index) { return dataModel.getElementAt(index); }
 
@@ -136,6 +168,7 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
                 selectedItemReminder, java.awt.event.ItemEvent.DESELECTED));
         }
         selectedItemReminder = dataModel.getSelectedItem();
+        if (editor != null) configureEditor(editor, selectedItemReminder);
         if (selectedItemReminder != null) {
             fireItemStateChanged(new java.awt.event.ItemEvent(this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED,
                 selectedItemReminder, java.awt.event.ItemEvent.SELECTED));
@@ -264,7 +297,7 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
         java.awt.FontMetrics fm = g.getFontMetrics();
         int baseline = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
         Object selected = getSelectedItem();
-        java.awt.Component c = rendererComponent(selected, -1);
+        java.awt.Component c = isEditable && editor != null ? editor.getEditorComponent() : rendererComponent(selected, -1);
         int cellW = Math.max(0, getWidth() - 4 - 16), cellH = Math.max(0, getHeight() - 2);
         boolean painted = false;
         if (c instanceof JComponent && cellW > 0 && cellH > 0) {

@@ -205,6 +205,8 @@ public abstract class Path2D implements Shape, Cloneable
     }
 
     public static class Float extends Path2D {
+        public void moveTo(float x,float y) { super.moveTo(x,y); }
+        public void lineTo(float x,float y) { super.lineTo(x,y); }
         public Float() { super(WIND_NON_ZERO); }
         public Float(int rule) { super(rule); }
     }

@@ -76,6 +76,19 @@ public class Font implements Serializable {
      * Used by RuneLite's FontManager static initializer to load runescape.ttf,
      * runescape_bold.ttf, runescape_small.ttf and any plugin-side custom fonts.
      */
+    public static Font getFont(String property) { return getFont(property,null); }
+    public static Font getFont(String property,Font fallback) {
+        String value=System.getProperty(property);
+        return value==null?fallback:decode(value);
+    }
+    public static Font decode(String value) {
+        if(value==null)return new Font(DIALOG,PLAIN,12);
+        String[] parts=value.split("[- ]");int size=12,style=PLAIN,end=parts.length;
+        try { size=Integer.parseInt(parts[end-1]);end--; } catch(NumberFormatException ignored) {}
+        if(end>1){String s=parts[end-1];if(s.equalsIgnoreCase("BOLD")){style=BOLD;end--;}else if(s.equalsIgnoreCase("ITALIC")){style=ITALIC;end--;}else if(s.equalsIgnoreCase("BOLDITALIC")){style=BOLD|ITALIC;end--;}else if(s.equalsIgnoreCase("PLAIN"))end--;}
+        String name=String.join(" ",java.util.Arrays.copyOf(parts,Math.max(1,end)));
+        return new Font(name,style,size>0?size:12);
+    }
     public static Font createFont(int fontFormat, java.io.InputStream fontStream) throws java.io.IOException, FontFormatException {
         String family = net.runelite.awt.impl.AwtFontRegistry.register(fontStream);
         if (family == null) family = Font.DIALOG;

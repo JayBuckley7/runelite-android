@@ -24,6 +24,7 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
     private var pending: Pick? = null // Android main thread
     private var confirmation: AlertDialog? = null
     private val watchers = mutableSetOf<FileObserver>()
+    private val windows = mutableMapOf<java.awt.Window, AlertDialog>()
     private var closed = false
     private class Completion {
         private val latch = CountDownLatch(1)
@@ -47,6 +48,25 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
     private val save = activity.registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { finishPick(it) }
 
     init {
+        java.awt.Window.setVisibilityHandler { window, visible ->
+            main.post {
+                if (!visible || closed) windows.remove(window)?.dismiss()
+                else if (!windows.containsKey(window)) {
+                    val root = (window as? javax.swing.RootPaneContainer)?.rootPane
+                    if (root != null) {
+                        val view = net.runelite.mp.ui.panels.SwingPanelView(activity, "Swing window", root)
+                        val dialog = AlertDialog.Builder(activity).setView(view).setNegativeButton("Close", null).create()
+                        windows[window] = dialog
+                        dialog.setOnDismissListener {
+                            windows.remove(window)
+                            javax.swing.SwingUtilities.invokeLater { window.isVisible = false }
+                        }
+                        dialog.show()
+                        dialog.window?.setLayout((activity.resources.displayMetrics.widthPixels * .9).toInt(), (activity.resources.displayMetrics.heightPixels * .85).toInt())
+                    }
+                }
+            }
+        }
         // Imported files must outlive showOpenDialog: Swing consumers may read asynchronously.
         directory.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 86_400_000 }
             ?.forEach { it.deleteRecursively() }
@@ -68,6 +88,38 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                 request.result
             }
         }
+        javax.swing.JColorChooser.setDialogHandler { _, title, initial ->
+            if (Looper.myLooper() == Looper.getMainLooper()) null
+            else {
+                val done = Completion()
+                var result: java.awt.Color? = null
+                main.post {
+                    if (closed) done.finish()
+                    else {
+                        confirmation?.dismiss()
+                        val input = android.widget.EditText(activity).apply {
+                            setSingleLine(true)
+                            setText(String.format("#%06X", initial.rgb and 0xFFFFFF))
+                            hint = "#RRGGBB"
+                        }
+                        val dialog = AlertDialog.Builder(activity).setTitle(title).setView(input)
+                            .setPositiveButton("OK", null).setNegativeButton("Cancel", null).create()
+                        dialog.setOnShowListener {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                                try {
+                                    result = java.awt.Color(android.graphics.Color.parseColor(input.text.toString()))
+                                    dialog.dismiss()
+                                } catch (_: IllegalArgumentException) { input.error = "Enter a color such as #FF8800" }
+                            }
+                        }
+                        dialog.setOnDismissListener { done.finish() }
+                        confirmation = dialog; dialog.show()
+                    }
+                }
+                try { done.await() } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                result
+            }
+        }
         JOptionPane.setDialogHandler { message, title, optionType, options ->
             if (Looper.myLooper() == Looper.getMainLooper()) JOptionPane.CLOSED_OPTION
             else {
@@ -77,12 +129,24 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                     if (closed) done.finish()
                     else {
                         confirmation?.dismiss()
-                        val builder = AlertDialog.Builder(activity).setTitle(title).setMessage(message)
+                        val builder = AlertDialog.Builder(activity).setTitle(title)
+                        val dateSpinner = message as? javax.swing.JSpinner
+                        val datePicker = if (dateSpinner?.model is javax.swing.SpinnerDateModel) android.widget.DatePicker(activity).apply {
+                            val cal = java.util.Calendar.getInstance().apply { time = dateSpinner.value as java.util.Date }
+                            init(cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH), null)
+                        } else null
+                        if (datePicker != null) builder.setView(datePicker) else builder.setMessage(message.toString())
                         if (options != null) {
                             builder.setItems(options.map { it.toString() }.toTypedArray()) { _, index -> result = index }
                         } else {
                             val yesNo = optionType == JOptionPane.YES_NO_OPTION || optionType == JOptionPane.YES_NO_CANCEL_OPTION
-                            builder.setPositiveButton(if (yesNo) "Yes" else "OK") { _, _ -> result = JOptionPane.OK_OPTION }
+                            builder.setPositiveButton(if (yesNo) "Yes" else "OK") { _, _ ->
+                                if (datePicker != null && dateSpinner != null) {
+                                    val cal = java.util.Calendar.getInstance().apply { clear(); set(datePicker.year, datePicker.month, datePicker.dayOfMonth) }
+                                    javax.swing.SwingUtilities.invokeAndWait { dateSpinner.value = cal.time }
+                                }
+                                result = JOptionPane.OK_OPTION
+                            }
                             if (yesNo) builder.setNegativeButton("No") { _, _ -> result = JOptionPane.NO_OPTION }
                             if (optionType == JOptionPane.OK_CANCEL_OPTION)
                                 builder.setNegativeButton("Cancel") { _, _ -> result = JOptionPane.CANCEL_OPTION }
@@ -160,6 +224,7 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
 
     fun close() {
         closed = true
+        windows.values.toList().forEach { it.dismiss() }; windows.clear()
         pending?.done?.finish(); pending = null
         confirmation?.dismiss(); confirmation = null
         watchers.forEach { it.stopWatching() }; watchers.clear()
