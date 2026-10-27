@@ -27,10 +27,21 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     protected String actionCommand = "comboBoxChanged";
     private boolean selectingItem;
 
-    public JComboBox() { setModel(new DefaultComboBoxModel<>()); }
-    public JComboBox(ComboBoxModel<E> model) { setModel(model); }
-    public JComboBox(E[] items) { setModel(new DefaultComboBoxModel<>(items)); }
-    public JComboBox(java.util.Vector<E> items) { setModel(new DefaultComboBoxModel<>(items)); }
+    public JComboBox() { setModel(new DefaultComboBoxModel<>()); updateUI(); }
+    public JComboBox(ComboBoxModel<E> model) { setModel(model); updateUI(); }
+    public JComboBox(E[] items) { setModel(new DefaultComboBoxModel<>(items)); updateUI(); }
+    public JComboBox(java.util.Vector<E> items) { setModel(new DefaultComboBoxModel<>(items)); updateUI(); }
+
+    @Override public javax.swing.plaf.ComboBoxUI getUI() {
+        return (javax.swing.plaf.ComboBoxUI) ui;
+    }
+    public void setUI(javax.swing.plaf.ComboBoxUI delegate) {
+        if (ui != null) ui.uninstallUI(this);
+        super.setUI(delegate);
+        if (delegate != null) delegate.installUI(this);
+        revalidate(); repaint();
+    }
+    @Override public void updateUI() { setUI(new javax.swing.plaf.basic.BasicComboBoxUI()); }
 
     public ComboBoxModel<E> getModel() { return dataModel; }
     public void setModel(ComboBoxModel<E> aModel) {
@@ -278,7 +289,12 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
                 g.drawString(text, 4, baseline);
             }
         }
-        g.setColor(fg);
-        g.drawString("v", Math.max(0, getWidth() - 13), baseline);
+        if (getUI() instanceof javax.swing.plaf.basic.BasicComboBoxUI) {
+            ((javax.swing.plaf.basic.BasicComboBoxUI) getUI()).paintArrow(g,
+                Math.max(0, getWidth() - 16), 1, 15, Math.max(0, getHeight() - 2));
+        } else {
+            g.setColor(fg);
+            g.drawString("v", Math.max(0, getWidth() - 13), baseline);
+        }
     }
 }

@@ -23,7 +23,7 @@ public class SwingUtilities implements SwingConstants {
         return (Window) p;
     }
 
-    public static <T> T getAncestorOfClass(Class<T> c, Component comp) {
+    public static <T extends Container> T getAncestorOfClass(Class<T> c, Component comp) {
         if (comp == null || c == null) return null;
         Container p = comp.getParent();
         while (p != null && !c.isInstance(p)) p = p.getParent();
