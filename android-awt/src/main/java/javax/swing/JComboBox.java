@@ -26,6 +26,13 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     protected int maximumRowCount = 8;
     protected String actionCommand = "comboBoxChanged";
     private boolean selectingItem;
+    private transient java.awt.Dimension measuredSize;
+    private transient java.awt.Font measuredFont;
+
+    @Override public void invalidate() {
+        measuredSize = null;
+        super.invalidate();
+    }
 
     public JComboBox() { setModel(new DefaultComboBoxModel<>()); updateUI(); }
     public JComboBox(ComboBoxModel<E> model) { setModel(model); updateUI(); }
@@ -182,7 +189,7 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     // plugin from registering its toolbar nav button.
     private Object prototypeDisplayValue;
     public Object getPrototypeDisplayValue() { return prototypeDisplayValue; }
-    public void setPrototypeDisplayValue(Object value) { this.prototypeDisplayValue = value; }
+    public void setPrototypeDisplayValue(Object value) { this.prototypeDisplayValue = value; invalidate(); }
     public void showPopup() {}
     public void hidePopup() {}
     public void setPopupVisible(boolean v) {}
@@ -244,10 +251,20 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
 
     @Override public java.awt.Dimension getPreferredSize() {
         if (isPreferredSizeSet()) return super.getPreferredSize();
-        java.awt.FontMetrics fm = getFontMetrics(getFont());
-        int width = 60;
-        for (int i = 0; i < getItemCount(); i++) width = Math.max(width, fm.stringWidth(hostDisplayText(getItemAt(i), i)));
-        return new java.awt.Dimension(width + 24, fm.getHeight() + 10);
+        java.awt.Font font = getFont();
+        if (measuredSize == null || !java.util.Objects.equals(font, measuredFont)) {
+            java.awt.FontMetrics fm = getFontMetrics(font);
+            int width = 60;
+            if (prototypeDisplayValue != null) {
+                width = Math.max(width, fm.stringWidth(hostDisplayText(prototypeDisplayValue, -1)));
+            } else {
+                for (int i = 0; i < getItemCount(); i++)
+                    width = Math.max(width, fm.stringWidth(hostDisplayText(getItemAt(i), i)));
+            }
+            measuredSize = new java.awt.Dimension(width + 24, fm.getHeight() + 10);
+            measuredFont = font;
+        }
+        return new java.awt.Dimension(measuredSize);
     }
 
     /**

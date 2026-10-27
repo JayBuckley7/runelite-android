@@ -384,6 +384,11 @@ public class Window extends Container {
     private static void markTreeInvalid(Component c) {
         c.setValid(false);
         if (c instanceof Container) {
+            java.awt.LayoutManager layout = ((Container) c).getLayout();
+            if (layout instanceof java.awt.LayoutManager2)
+                ((java.awt.LayoutManager2) layout).invalidateLayout((Container) c);
+        }
+        if (c instanceof Container) {
             Container cont = (Container) c;
             int count = cont.getComponentCount();
             for (int i = 0; i < count; i++) {

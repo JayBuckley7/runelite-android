@@ -252,21 +252,25 @@ public abstract class Component implements ImageObserver, Serializable {
     /**
      * Mark this component — and, transitively, its ancestors — as needing layout.
      *
-     * The early return relies on the invariant this method itself maintains: if a component
-     * is invalid then so is every ancestor, so there is nothing left to propagate.
+     * Propagate measurement changes even through already-invalid ancestors: their
+     * layout managers may have cached sizes since the previous change.
      */
     public void invalidate() {
         // Bumped even when already invalid: a second change (new text on a label that is
         // still pending layout) must still discard measurements layouts have cached.
         layoutGeneration++;
-        if (!valid) return;
-        valid = false;
-        invalidateParent();
+        for (Component c = this; c != null; c = c.parent) {
+            c.subtreeLayoutGeneration++;
+            c.valid = false;
+        }
     }
 
-    /** Counts every invalidate() anywhere. Layout managers stamp cached child measurements
-     *  with it (see javax.swing.BoxLayout): equal stamps mean no component changed since. */
+    /** Global invalidation counter retained for existing callers. */
     private static int layoutGeneration;
+    private long subtreeLayoutGeneration;
+
+    /** Changes confined to this component and its descendants, excluding detached renderers. */
+    public final long subtreeLayoutGeneration() { return subtreeLayoutGeneration; }
 
     public static int layoutGeneration() { return layoutGeneration; }
 
