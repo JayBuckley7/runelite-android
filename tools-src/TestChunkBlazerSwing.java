@@ -8,6 +8,36 @@ import javax.swing.plaf.basic.*;
 public final class TestChunkBlazerSwing {
     private static void check(boolean ok, String why) { if (!ok) throw new AssertionError(why); }
     public static void main(String[] args) {
+        final int[] calls = {0};
+        JComboBox<String> measured = new JComboBox<>(new String[]{"a", "longer"});
+        measured.setRenderer((l, v, i, selected, focus) -> {
+            calls[0]++;
+            JPanel row = new JPanel(); row.add(new JLabel(v)); return row;
+        });
+        Dimension firstSize = measured.getPreferredSize();
+        int initialCalls = calls[0];
+        for (int i = 0; i < 100; i++) measured.getPreferredSize();
+        check(calls[0] == initialCalls, "Unchanged combo must not re-run renderers for measurement");
+        firstSize.width = 99999;
+        check(measured.getPreferredSize().width != 99999, "Defensive measurement copy");
+        measured.addItem("a considerably longer item"); measured.getPreferredSize();
+        check(calls[0] > initialCalls, "Model updates invalidate measurements");
+        int beforeFont = calls[0];
+        measured.setFont(new Font("Dialog", Font.PLAIN, 22)); measured.getPreferredSize();
+        check(calls[0] > beforeFont, "Font updates invalidate measurements");
+        JPanel nested = new JPanel(); nested.setLayout(new BoxLayout(nested, BoxLayout.Y_AXIS));
+        final int[] sizes = {0};
+        nested.add(new JLabel("child") {
+            @Override public Dimension getPreferredSize() {
+                sizes[0]++; new JLabel("detached renderer").setText("changed");
+                return super.getPreferredSize();
+            }
+        });
+        nested.getPreferredSize(); int once = sizes[0];
+        for (int i = 0; i < 100; i++) nested.getPreferredSize();
+        check(sizes[0] == once, "Detached renderer must not invalidate BoxLayout cache");
+        ((JLabel) nested.getComponent(0)).setText("changed child"); nested.getPreferredSize();
+        try { Component.class.getMethod("subtreeLayoutGeneration"); check(sizes[0] > once, "Attached child changes invalidate BoxLayout cache"); } catch (NoSuchMethodException desktop) { /* Headless desktop has no validation root. */ }
         EmptyBorder border = new EmptyBorder(2, 3, 4, 5);
         Insets in = border.getBorderInsets(); in.left = 99;
         check(border.getBorderInsets().left == 3, "Insets must be a copy");

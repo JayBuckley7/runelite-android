@@ -55,14 +55,14 @@ public class BoxLayout implements LayoutManager2, Serializable {
     // The JDK caches SizeRequirements until invalidateLayout. Without a cache, measuring a
     // BoxLayout asks every child for min, pref AND max, and a child that is itself a BoxLayout
     // re-measures its whole subtree for each — 3^depth. Loot Lookup's nested result rows froze
-    // the EDT for seconds per search. Entries are stamped with Component's layout generation,
-    // which any invalidate() anywhere bumps, so a cached request can't outlive a real change.
+    // the EDT for seconds per search. Entries track the target subtree's generation,
+    // so detached renderer construction cannot discard otherwise valid measurements.
     private Req[] cachedX, cachedY;
-    private int cachedXGen = -1, cachedYGen = -1;
+    private long cachedXGen = -1, cachedYGen = -1;
     private Container cachedFor;
 
     private Req[] requests(Container t, boolean xAxis) {
-        int gen = Component.layoutGeneration();
+        long gen = t.subtreeLayoutGeneration();
         if (t == cachedFor) {
             if (xAxis && cachedX != null && cachedXGen == gen) return cachedX;
             if (!xAxis && cachedY != null && cachedYGen == gen) return cachedY;
@@ -73,7 +73,7 @@ public class BoxLayout implements LayoutManager2, Serializable {
         Req[] r = computeRequests(t, xAxis);
         // Measuring a child may itself invalidate (a wrapping text component sizing itself);
         // only keep the result if the tree stood still while it was taken.
-        if (Component.layoutGeneration() == gen) {
+        if (t.subtreeLayoutGeneration() == gen) {
             if (xAxis) { cachedX = r; cachedXGen = gen; } else { cachedY = r; cachedYGen = gen; }
         }
         return r;
