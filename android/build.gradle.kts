@@ -71,7 +71,7 @@ configurations.configureEach {
 // runelite-client from repo.runelite.net and desugars + dexes it on the device.
 val versionMajor = 1
 val versionMinor = 0
-val versionPatch = 55
+val versionPatch = 56
 
 configurations.all {
     resolutionStrategy.force(
