@@ -1,0 +1,22 @@
+gradle.projectsEvaluated {
+    def p = rootProject.findProject(':client')
+    if (p == null) return
+    def out = rootProject.layout.buildDirectory.dir('verify-mobile-chat/classes')
+    def compile = p.tasks.register('compileMobileChatCheck', JavaCompile) {
+        dependsOn p.tasks.named('classes')
+        source rootProject.file('tools-src/MobileChatLayoutTest.java'),
+            rootProject.file('android/src/androidMain/java/net/runelite/client/plugins/mobile/MobileChatLayout.java'),
+            rootProject.file('android/src/androidMain/java/net/runelite/client/plugins/mobile/MobileConfig.java'),
+            rootProject.file('android/src/androidMain/java/net/runelite/client/plugins/mobile/InventoryScaleGeometry.java')
+        classpath = p.sourceSets.main.output + p.configurations.testRuntimeClasspath
+        destinationDirectory = out
+        options.encoding = 'UTF-8'
+        options.release.set(11)
+    }
+    p.tasks.register('verifyMobileChat', Test) {
+        dependsOn compile
+        testClassesDirs = p.files(out)
+        classpath = p.files(out) + p.sourceSets.main.output + p.configurations.testRuntimeClasspath
+        useJUnit()
+    }
+}
