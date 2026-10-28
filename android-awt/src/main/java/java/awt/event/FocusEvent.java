@@ -10,6 +10,13 @@ public class FocusEvent extends ComponentEvent {
     public static final int FOCUS_LOST = 1005;
     public static final int FOCUS_LAST = 1005;
 
+    public enum Cause { UNKNOWN, MOUSE_EVENT, TRAVERSAL, TRAVERSAL_UP, TRAVERSAL_DOWN, TRAVERSAL_FORWARD, TRAVERSAL_BACKWARD, ROLLBACK, UNEXPECTED, ACTIVATION, CLEAR_GLOBAL_FOCUS_OWNER }
+    private Cause cause = Cause.UNKNOWN;
+    public FocusEvent(Component source, int id, boolean temporary, Component opposite, Cause cause) {
+        this(source, id, temporary, opposite);
+        this.cause = cause == null ? Cause.UNKNOWN : cause;
+    }
+    public Cause getCause() { return cause; }
     private final boolean temporary;
     private final Component opposite;
 

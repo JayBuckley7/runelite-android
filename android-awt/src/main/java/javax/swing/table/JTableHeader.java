@@ -11,6 +11,20 @@ public class JTableHeader extends JComponent {
         label.setFont(getFont()); label.setForeground(getForeground());
         return label;
     };
+    private boolean reorderingAllowed = true, resizingAllowed = true;
+    public void setReorderingAllowed(boolean value) { reorderingAllowed = value; }
+    public boolean getReorderingAllowed() { return reorderingAllowed; }
+    public void setResizingAllowed(boolean value) { resizingAllowed = value; }
+    public boolean getResizingAllowed() { return resizingAllowed; }
+    public int columnAtPoint(Point p) {
+        if (p.x < 0) return -1;
+        int x = 0;
+        for (int i = 0; i < columnModel.getColumnCount(); i++) {
+            x += columnModel.getColumn(i).getWidth();
+            if (p.x < x) return i;
+        }
+        return -1;
+    }
     public JTableHeader() { this(new DefaultTableColumnModel()); }
     public JTableHeader(TableColumnModel model) { columnModel = model; setOpaque(true); }
     public TableColumnModel getColumnModel() { return columnModel; }

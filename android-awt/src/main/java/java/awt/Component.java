@@ -318,6 +318,9 @@ public abstract class Component implements ImageObserver, Serializable {
     public void requestFocus() {}
     public boolean requestFocusInWindow() { return false; }
     public boolean isFocusOwner() { return false; }
+    public float getAlignmentX() { return 0.5f; }
+    public float getAlignmentY() { return 0.5f; }
+    public boolean hasFocus() { return isFocusOwner(); }
     public void setFocusTraversalKeysEnabled(boolean v) {}
     public boolean getFocusTraversalKeysEnabled() { return true; }
     public void setFocusable(boolean focusable) {}

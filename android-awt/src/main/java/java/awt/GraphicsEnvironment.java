@@ -19,6 +19,10 @@ public abstract class GraphicsEnvironment {
     public static boolean isHeadless() { return true; }
     public boolean isHeadlessInstance() { return true; }
 
+    public Rectangle getMaximumWindowBounds() {
+        Dimension size = Toolkit.getDefaultToolkit().getScreenSize();
+        return new Rectangle(0, 0, size.width, size.height);
+    }
     public boolean registerFont(Font font) { return true; }
 
     public java.awt.geom.Point2D getCenterPoint() { return new java.awt.geom.Point2D.Double(0, 0); }

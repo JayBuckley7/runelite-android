@@ -233,6 +233,10 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
     public void setViewportBorder(Border viewportBorder) { this.viewportBorder = viewportBorder; }
     public JViewport getRowHeader() { return null; }
     public void setRowHeader(JViewport rowHeader) {}
+    public void setColumnHeaderView(Component view) {
+        if (columnHeader == null) setColumnHeader(new JViewport());
+        columnHeader.setView(view); revalidate(); repaint();
+    }
     public JViewport getColumnHeader() { return columnHeader; }
     public void setColumnHeader(JViewport header) {
         if (columnHeader != null) remove(columnHeader);

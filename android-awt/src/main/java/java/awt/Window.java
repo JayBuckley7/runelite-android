@@ -6,6 +6,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class Window extends Container {
     private static final long serialVersionUID = 4497834738069338734L;
 
+    public interface VisibilityHandler { void changed(Window window, boolean visible); }
+    private static volatile VisibilityHandler visibilityHandler;
+    public static void setVisibilityHandler(VisibilityHandler h) { visibilityHandler = h; }
     private static final AtomicReference<Window> LATEST = new AtomicReference<>();
     private static final java.util.List<java.lang.ref.WeakReference<Window>> ALL_WINDOWS =
         new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -417,6 +420,8 @@ public class Window extends Container {
     public void setVisible(boolean v) {
         boolean wasVisible = isVisible();
         super.setVisible(v);
+        VisibilityHandler handler = visibilityHandler;
+        if (handler != null && (this instanceof javax.swing.JWindow || this instanceof javax.swing.JDialog)) handler.changed(this, v);
         if (v && !wasVisible) {
             // Real Swing validates the tree on first showing.
             try { validate(); } catch (Throwable ignored) {}
