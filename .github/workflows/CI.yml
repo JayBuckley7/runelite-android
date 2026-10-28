@@ -16,26 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Release: 1.0.<versionPatch>_<RuneLite version>, e.g. 1.0.31_1.13.2. Every run builds;
-      # publishing is skipped when that tag already exists, so only pushes that bump
-      # versionPatch (or RuneLite) publish.
-      - name: Resolve release version
-        id: version
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          field() { grep -a -m1 -oP "val $1 = \K[0-9]+" android/build.gradle.kts; }
-          RL_VERSION=$(grep -m1 -oP '^project\.build\.version=\K.+' gradle.properties)
-          TAG="$(field versionMajor).$(field versionMinor).$(field versionPatch)_${RL_VERSION}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping publish."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Cache glslang
         uses: actions/cache@v5
         with:
@@ -74,6 +54,24 @@ jobs:
             x86_64-linux-android \
             i686-linux-android
 
+      - name: Write release version
+        run: ./gradlew :android:writeReleaseVersion --console=plain
+
+      - name: Resolve release version
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(python3 -c 'import json; print(json.load(open("android/build/release-version.json"))["tag"])')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # The release build type falls back to the debug key when no keystore is configured,
       # and SignatureGuard refuses to boot anything not signed with the production cert —
       # so refuse to publish rather than ship an APK that can't start. Non-publishing runs
@@ -100,6 +98,16 @@ jobs:
 
       - name: Build release APK
         run: ./ci/build.sh
+
+      - name: Verify release version
+        run: |
+          python3 -m unittest discover -s ci -p 'test_release_version.py'
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n1)
+          python3 ci/verify_release_version.py \
+            --metadata android/build/release-version.json \
+            --apk android/build/outputs/apk/release/android-release.apk \
+            --build-config android/build/generated/source/buildConfig/release/net/runelite/mp/BuildConfig.java \
+            --aapt "$AAPT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

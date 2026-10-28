@@ -72,6 +72,22 @@ configurations.configureEach {
 val versionMajor = 1
 val versionMinor = 0
 val versionPatch = 56
+val releaseTag = "$versionMajor.$versionMinor.${versionPatch}_${project.version}"
+val releaseVersionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
+
+// CI reads the same values used by the APK and the in-app updater.
+tasks.register("writeReleaseVersion") {
+    val destination = layout.buildDirectory.file("release-version.json")
+    inputs.property("tag", releaseTag)
+    inputs.property("versionCode", releaseVersionCode)
+    outputs.file(destination)
+    doLast {
+        destination.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText(groovy.json.JsonOutput.toJson(mapOf("tag" to releaseTag, "versionCode" to releaseVersionCode)))
+        }
+    }
+}
 
 configurations.all {
     resolutionStrategy.force(
@@ -246,16 +262,10 @@ if (androidSdkAvailable) {
             minSdk = 26
             //noinspection EditedTargetSdkVersion
             targetSdk = 37
-            // Derive versionCode from the dotted project version so each RuneLite cycle
-            // (1.12.27 → 1.12.28 → 1.13.0 → …) lands a monotonically-increasing integer
-            // without manual bumping. Encoding: major*1_000_000 + minor*1_000 + patch,
-            // so 1.12.27 → 1_012_027. Max minor/patch are 999 each — comfortable headroom
-            // versus how OSRS-RuneLite actually versions. Monotonic across any of
-            // {patch ↑, minor ↑ with patch reset, major ↑ with minor+patch reset}.
-            versionCode = (versionMajor * 1_000_000) + (versionMinor * 1_000) + versionPatch
-            versionName = project.version.toString()
-            // Same tag CI publishes releases under; UpdateChecker compares against it.
-            buildConfigField("String", "RELEASE_TAG", "\"$versionMajor.$versionMinor.${versionPatch}_${project.version}\"")
+            // Preserve the Android release's numeric install ordering.
+            versionCode = releaseVersionCode
+            versionName = releaseTag
+            buildConfigField("String", "RELEASE_TAG", "\"$releaseTag\"")
             // Anti-tamper hook. SignatureGuard reads this field at MainActivity init and
             // refuses to run when the on-device APK's signing SHA-256 doesn't match.
             // Default is empty (= skip), so debug builds and release-with-debug-fallback
