@@ -10,7 +10,11 @@ import net.runelite.client.plugins.config.MobileSettingsEntry;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.api.Client;
+import net.runelite.api.ScriptID;
 import net.runelite.api.events.BeforeRender;
+import net.runelite.api.events.ScriptPostFired;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.api.events.GameStateChanged;
 
 /**
@@ -26,15 +30,21 @@ import net.runelite.api.events.GameStateChanged;
 )
 public class MobilePlugin extends Plugin
 {
+	@Inject private Client client;
+	@Inject private ClientThread clientThread;
 	@Inject private Injector injector;
 	@Inject private ConfigManager configManager;
 	@Inject private MobileConfig config;
 	@Inject private OverlayManager overlayManager;
 	@Inject private MobileInventoryOverlay inventoryOverlay;
 
+	private final MobileChatLayout chatLayout = new MobileChatLayout();
+	private volatile boolean active;
+
 	@Override
 	protected void startUp()
 	{
+		active = true;
 		MobileSettingsEntry.register(injector, configManager, config);
 		overlayManager.add(inventoryOverlay);
 		MobileDisplaySettings.setPortrait(config.forceVertical());
@@ -43,6 +53,14 @@ public class MobilePlugin extends Plugin
 	@Override
 	protected void shutDown()
 	{
+		active = false;
+		clientThread.invokeLater(() ->
+		{
+			if (!active)
+			{
+				chatLayout.restore();
+			}
+		});
 		overlayManager.remove(inventoryOverlay);
 		MobileInventoryOverlay.clear();
 		MobileDisplaySettings.setPortrait(false);
@@ -57,11 +75,39 @@ public class MobilePlugin extends Plugin
 		}
 	}
 
-	@Subscribe
-	public void onBeforeRender(BeforeRender event) { inventoryOverlay.validateVisibility(); }
+	// Update native widget positions before MobileInputPlugin publishes touch bounds.
+	@Subscribe(priority = 1)
+	public void onBeforeRender(BeforeRender event)
+	{
+		updateChatLayout();
+		inventoryOverlay.validateVisibility();
+	}
 
 	@Subscribe
-	public void onGameStateChanged(GameStateChanged event) { MobileInventoryOverlay.clear(); }
+	public void onScriptPostFired(ScriptPostFired event)
+	{
+		if (event.getScriptId() == ScriptID.BUILD_CHATBOX
+			|| event.getScriptId() == ScriptID.SPLITPM_CHANGED
+			|| event.getScriptId() == ScriptID.TOPLEVEL_REDRAW)
+		{
+			updateChatLayout();
+		}
+	}
+
+	private void updateChatLayout()
+	{
+		if (active)
+		{
+			chatLayout.update(client, config.invertChat(), config.chatScale());
+		}
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		MobileInventoryOverlay.clear();
+		updateChatLayout();
+	}
 
 	@Provides
 	MobileConfig provideConfig(ConfigManager configManager)

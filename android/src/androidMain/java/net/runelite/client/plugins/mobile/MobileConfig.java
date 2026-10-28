@@ -14,6 +14,17 @@ public interface MobileConfig extends Config
 		description = "Keep the app in portrait orientation. Disable to return to landscape.", position = 2)
 	default boolean forceVertical() { return false; }
 
+	@ConfigItem(
+		keyName = "invertChat",
+		name = "Invert chat",
+		description = "Open chat downwards with chat buttons above it and split private messages below.",
+		position = 3
+	)
+	default boolean invertChat()
+	{
+		return false;
+	}
+
 	@ConfigItem(keyName = "inventoryScale", name = "Inventory scale", description = "Saved pinch size", hidden = true)
 	default int inventoryScale() { return 100; }
 
