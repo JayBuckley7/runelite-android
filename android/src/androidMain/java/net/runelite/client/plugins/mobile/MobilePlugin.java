@@ -1,5 +1,6 @@
 package net.runelite.client.plugins.mobile;
 
+import net.runelite.mp.ui.bridge.PinnedKeys;
 import com.google.inject.Injector;
 import com.google.inject.Provides;
 import javax.inject.Inject;
@@ -48,6 +49,7 @@ public class MobilePlugin extends Plugin
 		MobileSettingsEntry.register(injector, configManager, config);
 		overlayManager.add(inventoryOverlay);
 		MobileDisplaySettings.setPortrait(config.forceVertical());
+		PinnedKeys.INSTANCE.update(config);
 	}
 
 	@Override
@@ -72,6 +74,7 @@ public class MobilePlugin extends Plugin
 		if (MobileConfig.GROUP.equals(event.getGroup()))
 		{
 			MobileDisplaySettings.setPortrait(config.forceVertical());
+			PinnedKeys.INSTANCE.update(config);
 		}
 	}
 
