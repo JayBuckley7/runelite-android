@@ -25,7 +25,7 @@ public class TestLayeredPane {
         }
         return c;
     }
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         JLayeredPane pane = new JLayeredPane(); pane.setSize(100, 100);
         JComponent content = block(Color.RED), settings = block(Color.GREEN), gear = block(Color.BLUE);
         gear.setBounds(5, 5, 20, 20);
@@ -43,7 +43,11 @@ public class TestLayeredPane {
         check(settings.isVisible() && !content.isVisible(), "gear opens settings");
         check(hit(pane, 50, 50) == settings, "settings now receives touches");
         BufferedImage image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB);
-        Graphics g = image.getGraphics(); pane.paint(g); g.dispose();
+        Graphics g = image.getGraphics();
+        if (args.length > 0 && args[0].equals("host")) {
+            Window.class.getMethod("hostPaint", Graphics2D.class, Component.class).invoke(null, g, pane);
+        } else pane.paint(g);
+        g.dispose();
         check(image.getRGB(10, 10) == Color.BLUE.getRGB(), "gear painted above settings");
         check(image.getRGB(50, 50) == Color.GREEN.getRGB(), "settings painted above content");
         JComponent second = block(Color.YELLOW); pane.add(second, JLayeredPane.MODAL_LAYER);

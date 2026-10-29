@@ -2,7 +2,6 @@ package net.runelite.mp.ui.bridge
 
 import android.view.KeyEvent as AndroidKeyEvent
 import java.awt.Component
-import java.awt.Container
 import java.awt.KeyboardFocusManager
 import java.awt.Window
 import java.awt.Canvas
@@ -237,7 +236,7 @@ object KeyDispatch {
     }
 
     /**
-     * Dispatch an AWT KeyEvent to KeyboardFocusManager and all component trees.
+     * Dispatch to global hotkeys, then one input target. Never broadcast to plugin fields.
      */
     fun dispatchAwtEvent(ev: KeyEvent) {
         if (!java.awt.EventQueue.isDispatchThread()) {
@@ -252,33 +251,29 @@ object KeyDispatch {
         }
 
         val focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
-        val focusedSwing = (focused as? javax.swing.JComponent)?.takeIf { it.isShowing }
-        if (focusedSwing != null) {
-            val focusedEvent = KeyEvent(focusedSwing, ev.id, ev.`when`, ev.modifiersEx,
-                ev.keyCode, ev.keyChar, ev.keyLocation)
-            deliverToComponent(focusedSwing, focusedEvent)
-            if (focusedEvent.isConsumed || focusedSwing.hostProcessKeyBinding(focusedEvent)) {
-                ev.consume()
-                return
-            }
-        }
+        val target = focused?.takeIf { acceptsKeys(it) }
+            ?: ev.component.takeIf { acceptsKeys(it) }
+            ?: return
+        val delivered = if (ev.component === target) ev else KeyEvent(target, ev.id, ev.`when`,
+            ev.modifiersEx, ev.keyCode, ev.keyChar, ev.keyLocation)
+        deliverToComponent(target, delivered)
+        if (!delivered.isConsumed && target is javax.swing.JComponent && target.hostProcessKeyBinding(delivered))
+            delivered.consume()
+        if (delivered.isConsumed) ev.consume()
+    }
 
-        // 2. Deliver to components with KeyListeners
-        val roots = run {
-            val all = Window.getAllWindows().toMutableList<Component>()
-            Canvas.latest()?.let { all += it }
-            if (all.isEmpty()) Window.primaryFrame()?.let { all += it }
-            all
+    private fun acceptsKeys(component: Component): Boolean {
+        var node: Component? = component
+        while (node != null) {
+            if (!node.isVisible || !node.isEnabled) return false
+            node = node.parent
         }
-
-        for (root in roots) {
-            deliverToHierarchy(root, ev, focusedSwing)
-            if (ev.isConsumed) break
-        }
+        return true
     }
 
     private fun deliverToComponent(c: Component, ev: KeyEvent) {
         for (listener in c.keyListeners) {
+            if (ev.isConsumed) break
             if (callbacksClass != null && callbacksClass!!.isInstance(listener)) {
                 // Skip direct Callbacks listener since OSRS client's KeyListener calls Callbacks
                 continue
@@ -291,20 +286,6 @@ object KeyDispatch {
                 }
             } catch (t: Throwable) {
                 android.util.Log.w(TAG, "listener threw on key dispatch", t)
-            }
-            if (ev.isConsumed) break
-        }
-    }
-
-    private fun deliverToHierarchy(c: Component, ev: KeyEvent, alreadyDelivered: Component? = null) {
-        if (c !== alreadyDelivered) deliverToComponent(c, ev)
-        if (ev.isConsumed) return
-        if (c is Container) {
-            for (child in c.components) {
-                if (child != null) {
-                    deliverToHierarchy(child, ev, alreadyDelivered)
-                    if (ev.isConsumed) return
-                }
             }
         }
     }
