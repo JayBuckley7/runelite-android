@@ -30,10 +30,12 @@ class MainActivity : ComponentActivity() {
         instance = this
     }
     private lateinit var swingDialogs: net.runelite.mp.ui.bridge.SwingDialogs
+    private lateinit var swingClipboard: net.runelite.mp.ui.bridge.SwingClipboard
 
     override fun onDestroy() {
         net.runelite.client.plugins.mobile.MobileDisplaySettings.detach()
         if (::swingDialogs.isInitialized) swingDialogs.close()
+        if (::swingClipboard.isInitialized) swingClipboard.close()
         super.onDestroy()
     }
 
@@ -70,6 +72,12 @@ class MainActivity : ComponentActivity() {
         System.setProperty("user.home", home)
         System.setProperty("user.dir", home)
         System.setProperty("java.io.tmpdir", cacheDir.absolutePath)
+        val metrics = resources.displayMetrics
+        net.runelite.awt.impl.HeadlessGraphicsConfiguration.updateDisplay(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+        window.decorView.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            if (view.width > 0 && view.height > 0)
+                net.runelite.awt.impl.HeadlessGraphicsConfiguration.updateDisplay(view.width, view.height, resources.displayMetrics.densityDpi)
+        }
 
         // Fullscreen + edge-to-edge, hide system bars (immersive sticky behavior).
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -111,6 +119,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         swingDialogs = net.runelite.mp.ui.bridge.SwingDialogs(this)
+        swingClipboard = net.runelite.mp.ui.bridge.SwingClipboard(this)
         setContent { AndroidApp() }
     }
 

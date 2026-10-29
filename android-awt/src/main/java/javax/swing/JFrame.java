@@ -60,7 +60,15 @@ public class JFrame extends Frame implements RootPaneContainer {
     }
 
     public int getDefaultCloseOperation() { return defaultCloseOperation; }
-    public void setDefaultCloseOperation(int op) { this.defaultCloseOperation = op; }
+    public void setDefaultCloseOperation(int op) { if(op<DO_NOTHING_ON_CLOSE||op>EXIT_ON_CLOSE)throw new IllegalArgumentException("close operation");int old=defaultCloseOperation;defaultCloseOperation=op;firePropertyChange("defaultCloseOperation",old,op); }
+    @Override protected void processWindowEvent(java.awt.event.WindowEvent event) {
+        super.processWindowEvent(event);
+        if(event.getID()==java.awt.event.WindowEvent.WINDOW_CLOSING){
+            if(defaultCloseOperation==HIDE_ON_CLOSE)setVisible(false);
+            else if(defaultCloseOperation==DISPOSE_ON_CLOSE)dispose();
+            else if(defaultCloseOperation==EXIT_ON_CLOSE)System.exit(0);
+        }
+    }
     @Override public JRootPane getRootPane() { return rootPane; }
     @Override public Container getContentPane() { return rootPane.getContentPane(); }
     @Override public void setContentPane(Container c) { rootPane.setContentPane(c); }

@@ -1,6 +1,7 @@
 package java.awt.event;
 
 import java.awt.Component;
+import java.awt.Window;
 
 public class WindowEvent extends ComponentEvent {
     private static final long serialVersionUID = -1567959133147912127L;
@@ -21,4 +22,16 @@ public class WindowEvent extends ComponentEvent {
     public WindowEvent(Component source, int id) {
         super(source, id);
     }
+    private Window opposite;
+    private int oldState, newState;
+    public WindowEvent(Window source, int id) { this((Component) source, id); }
+    public WindowEvent(Window source, int id, Window opposite) { this(source, id); this.opposite = opposite; }
+    public WindowEvent(Window source, int id, int oldState, int newState) { this(source, id, null, oldState, newState); }
+    public WindowEvent(Window source, int id, Window opposite, int oldState, int newState) {
+        this(source, id, opposite); this.oldState = oldState; this.newState = newState;
+    }
+    public Window getWindow() { return (Window) getSource(); }
+    public Window getOppositeWindow() { return opposite; }
+    public int getOldState() { return oldState; }
+    public int getNewState() { return newState; }
 }

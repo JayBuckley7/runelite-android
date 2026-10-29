@@ -3,19 +3,8 @@ package java.awt.geom;
 import java.awt.Rectangle;
 import java.awt.Shape;
 
-/**
- * Shadow of {@link java.awt.geom.Path2D}. Real OpenJDK has Path2D as the abstract parent
- * of GeneralPath; this shadow tree already ships a standalone {@link GeneralPath}, so this
- * is an independent implementation with the same segment storage plus the two concrete
- * inner subclasses {@link Double} / {@link Float} that callers instantiate.
- *
- * Unlike GeneralPath (whose contains() is only a bounding-box test), {@link #contains}
- * here does a real even-odd point-in-polygon test, because the one external-plugin caller
- * we shadow for — quest-helper's PolyZone — relies on accurate polygon containment to
- * decide whether a world tile is inside a zone. Curve segments (quad/cubic) are treated as
- * straight lines to their endpoint for the containment test; PolyZone only emits lines.
- */
-public abstract class Path2D implements Shape, Cloneable
+/** Segment-backed path shared by GeneralPath and both Path2D precision variants. */
+public abstract class Path2D implements Shape, Cloneable, java.io.Serializable
 {
     public static final int WIND_EVEN_ODD = PathIterator.WIND_EVEN_ODD;
     public static final int WIND_NON_ZERO = PathIterator.WIND_NON_ZERO;
@@ -31,7 +20,7 @@ public abstract class Path2D implements Shape, Cloneable
     private double maxX = java.lang.Double.NEGATIVE_INFINITY, maxY = java.lang.Double.NEGATIVE_INFINITY;
     private boolean empty = true;
 
-    Path2D(int rule) { this.windingRule = rule; }
+    protected Path2D(int rule) { setWindingRule(rule); }
 
     private void ensureSegCapacity(int n) {
         if (numSegs + n > segTypes.length) {
@@ -56,18 +45,27 @@ public abstract class Path2D implements Shape, Cloneable
     }
 
     public final void moveTo(double x, double y) {
+        if(this instanceof Float){x=(float)x;y=(float)y;}
+        if(numSegs>0 && segTypes[numSegs-1]==PathIterator.SEG_MOVETO){
+            segCoords[numCoords-2]=x;segCoords[numCoords-1]=y;recomputeBounds();return;
+        }
         ensureSegCapacity(1); ensureCoordCapacity(2);
         segTypes[numSegs++] = (byte) PathIterator.SEG_MOVETO;
         segCoords[numCoords++] = x; segCoords[numCoords++] = y;
         grow(x, y);
     }
     public final void lineTo(double x, double y) {
+        if(this instanceof Float){x=(float)x;y=(float)y;}
+        requireMove();
         ensureSegCapacity(1); ensureCoordCapacity(2);
         segTypes[numSegs++] = (byte) PathIterator.SEG_LINETO;
         segCoords[numCoords++] = x; segCoords[numCoords++] = y;
         grow(x, y);
     }
+    private void requireMove(){if(numSegs==0)throw new IllegalPathStateException("missing initial moveto");}
     public final void quadTo(double x1, double y1, double x2, double y2) {
+        if(this instanceof Float){x1=(float)x1;y1=(float)y1;x2=(float)x2;y2=(float)y2;}
+        requireMove();
         ensureSegCapacity(1); ensureCoordCapacity(4);
         segTypes[numSegs++] = (byte) PathIterator.SEG_QUADTO;
         segCoords[numCoords++] = x1; segCoords[numCoords++] = y1;
@@ -75,6 +73,8 @@ public abstract class Path2D implements Shape, Cloneable
         grow(x1, y1); grow(x2, y2);
     }
     public final void curveTo(double x1, double y1, double x2, double y2, double x3, double y3) {
+        if(this instanceof Float){x1=(float)x1;y1=(float)y1;x2=(float)x2;y2=(float)y2;x3=(float)x3;y3=(float)y3;}
+        requireMove();
         ensureSegCapacity(1); ensureCoordCapacity(6);
         segTypes[numSegs++] = (byte) PathIterator.SEG_CUBICTO;
         segCoords[numCoords++] = x1; segCoords[numCoords++] = y1;
@@ -83,12 +83,14 @@ public abstract class Path2D implements Shape, Cloneable
         grow(x1, y1); grow(x2, y2); grow(x3, y3);
     }
     public final void closePath() {
+        requireMove();
+        if(segTypes[numSegs-1]==PathIterator.SEG_CLOSE)return;
         ensureSegCapacity(1);
         segTypes[numSegs++] = (byte) PathIterator.SEG_CLOSE;
     }
 
     public final int getWindingRule() { return windingRule; }
-    public final void setWindingRule(int rule) { this.windingRule = rule; }
+    public final void setWindingRule(int rule) { if (rule != WIND_EVEN_ODD && rule != WIND_NON_ZERO) throw new IllegalArgumentException("winding rule"); this.windingRule = rule; }
 
     public final void reset() {
         numSegs = 0; numCoords = 0; empty = true;
@@ -100,7 +102,7 @@ public abstract class Path2D implements Shape, Cloneable
     public Rectangle getBounds() {
         if (empty) return new Rectangle();
         return new Rectangle((int) Math.floor(minX), (int) Math.floor(minY),
-            (int) Math.ceil(maxX - minX), (int) Math.ceil(maxY - minY));
+            (int)Math.ceil(maxX)-(int)Math.floor(minX), (int)Math.ceil(maxY)-(int)Math.floor(minY));
     }
 
     @Override
@@ -109,78 +111,50 @@ public abstract class Path2D implements Shape, Cloneable
         return new Rectangle2D.Double(minX, minY, maxX - minX, maxY - minY);
     }
 
-    /**
-     * Even-odd point-in-polygon test over every subpath (each treated as implicitly
-     * closed, as Path2D does). Curve endpoints are used as straight-line vertices.
-     */
-    @Override
-    public boolean contains(double x, double y) {
-        if (empty || x < minX || x > maxX || y < minY || y > maxY) return false;
-        boolean inside = false;
-        double startX = 0, startY = 0;   // current subpath's first vertex
-        double prevX = 0, prevY = 0;     // previous vertex
-        boolean haveSubpath = false;
-        int c = 0;
-        for (int s = 0; s < numSegs; s++) {
-            int t = segTypes[s];
-            switch (t) {
-                case PathIterator.SEG_MOVETO: {
-                    if (haveSubpath && (prevX != startX || prevY != startY)) {
-                        if (crosses(x, y, prevX, prevY, startX, startY)) inside = !inside;
-                    }
-                    startX = segCoords[c]; startY = segCoords[c + 1]; c += 2;
-                    prevX = startX; prevY = startY; haveSubpath = true;
-                    break;
-                }
-                case PathIterator.SEG_LINETO: {
-                    double nx = segCoords[c], ny = segCoords[c + 1]; c += 2;
-                    if (crosses(x, y, prevX, prevY, nx, ny)) inside = !inside;
-                    prevX = nx; prevY = ny;
-                    break;
-                }
-                case PathIterator.SEG_QUADTO: {
-                    double nx = segCoords[c + 2], ny = segCoords[c + 3]; c += 4;
-                    if (crosses(x, y, prevX, prevY, nx, ny)) inside = !inside;
-                    prevX = nx; prevY = ny;
-                    break;
-                }
-                case PathIterator.SEG_CUBICTO: {
-                    double nx = segCoords[c + 4], ny = segCoords[c + 5]; c += 6;
-                    if (crosses(x, y, prevX, prevY, nx, ny)) inside = !inside;
-                    prevX = nx; prevY = ny;
-                    break;
-                }
-                case PathIterator.SEG_CLOSE: {
-                    if (haveSubpath && (prevX != startX || prevY != startY)) {
-                        if (crosses(x, y, prevX, prevY, startX, startY)) inside = !inside;
-                    }
-                    prevX = startX; prevY = startY;
-                    break;
-                }
+    @Override public boolean contains(double x,double y) {return PathGeometry.contains(getPathIterator(null),x,y);}
+    @Override public boolean contains(double x,double y,double w,double h) {return PathGeometry.rectangle(this,x,y,w,h,true);}
+    @Override public boolean intersects(double x,double y,double w,double h) {return PathGeometry.rectangle(this,x,y,w,h,false);}
+    @Override public PathIterator getPathIterator(AffineTransform at,double flatness) {return new FlatteningPathIterator(getPathIterator(at),flatness);}
+    public final Point2D getCurrentPoint() {
+        if(numSegs==0)return null;
+        double x=0,y=0,sx=0,sy=0;int c=0;
+        for(int i=0;i<numSegs;i++)switch(segTypes[i]){
+            case PathIterator.SEG_MOVETO:x=sx=segCoords[c++];y=sy=segCoords[c++];break;
+            case PathIterator.SEG_LINETO:x=segCoords[c++];y=segCoords[c++];break;
+            case PathIterator.SEG_QUADTO:c+=2;x=segCoords[c++];y=segCoords[c++];break;
+            case PathIterator.SEG_CUBICTO:c+=4;x=segCoords[c++];y=segCoords[c++];break;
+            case PathIterator.SEG_CLOSE:x=sx;y=sy;break;
+        }
+        return new Point2D.Double(x,y);
+    }
+    public final void append(Shape s,boolean connect){append(s.getPathIterator(null),connect);}
+    public final void append(PathIterator it,boolean connect){
+        double[]c=new double[6];
+        while(!it.isDone()){
+            switch(it.currentSegment(c)){
+                case PathIterator.SEG_MOVETO:
+                    Point2D end=getCurrentPoint();
+                    if(connect&&end!=null){if(end.getX()!=c[0]||end.getY()!=c[1])lineTo(c[0],c[1]);}
+                    else moveTo(c[0],c[1]);break;
+                case PathIterator.SEG_LINETO:lineTo(c[0],c[1]);break;
+                case PathIterator.SEG_QUADTO:quadTo(c[0],c[1],c[2],c[3]);break;
+                case PathIterator.SEG_CUBICTO:curveTo(c[0],c[1],c[2],c[3],c[4],c[5]);break;
+                case PathIterator.SEG_CLOSE:closePath();break;
             }
+            connect=false;it.next();
         }
-        // implicitly close a trailing open subpath
-        if (haveSubpath && (prevX != startX || prevY != startY)) {
-            if (crosses(x, y, prevX, prevY, startX, startY)) inside = !inside;
-        }
-        return inside;
     }
-
-    // Standard ray-cast crossing test: does a +x ray from (px,py) cross edge (ax,ay)-(bx,by)?
-    private static boolean crosses(double px, double py, double ax, double ay, double bx, double by) {
-        if ((ay > py) == (by > py)) return false;
-        return px < (bx - ax) * (py - ay) / (by - ay) + ax;
+    public final void transform(AffineTransform at){
+        at.transform(segCoords,0,segCoords,0,numCoords/2);
+        if(this instanceof Float)for(int i=0;i<numCoords;i++)segCoords[i]=(float)segCoords[i];
+        recomputeBounds();
     }
-
-    @Override
-    public boolean contains(double x, double y, double w, double h) {
-        return contains(x, y) && contains(x + w, y) && contains(x, y + h) && contains(x + w, y + h);
-    }
-
-    @Override
-    public boolean intersects(double x, double y, double w, double h) {
-        return getBounds2D().intersects(x, y, w, h);
-    }
+    private void recomputeBounds(){empty=true;for(int i=0;i<numCoords;i+=2)grow(segCoords[i],segCoords[i+1]);}
+    public final Shape createTransformedShape(AffineTransform at){Path2D p=(Path2D)clone();if(at!=null)p.transform(at);return p;}
+    public static boolean contains(PathIterator it,double x,double y){return PathGeometry.contains(it,x,y);}
+    public static boolean contains(PathIterator it,Point2D p){return contains(it,p.getX(),p.getY());}
+    public static boolean contains(PathIterator it,double x,double y,double w,double h){Path2D p=new Double(it.getWindingRule());p.append(it,false);return p.contains(x,y,w,h);}
+    public static boolean intersects(PathIterator it,double x,double y,double w,double h){Path2D p=new Double(it.getWindingRule());p.append(it,false);return p.intersects(x,y,w,h);}
 
     @Override
     public PathIterator getPathIterator(AffineTransform at) {
@@ -201,14 +175,22 @@ public abstract class Path2D implements Shape, Cloneable
 
     public static class Double extends Path2D {
         public Double() { super(WIND_NON_ZERO); }
-        public Double(int rule) { super(rule); }
+        public Double(int rule){super(rule);}
+        public Double(int rule,int capacity){this(rule);if(capacity<0)throw new NegativeArraySizeException();}
+        public Double(Shape s){this(s,null);}
+        public Double(Shape s,AffineTransform at){super(s.getPathIterator(null).getWindingRule());append(s.getPathIterator(at),false);}
     }
 
     public static class Float extends Path2D {
         public void moveTo(float x,float y) { super.moveTo(x,y); }
         public void lineTo(float x,float y) { super.lineTo(x,y); }
         public Float() { super(WIND_NON_ZERO); }
-        public Float(int rule) { super(rule); }
+        public Float(int rule){super(rule);}
+        public Float(int rule,int capacity){this(rule);if(capacity<0)throw new NegativeArraySizeException();}
+        public Float(Shape s){this(s,null);}
+        public Float(Shape s,AffineTransform at){super(s.getPathIterator(null).getWindingRule());append(s.getPathIterator(at),false);}
+        public void quadTo(float a,float b,float c,float d){super.quadTo(a,b,c,d);}
+        public void curveTo(float a,float b,float c,float d,float e,float f){super.curveTo(a,b,c,d,e,f);}
     }
 
     private static final class Iter implements PathIterator {
@@ -237,6 +219,7 @@ public abstract class Path2D implements Shape, Cloneable
         }
 
         @Override public int currentSegment(float[] coords) {
+            if(isDone())throw new java.util.NoSuchElementException();
             int t = p.segTypes[seg];
             int n = sizeOf(t);
             for (int i = 0; i < n; i++) coords[i] = (float) p.segCoords[coord + i];
@@ -245,6 +228,7 @@ public abstract class Path2D implements Shape, Cloneable
         }
 
         @Override public int currentSegment(double[] coords) {
+            if(isDone())throw new java.util.NoSuchElementException();
             int t = p.segTypes[seg];
             int n = sizeOf(t);
             System.arraycopy(p.segCoords, coord, coords, 0, n);

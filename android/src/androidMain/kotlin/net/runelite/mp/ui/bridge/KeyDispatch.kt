@@ -240,11 +240,27 @@ object KeyDispatch {
      * Dispatch an AWT KeyEvent to KeyboardFocusManager and all component trees.
      */
     fun dispatchAwtEvent(ev: KeyEvent) {
+        if (!java.awt.EventQueue.isDispatchThread()) {
+            java.awt.EventQueue.invokeLater { dispatchAwtEvent(ev) }
+            return
+        }
         // 1. KeyboardFocusManager dispatchers (e.g. ClientUI hotkeys)
         try {
-            KeyboardFocusManager.getCurrentKeyboardFocusManager().dispatchKeyEvent(ev)
+            if (KeyboardFocusManager.getCurrentKeyboardFocusManager().dispatchKeyEvent(ev) || ev.isConsumed) return
         } catch (t: Throwable) {
             android.util.Log.w(TAG, "KeyboardFocusManager dispatch failed", t)
+        }
+
+        val focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+        val focusedSwing = (focused as? javax.swing.JComponent)?.takeIf { it.isShowing }
+        if (focusedSwing != null) {
+            val focusedEvent = KeyEvent(focusedSwing, ev.id, ev.`when`, ev.modifiersEx,
+                ev.keyCode, ev.keyChar, ev.keyLocation)
+            deliverToComponent(focusedSwing, focusedEvent)
+            if (focusedEvent.isConsumed || focusedSwing.hostProcessKeyBinding(focusedEvent)) {
+                ev.consume()
+                return
+            }
         }
 
         // 2. Deliver to components with KeyListeners
@@ -256,11 +272,12 @@ object KeyDispatch {
         }
 
         for (root in roots) {
-            deliverToHierarchy(root, ev)
+            deliverToHierarchy(root, ev, focusedSwing)
+            if (ev.isConsumed) break
         }
     }
 
-    private fun deliverToHierarchy(c: Component, ev: KeyEvent) {
+    private fun deliverToComponent(c: Component, ev: KeyEvent) {
         for (listener in c.keyListeners) {
             if (callbacksClass != null && callbacksClass!!.isInstance(listener)) {
                 // Skip direct Callbacks listener since OSRS client's KeyListener calls Callbacks
@@ -275,11 +292,18 @@ object KeyDispatch {
             } catch (t: Throwable) {
                 android.util.Log.w(TAG, "listener threw on key dispatch", t)
             }
+            if (ev.isConsumed) break
         }
+    }
+
+    private fun deliverToHierarchy(c: Component, ev: KeyEvent, alreadyDelivered: Component? = null) {
+        if (c !== alreadyDelivered) deliverToComponent(c, ev)
+        if (ev.isConsumed) return
         if (c is Container) {
             for (child in c.components) {
                 if (child != null) {
-                    deliverToHierarchy(child, ev)
+                    deliverToHierarchy(child, ev, alreadyDelivered)
+                    if (ev.isConsumed) return
                 }
             }
         }

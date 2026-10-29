@@ -1,0 +1,62 @@
+// Opt-in diagnostic build: ./gradlew -I tools-src/swing-ui-probe/probe.init.gradle :android:assembleDebug
+// Installs as net.runelite.mp.compatprobe, never over the normal app.
+gradle.beforeProject { project ->
+    if (project.path == ':android') {
+        project.afterEvaluate {
+            def android = project.extensions.getByName('android')
+            android.buildTypes.getByName('debug').applicationIdSuffix = '.compatprobe'
+            android.buildTypes.getByName('debug').debuggable = true
+            // The JDK shadow classes require the single R8 pipeline used by release;
+            // incremental D8 merging rejects their generated desugaring companions.
+            android.buildTypes.getByName('debug').minifyEnabled = true
+            android.buildTypes.getByName('debug').proguardFile(project.file('proguard-rules.pro'))
+            android.buildTypes.getByName('debug').proguardFile(project.rootProject.file('tools-src/swing-ui-probe/probe-rules.pro'))
+            def source = android.sourceSets.getByName('debug')
+            def folder = project.rootProject.file('tools-src/swing-ui-probe')
+            source.java.srcDir(folder)
+            source.kotlin.srcDir(folder)
+            source.manifest.srcFile(new File(folder, 'AndroidManifest.xml'))
+            // A genuine JVM-only plugin fixture: not an APK implementation dependency.
+            def compilePlugin = project.tasks.register('compileRuntimePluginFixture', org.gradle.api.tasks.compile.JavaCompile) {
+                setSource(project.rootProject.files('tools-src/TestRuntimeHttpPlugin.java'))
+                classpath = project.files()
+                options.release.set(11)
+                sourceCompatibility = '11'
+                targetCompatibility = '11'
+                destinationDirectory.set(project.layout.buildDirectory.dir('compat-ui/plugin-classes'))
+            }
+            def pluginJar = project.tasks.register('runtimePluginFixtureJar', org.gradle.api.tasks.bundling.Jar) {
+                dependsOn compilePlugin
+                from compilePlugin.flatMap { it.destinationDirectory }
+                archiveFileName.set('plugin-http.jar')
+                destinationDirectory.set(project.layout.buildDirectory.dir('compat-ui/plugin-assets'))
+            }
+            source.assets.srcDir(project.layout.buildDirectory.dir('compat-ui/plugin-assets').get().asFile)
+            project.tasks.matching { it.name == 'mergeDebugAssets' }.configureEach { dependsOn pluginJar }
+            // Compile shadow-JDK probes as Java 8, matching android-awt. Modular javac
+            // otherwise hides classpath additions to java.awt.font from this Java 17 app.
+            def compileProbe = project.tasks.register('compileCompatProbe', org.gradle.api.tasks.compile.JavaCompile) {
+                dependsOn ':android-awt:bundleLibCompileToJarDebug'
+                setSource(project.rootProject.files('tools-src/TestGraphicsCompatibility.java',
+                    'tools-src/TestRuntimeCoreContracts.java', 'tools-src/TestAudioLineContracts.java'))
+                classpath = project.files(project.rootProject.file('android-awt/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar'))
+                def sdk = System.getenv('ANDROID_HOME') ?: System.getenv('ANDROID_SDK_ROOT') ?: android.sdkDirectory.absolutePath
+                options.bootstrapClasspath = project.files(new File(sdk, 'build-tools/36.0.0/core-lambda-stubs.jar'),
+                    new File(sdk, 'platforms/android-37.0/android.jar'))
+                options.release.set(null)
+                sourceCompatibility = '1.8'
+                targetCompatibility = '1.8'
+                destinationDirectory.set(project.layout.buildDirectory.dir('compat-ui/classes'))
+            }
+            def probeJar = project.tasks.register('compatProbeJar', org.gradle.api.tasks.bundling.Jar) {
+                dependsOn compileProbe
+                from compileProbe.flatMap { it.destinationDirectory }
+                archiveFileName.set('compat-probe.jar')
+                destinationDirectory.set(project.layout.buildDirectory.dir('compat-ui'))
+            }
+            project.dependencies.add('debugImplementation', project.files(probeJar))
+            project.tasks.matching { it.name == 'processDebugGoogleServices' ||
+                it.name.startsWith('uploadCrashlytics') && it.name.endsWith('Debug') }.configureEach { enabled = false }
+        }
+    }
+}

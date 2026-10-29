@@ -24,6 +24,10 @@ public class TreeModelEvent extends EventObject {
         this.path = path == null ? null : new TreePath(path);
     }
 
+    public TreeModelEvent(Object source, Object[] path, int[] indices, Object[] children) {
+        this(source, path == null ? null : new TreePath(path), indices, children);
+    }
+    public Object[] getPath() { return path == null ? null : path.getPath(); }
     public TreePath getTreePath() { return path; }
     public int[] getChildIndices() { return childIndices == null ? null : childIndices.clone(); }
     public Object[] getChildren() { return children == null ? null : children.clone(); }

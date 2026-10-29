@@ -28,33 +28,40 @@ public final class ImageIO {
     }
 
     public static BufferedImage read(InputStream input) throws IOException {
-        if (input == null) throw new IOException("null InputStream");
+        if (input == null) throw new IllegalArgumentException("null InputStream");
         Bitmap bitmap = BitmapFactory.decodeStream(input);
         return bitmapToBufferedImage(bitmap);
     }
 
     public static BufferedImage read(File input) throws IOException {
-        if (input == null) throw new IOException("null File");
+        if (input == null) throw new IllegalArgumentException("null File");
+        if (!input.isFile() || !input.canRead()) throw new IOException("Cannot read image file: " + input);
         Bitmap bitmap = BitmapFactory.decodeFile(input.getAbsolutePath());
         return bitmapToBufferedImage(bitmap);
     }
 
     public static BufferedImage read(URL input) throws IOException {
-        if (input == null) throw new IOException("null URL");
+        if (input == null) throw new IllegalArgumentException("null URL");
         try (InputStream is = input.openStream()) {
             return read(is);
         }
     }
 
     public static boolean write(java.awt.image.RenderedImage im, String formatName, OutputStream output) throws IOException {
-        if (output == null) throw new IOException("null OutputStream");
-        if (!(im instanceof BufferedImage)) {
-            throw new IOException("RenderedImage must be a BufferedImage in this shadow");
-        }
-        BufferedImage bi = (BufferedImage) im;
-        Bitmap bmp = Bitmap.createBitmap(bi.getWidth(), bi.getHeight(), Bitmap.Config.ARGB_8888);
-        bmp.setPixels(bi.backingArray(), 0, bi.getWidth(), 0, 0, bi.getWidth(), bi.getHeight());
+        if (output == null || im == null) throw new IllegalArgumentException("Image and output are required");
         Bitmap.CompressFormat fmt = formatFor(formatName);
+        if(fmt==null)return false;
+        int width=im.getWidth(),height=im.getHeight();
+        int[] pixels;
+        if(im instanceof BufferedImage) pixels=((BufferedImage)im).getRGB(0,0,width,height,null,0,width);
+        else {
+            pixels=new int[width*height];java.awt.image.Raster raster=im.getData();java.awt.image.ColorModel model=im.getColorModel();Object element=null;
+            for(int y=0;y<height;y++)for(int x=0;x<width;x++){
+                element=raster.getDataElements(im.getMinX()+x,im.getMinY()+y,element);pixels[y*width+x]=model.getRGB(element);
+            }
+        }
+        Bitmap bmp=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+        bmp.setPixels(pixels,0,width,0,0,width,height);
         try {
             return bmp.compress(fmt, 100, output);
         } finally {
@@ -63,13 +70,14 @@ public final class ImageIO {
     }
 
     public static boolean write(java.awt.image.RenderedImage im, String formatName, File output) throws IOException {
+        if(formatFor(formatName)==null)return false;
         try (java.io.FileOutputStream os = new java.io.FileOutputStream(output)) {
             return write(im, formatName, os);
         }
     }
 
     private static BufferedImage bitmapToBufferedImage(Bitmap bitmap) throws IOException {
-        if (bitmap == null) throw new IOException("BitmapFactory returned null");
+        if (bitmap == null) return null;
         int w = bitmap.getWidth();
         int h = bitmap.getHeight();
         BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -79,7 +87,7 @@ public final class ImageIO {
     }
 
     private static Bitmap.CompressFormat formatFor(String name) {
-        if (name == null) return Bitmap.CompressFormat.PNG;
+        if (name == null) throw new IllegalArgumentException("formatName");
         String n = name.toLowerCase(java.util.Locale.ROOT);
         if (n.equals("jpeg") || n.equals("jpg")) return Bitmap.CompressFormat.JPEG;
         if (n.equals("webp")) {
@@ -93,6 +101,6 @@ public final class ImageIO {
             Bitmap.CompressFormat legacy = Bitmap.CompressFormat.WEBP;
             return legacy;
         }
-        return Bitmap.CompressFormat.PNG;
+        return n.equals("png")?Bitmap.CompressFormat.PNG:null;
     }
 }

@@ -35,7 +35,7 @@ public abstract class AbstractButton extends JComponent {
     private Action action;
 
     // Swing's AbstractButton.init(): buttons default to LEFT_ALIGNMENT in BoxLayouts.
-    public AbstractButton() { setAlignmentX(0f); }
+    public AbstractButton() { setAlignmentX(0f); setModel(model); }
 
     public String getText() { return text; }
     public void setText(String text) { this.text = text == null ? "" : text; invalidate(); }
@@ -75,7 +75,45 @@ public abstract class AbstractButton extends JComponent {
     public void setRolloverEnabled(boolean b) { this.rolloverEnabled = b; }
 
     public ButtonModel getModel() { return model; }
-    public void setModel(ButtonModel newModel) { this.model = newModel; }
+    public void setModel(ButtonModel newModel) {
+        if (newModel == null) throw new IllegalArgumentException("model");
+        ButtonModel old = model;
+        if (old != null) {
+            old.removeActionListener(modelActionListener);
+            old.removeItemListener(modelItemListener);
+            old.removeChangeListener(modelChangeListener);
+        }
+        model = newModel;
+        model.addActionListener(modelActionListener);
+        model.addItemListener(modelItemListener);
+        model.addChangeListener(modelChangeListener);
+        firePropertyChange("model", old, newModel);
+        repaint();
+    }
+    @Override public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        if (model != null) model.setEnabled(enabled);
+    }
+    private final javax.swing.event.EventListenerList buttonListeners = new javax.swing.event.EventListenerList();
+    private final ActionListener modelActionListener = e -> {
+        java.awt.event.ActionEvent event = new java.awt.event.ActionEvent(this,
+            java.awt.event.ActionEvent.ACTION_PERFORMED, getActionCommand(), e.getWhen(), e.getModifiers());
+        for (ActionListener listener : getActionListeners()) listener.actionPerformed(event);
+    };
+    private final ItemListener modelItemListener = e -> {
+        java.awt.event.ItemEvent event = new java.awt.event.ItemEvent(this,
+            java.awt.event.ItemEvent.ITEM_STATE_CHANGED, this, e.getStateChange());
+        for (ItemListener listener : getItemListeners()) listener.itemStateChanged(event);
+        Action current = action;
+        if (current != null && shouldUpdateSelectedStateFromAction() && current.getValue(Action.SELECTED_KEY) != null
+            && Boolean.TRUE.equals(current.getValue(Action.SELECTED_KEY)) != isSelected()) current.putValue(Action.SELECTED_KEY, isSelected());
+        repaint();
+    };
+    private final ChangeListener modelChangeListener = e -> {
+        javax.swing.event.ChangeEvent event = new javax.swing.event.ChangeEvent(this);
+        for (ChangeListener listener : getChangeListeners()) listener.stateChanged(event);
+        repaint();
+    };
 
     // Typed UI-delegate accessors. javac resolves `button.setUI(new BasicButtonUI())`
     // (and BasicToggleButtonUI) to AbstractButton.setUI(ButtonUI) — the most specific
@@ -99,7 +137,8 @@ public abstract class AbstractButton extends JComponent {
      *  we need to satisfy. Without the stub Dalvik throws NoSuchMethodError. */
     private java.awt.Insets margin;
     public java.awt.Insets getMargin() { return margin; }
-    public void setMargin(java.awt.Insets m) { this.margin = m; invalidate(); }
+    public void setMargin(java.awt.Insets m) { java.awt.Insets old=margin;margin=m==null?null:new java.awt.Insets(m.top,m.left,m.bottom,m.right);firePropertyChange("margin",old,margin);revalidate();repaint(); }
+    @Override public java.awt.Insets getInsets(){java.awt.Insets in=super.getInsets();return margin==null?in:new java.awt.Insets(in.top+margin.top,in.left+margin.left,in.bottom+margin.bottom,in.right+margin.right);}
 
     /**
      * Compute a sensible preferred size from text + icon + padding. JComponent's default
@@ -150,39 +189,18 @@ public abstract class AbstractButton extends JComponent {
     public void doClick() { doClick(68); }
     public void doClick(int pressTime) {
         if (!isEnabled()) return;
-        // For toggleable buttons (JCheckBox, JToggleButton), a click flips the selection
-        // and fires an ItemEvent before the ActionEvent — mirrors real Swing.
-        boolean toggleable = (this instanceof JToggleButton);
-        if (toggleable) {
-            boolean wasSelected = isSelected();
-            setSelected(!wasSelected);
-            int state = !wasSelected
-                ? java.awt.event.ItemEvent.SELECTED
-                : java.awt.event.ItemEvent.DESELECTED;
-            java.awt.event.ItemEvent iev = new java.awt.event.ItemEvent(
-                this, java.awt.event.ItemEvent.ITEM_STATE_CHANGED, this, state);
-            for (ItemListener il : new java.util.ArrayList<>(itemListeners)) {
-                try { il.itemStateChanged(iev); } catch (Throwable ignored) {}
-            }
-            // Swing pushes the toggled state back into a SELECTED_KEY-bearing Action.
-            Action a = action;
-            if (a != null && a.getValue(Action.SELECTED_KEY) != null && shouldUpdateSelectedStateFromAction()
-                    && Boolean.TRUE.equals(a.getValue(Action.SELECTED_KEY)) != isSelected()) {
-                a.putValue(Action.SELECTED_KEY, isSelected());
-            }
-        }
-        java.awt.event.ActionEvent ev = new java.awt.event.ActionEvent(
-            this, java.awt.event.ActionEvent.ACTION_PERFORMED, getActionCommand());
-        for (ActionListener l : new java.util.ArrayList<>(actionListeners)) {
-            try { l.actionPerformed(ev); } catch (Throwable ignored) {}
-        }
+        model.setArmed(true);
+        model.setPressed(true);
+        model.setPressed(false);
+        model.setArmed(false);
     }
 
     public void setMnemonic(int mnemonic) { model.setMnemonic(mnemonic); }
     public int getMnemonic() { return model.getMnemonic(); }
     public void setMnemonic(char mnemonic) { model.setMnemonic(mnemonic); }
-    public void setDisplayedMnemonicIndex(int index) {}
-    public int getDisplayedMnemonicIndex() { return -1; }
+    private int displayedMnemonicIndex = -1;
+    public void setDisplayedMnemonicIndex(int index) { if (index < -1 || index >= text.length()) throw new IllegalArgumentException("index"); displayedMnemonicIndex = index; repaint(); }
+    public int getDisplayedMnemonicIndex() { return displayedMnemonicIndex; }
 
     public void setActionCommand(String s) { model.setActionCommand(s); }
     public String getActionCommand() { return model.getActionCommand() != null ? model.getActionCommand() : text; }
@@ -299,9 +317,9 @@ public abstract class AbstractButton extends JComponent {
     public void addItemListener(ItemListener l) { if (l != null) itemListeners.add(l); }
     public void removeItemListener(ItemListener l) { itemListeners.remove(l); }
     public ItemListener[] getItemListeners() { return itemListeners.toArray(new ItemListener[0]); }
-    public ChangeListener[] getChangeListeners() { return new ChangeListener[0]; }
-    public void addChangeListener(ChangeListener l) {}
-    public void removeChangeListener(ChangeListener l) {}
+    public ChangeListener[] getChangeListeners() { return buttonListeners.getListeners(ChangeListener.class); }
+    public void addChangeListener(ChangeListener l) { buttonListeners.add(ChangeListener.class, l); }
+    public void removeChangeListener(ChangeListener l) { buttonListeners.remove(ChangeListener.class, l); }
 
     /**
      * Render the button's icon and (very simplified) text. RuneLite's toolbar nav buttons

@@ -14,7 +14,7 @@ public class GradientPaint implements Paint {
     }
 
     public GradientPaint(float x1, float y1, Color c1, float x2, float y2, Color c2, boolean cyclic) {
-        this.x1 = x1; this.y1 = y1; this.c1 = c1; this.x2 = x2; this.y2 = y2; this.c2 = c2; this.cyclic = cyclic;
+        this.x1 = x1; this.y1 = y1; this.c1 = java.util.Objects.requireNonNull(c1); this.x2 = x2; this.y2 = y2; this.c2 = java.util.Objects.requireNonNull(c2); this.cyclic = cyclic;
     }
 
     public GradientPaint(java.awt.geom.Point2D pt1, Color c1, java.awt.geom.Point2D pt2, Color c2) {
@@ -39,6 +39,23 @@ public class GradientPaint implements Paint {
     @Override
     public PaintContext createContext(ColorModel cm, Rectangle bounds, Rectangle2D userBounds,
                                        AffineTransform xform, RenderingHints hints) {
-        throw new UnsupportedOperationException("GradientPaint contexts are not used by the renderer");
+        final AffineTransform inverse;
+        try{inverse=xform.createInverse();}catch(java.awt.geom.NoninvertibleTransformException e){throw new IllegalArgumentException(e);}
+        return new PaintContext(){
+            public void dispose(){}
+            public ColorModel getColorModel(){return ColorModel.getRGBdefault();}
+            public java.awt.image.Raster getRaster(int x,int y,int w,int h){
+                java.awt.image.BufferedImage image=new java.awt.image.BufferedImage(w,h,java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                double dx=x2-x1,dy=y2-y1,length=dx*dx+dy*dy;java.awt.geom.Point2D.Double point=new java.awt.geom.Point2D.Double();
+                for(int row=0;row<h;row++)for(int col=0;col<w;col++){
+                    point.setLocation(x+col+0.5,y+row+0.5);inverse.transform(point,point);
+                    double t=length==0?0:((point.x-x1)*dx+(point.y-y1)*dy)/length;
+                    if(cyclic){t=t-Math.floor(t/2)*2;if(t>1)t=2-t;}else t=Math.max(0,Math.min(1,t));
+                    int pixel=0,a=c1.getRGB(),b=c2.getRGB();for(int shift=0;shift<=24;shift+=8)pixel|=((int)Math.round(((a>>>shift)&255)*(1-t)+((b>>>shift)&255)*t))<<shift;
+                    image.setRGB(col,row,pixel);
+                }
+                return image.getRaster();
+            }
+        };
     }
 }

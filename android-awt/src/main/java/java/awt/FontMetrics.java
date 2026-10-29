@@ -18,7 +18,7 @@ public abstract class FontMetrics implements Serializable {
     }
 
     public Font getFont() { return font; }
-    public FontRenderContext getFontRenderContext() { return new FontRenderContext(); }
+    public java.awt.font.FontRenderContext getFontRenderContext() { return new java.awt.font.FontRenderContext(null,false,false); }
 
     public int getLeading()   { return Math.max(1, font.getSize() / 8); }
     public int getAscent()    { return (int) Math.ceil(font.getSize() * 0.8); }

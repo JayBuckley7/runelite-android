@@ -40,9 +40,14 @@ public class Container extends Component {
         if (old != this) old.remove(comp);
         else if (children.remove(comp) && layout != null) layout.removeLayoutComponent(comp);
     }
+    private void checkCycle(Component comp) {
+        for (Component ancestor = this; ancestor != null; ancestor = ancestor.getParent())
+            if (ancestor == comp) throw new IllegalArgumentException("container cycle");
+    }
 
     public Component add(Component comp, int index) {
         if (comp == null) return null;
+        checkCycle(comp);
         int at = children.indexOf(comp);
         if (at >= 0 && at < index) index--;
         detach(comp);
@@ -63,6 +68,7 @@ public class Container extends Component {
 
     public void add(Component comp, Object constraints) {
         if (comp == null) return;
+        checkCycle(comp);
         if (children.contains(comp)) {
             // add(comp, -1) already added; just register constraint
         } else {
@@ -75,6 +81,18 @@ public class Container extends Component {
         } else if (layout != null && constraints instanceof String) {
             layout.addLayoutComponent((String) constraints, comp);
         }
+        invalidate();
+    }
+
+    public void add(Component comp, Object constraints, int index) {
+        if (comp == null) throw new NullPointerException("component");
+        if (index < -1 || index > children.size()) throw new IllegalArgumentException("invalid index");
+        checkCycle(comp);
+        detach(comp);
+        if (index == -1 || index >= children.size()) children.add(comp); else children.add(index, comp);
+        comp.setParent(this);
+        if (layout instanceof LayoutManager2) ((LayoutManager2) layout).addLayoutComponent(comp, constraints);
+        else if (layout != null && (constraints == null || constraints instanceof String)) layout.addLayoutComponent((String) constraints, comp);
         invalidate();
     }
 
@@ -220,8 +238,8 @@ public class Container extends Component {
     protected void paintChildren(Graphics g) {
         int count = children.size();
         if (count == 0) return;
-        for (int i = 0; i < count; i++) {
-            if (i >= children.size()) break;
+        for (int i = count - 1; i >= 0; i--) {
+            if (i >= children.size()) continue;
             Component c = children.get(i);
             if (c == null || !c.isVisible() || c.getWidth() <= 0 || c.getHeight() <= 0) continue;
             Graphics cg = g.create(c.x, c.y, c.width, c.height);

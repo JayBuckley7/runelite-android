@@ -10,6 +10,9 @@ public abstract class Graphics2D extends Graphics {
 
     public abstract void draw(Shape s);
     public abstract void fill(Shape s);
+    public GraphicsConfiguration getDeviceConfiguration() {
+        return net.runelite.awt.impl.HeadlessGraphicsConfiguration.INSTANCE;
+    }
 
     /** Intersect the clip with {@code s}; null clears the clip (JDK semantics). The default
      *  is a bounds approximation for Graphics2D subclasses that don't override it. */
@@ -23,6 +26,25 @@ public abstract class Graphics2D extends Graphics {
     }
     public abstract boolean drawImage(java.awt.Image img, AffineTransform xform, ImageObserver obs);
     public abstract void drawImage(BufferedImage img, int x, int y);
+
+    public void drawImage(BufferedImage image, java.awt.image.BufferedImageOp operation, int x, int y) {
+        drawImage(operation == null ? image : operation.filter(image, null), x, y, null);
+    }
+    public void drawRenderedImage(java.awt.image.RenderedImage source, AffineTransform transform) {
+        if (source instanceof BufferedImage) { drawImage((BufferedImage)source, transform, null); return; }
+        BufferedImage image = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        java.awt.image.Raster raster = source.getData(); java.awt.image.ColorModel model = source.getColorModel(); Object pixel = null;
+        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
+            pixel = raster.getDataElements(source.getMinX() + x, source.getMinY() + y, pixel);
+            image.setRGB(x, y, model.getRGB(pixel));
+        }
+        AffineTransform positioned = new AffineTransform(transform); positioned.translate(source.getMinX(), source.getMinY());
+        drawImage(image, positioned, null);
+    }
+    public boolean hit(Rectangle rectangle, Shape shape, boolean onStroke) {
+        Shape rendered = onStroke ? getStroke().createStrokedShape(shape) : shape;
+        return getTransform().createTransformedShape(rendered).intersects(rectangle);
+    }
 
     public abstract Composite getComposite();
     public abstract void setComposite(Composite comp);
@@ -55,5 +77,5 @@ public abstract class Graphics2D extends Graphics {
     public abstract void drawString(java.text.AttributedCharacterIterator iterator, float x, float y);
     public abstract void drawString(String str, float x, float y);
 
-    public abstract FontRenderContext getFontRenderContext();
+    public abstract java.awt.font.FontRenderContext getFontRenderContext();
 }

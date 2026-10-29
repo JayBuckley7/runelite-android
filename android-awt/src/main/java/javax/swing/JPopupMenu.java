@@ -3,7 +3,7 @@ package javax.swing;
 import java.awt.Component;
 import javax.swing.event.PopupMenuListener;
 
-public class JPopupMenu extends JComponent {
+public class JPopupMenu extends JComponent implements MenuElement {
     private static final long serialVersionUID = 1L;
 
     public static class Separator extends JSeparator {
@@ -28,7 +28,7 @@ public class JPopupMenu extends JComponent {
         setBackground(new java.awt.Color(0x3A3D43));
         setVisible(false);
     }
-    public JPopupMenu(String label) { this(); }
+    public JPopupMenu(String label) { this();setLabel(label); }
 
     public JMenuItem add(JMenuItem item) { if (item != null) super.add(item); return item; }
     public JMenuItem add(String s) { JMenuItem it = new JMenuItem(s); super.add(it); return it; }
@@ -49,8 +49,11 @@ public class JPopupMenu extends JComponent {
     }
     public Component getInvoker() { return invoker; }
     public void setInvoker(Component invoker) { this.invoker = invoker; }
-    public void setLabel(String label) {}
-    public String getLabel() { return null; }
+    private String label;
+    public void setLabel(String label) { String old=this.label;this.label=label;firePropertyChange("label",old,label); }
+    public String getLabel() { return label; }
+    public java.awt.Component getComponent() { return this; }
+    public void menuSelectionChanged(boolean included) { if(!included)setVisible(false); }
     public void addPopupMenuListener(PopupMenuListener l) { if (l != null) popupListeners.add(l); }
     public void removePopupMenuListener(PopupMenuListener l) { popupListeners.remove(l); }
     @Override public void setVisible(boolean visible) {

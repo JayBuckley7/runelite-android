@@ -11,10 +11,14 @@ import java.awt.geom.Rectangle2D;
 public class RescaleOp implements BufferedImageOp {
     private final float[] scaleFactors;
     private final float[] offsets;
+    private final RenderingHints hints;
 
     public RescaleOp(float[] scaleFactors, float[] offsets, RenderingHints hints) {
-        this.scaleFactors = scaleFactors.clone();
-        this.offsets = offsets.clone();
+        int count = Math.min(scaleFactors.length, offsets.length);
+        if (count == 0) throw new IllegalArgumentException("No scale factors");
+        this.scaleFactors = java.util.Arrays.copyOf(scaleFactors, count);
+        this.offsets = java.util.Arrays.copyOf(offsets, count);
+        this.hints = hints == null ? null : (RenderingHints) hints.clone();
     }
 
     public RescaleOp(float scaleFactor, float offset, RenderingHints hints) {
@@ -39,36 +43,38 @@ public class RescaleOp implements BufferedImageOp {
     public BufferedImage filter(BufferedImage src, BufferedImage dest) {
         BufferedImage out = (dest != null) ? dest
             : new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        int[] srcPx = src.backingArray();
-        int[] dstPx = out.backingArray();
-        if (srcPx == null || dstPx == null) return out;
-        float[] s = scaleFactors;
-        float[] o = offsets;
-        for (int i = 0; i < srcPx.length && i < dstPx.length; i++) {
-            int p = srcPx[i];
-            int a = (p >>> 24) & 0xFF;
-            int r = (p >>> 16) & 0xFF;
-            int g = (p >>> 8) & 0xFF;
-            int b = p & 0xFF;
-            r = clamp((int) (r * s[0] + o[0]));
-            g = clamp((int) (g * (s.length > 1 ? s[1] : s[0]) + (o.length > 1 ? o[1] : o[0])));
-            b = clamp((int) (b * (s.length > 2 ? s[2] : s[0]) + (o.length > 2 ? o[2] : o[0])));
-            if (s.length > 3) a = clamp((int) (a * s[3] + o[3]));
-            dstPx[i] = (a << 24) | (r << 16) | (g << 8) | b;
+        if (out.getWidth() != src.getWidth() || out.getHeight() != src.getHeight())
+            throw new IllegalArgumentException("Image dimensions differ");
+        int count = scaleFactors.length;
+        int colors = src.getColorModel().getNumColorComponents();
+        if (count != 1 && count != colors && count != src.getColorModel().getNumComponents())
+            throw new IllegalArgumentException("Wrong number of scale factors");
+        int[] source = src.getRGB(0, 0, src.getWidth(), src.getHeight(), null, 0, src.getWidth());
+        for (int y = 0; y < src.getHeight(); y++) for (int x = 0; x < src.getWidth(); x++) {
+            int p = source[y * src.getWidth() + x];
+            int a = p >>> 24;
+            int r = adjust((p >>> 16) & 255, 0);
+            int g = adjust((p >>> 8) & 255, count == 1 ? 0 : 1);
+            int b = adjust(p & 255, count == 1 ? 0 : 2);
+            if (count == 4) a = adjust(a, 3);
+            out.setRGB(x, y, a << 24 | r << 16 | g << 8 | b);
         }
         return out;
     }
+
+    private int adjust(int value, int band) { return clamp((int) (value * scaleFactors[band] + offsets[band])); }
 
     private static int clamp(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 
     @Override public Rectangle2D getBounds2D(BufferedImage src) { return new Rectangle2D.Float(0, 0, src.getWidth(), src.getHeight()); }
     @Override public BufferedImage createCompatibleDestImage(BufferedImage src, ColorModel destCM) {
-        return new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        ColorModel cm = destCM == null ? src.getColorModel() : destCM;
+        return new BufferedImage(cm, cm.createCompatibleWritableRaster(src.getWidth(), src.getHeight()), cm.isAlphaPremultiplied(), null);
     }
     @Override public Point2D getPoint2D(Point2D srcPt, Point2D dstPt) {
         if (dstPt == null) dstPt = new Point2D.Double();
         dstPt.setLocation(srcPt.getX(), srcPt.getY());
         return dstPt;
     }
-    @Override public RenderingHints getRenderingHints() { return null; }
+    @Override public RenderingHints getRenderingHints() { return hints == null ? null : (RenderingHints) hints.clone(); }
 }

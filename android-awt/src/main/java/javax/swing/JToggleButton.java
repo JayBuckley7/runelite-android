@@ -5,6 +5,16 @@ public class JToggleButton extends AbstractButton {
 
     public static class ToggleButtonModel extends DefaultButtonModel {
         private static final long serialVersionUID = 1L;
+        @Override public void setSelected(boolean selected) {
+            ButtonGroup group = getGroup();
+            if (group != null) { group.setSelected(this, selected); selected = group.isSelected(this); }
+            super.setSelected(selected);
+        }
+        @Override public void setPressed(boolean pressed) {
+            if (isPressed() == pressed || !isEnabled()) return;
+            if (!pressed && isArmed()) setSelected(!isSelected());
+            super.setPressed(pressed);
+        }
     }
 
     public JToggleButton() { this(null, null, false); }

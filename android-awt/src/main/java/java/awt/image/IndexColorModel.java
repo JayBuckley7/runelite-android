@@ -1,0 +1,63 @@
+package java.awt.image;
+
+import java.awt.Transparency;
+import java.awt.color.ColorSpace;
+
+public class IndexColorModel extends ColorModel {
+    private final int[] palette;
+    private final int transparent;
+    public IndexColorModel(int bits, int size, byte[] red, byte[] green, byte[] blue) { this(bits, size, red, green, blue, -1); }
+    public IndexColorModel(int bits, int size, byte[] red, byte[] green, byte[] blue, int transparent) {
+        this(bits, size, palette(size, red, green, blue, null, transparent), 0, transparent >= 0, transparent, bits <= 8 ? DataBuffer.TYPE_BYTE : DataBuffer.TYPE_USHORT);
+    }
+    public IndexColorModel(int bits, int size, byte[] red, byte[] green, byte[] blue, byte[] alpha) {
+        this(bits, size, palette(size, red, green, blue, alpha, -1), 0, true, -1, bits <= 8 ? DataBuffer.TYPE_BYTE : DataBuffer.TYPE_USHORT);
+    }
+    public IndexColorModel(int bits, int size, int[] colors, int offset, boolean alpha, int transparent, int transferType) {
+        super(bits, new int[]{8, 8, 8, 8}, ColorSpace.getInstance(ColorSpace.CS_sRGB), alpha || transparent >= 0, false, transparency(colors, offset, size, alpha, transparent), transferType);
+        if (bits < 1 || bits > 16 || size < 1 || size > (1 << bits)) throw new IllegalArgumentException("Invalid indexed palette");
+        palette = java.util.Arrays.copyOfRange(colors, offset, offset + size);
+        int transparentIndex = -1;
+        for (int i = 0; i < palette.length; i++) {
+            if (!alpha) palette[i] |= 0xff000000;
+            if (i == transparent) palette[i] &= 0xffffff;
+            if (transparentIndex < 0 && (palette[i] >>> 24) == 0) transparentIndex = i;
+        }
+        this.transparent = transparentIndex;
+    }
+    private static int transparency(int[] colors, int offset, int size, boolean alpha, int transparent) {
+        boolean bitmask = transparent >= 0;
+        if (alpha) for (int i = 0; i < size; i++) { int a = colors[offset + i] >>> 24; if (a != 0 && a != 255) return Transparency.TRANSLUCENT; bitmask |= a == 0; }
+        return bitmask ? Transparency.BITMASK : Transparency.OPAQUE;
+    }
+    private static int[] palette(int size, byte[] r, byte[] g, byte[] b, byte[] alpha, int transparent) {
+        int[] colors = new int[size];
+        for (int i = 0; i < size; i++) colors[i] = (i == transparent ? 0 : alpha == null ? 255 : alpha[i] & 255) << 24 | (r[i] & 255) << 16 | (g[i] & 255) << 8 | b[i] & 255;
+        return colors;
+    }
+    public final int getMapSize() { return palette.length; }
+    public final int getTransparentPixel() { return transparent; }
+    public final void getRGBs(int[] out) { System.arraycopy(palette, 0, out, 0, palette.length); }
+    public final void getReds(byte[] out) { channels(out, 16); }
+    public final void getGreens(byte[] out) { channels(out, 8); }
+    public final void getBlues(byte[] out) { channels(out, 0); }
+    public final void getAlphas(byte[] out) { channels(out, 24); }
+    private void channels(byte[] out, int shift) { for (int i = 0; i < palette.length; i++) out[i] = (byte)(palette[i] >>> shift); }
+    public final int getRGB(int index) { return index >= 0 && index < palette.length ? palette[index] : 0; }
+    public final int getRed(int index) { return getRGB(index) >>> 16 & 255; }
+    public final int getGreen(int index) { return getRGB(index) >>> 8 & 255; }
+    public final int getBlue(int index) { return getRGB(index) & 255; }
+    public final int getAlpha(int index) { return getRGB(index) >>> 24; }
+    @Override public Object getDataElements(int rgb, Object out) {
+        int best = 0; long bestDistance = Long.MAX_VALUE;
+        if ((rgb >>> 24) == 0 && transparent >= 0) best = transparent;
+        else for (int i = 0; i < palette.length; i++) {
+            long distance = 0; for (int shift = 0; shift <= 24; shift += 8) { int delta = (rgb >>> shift & 255) - (palette[i] >>> shift & 255); distance += delta * delta; }
+            if (distance < bestDistance) { bestDistance = distance; best = i; if (distance == 0) break; }
+        }
+        if (out == null) out = transferType == DataBuffer.TYPE_BYTE ? new byte[1] : new short[1];
+        SampleModel.transferSet(out, 0, best); return out;
+    }
+    @Override public SampleModel createCompatibleSampleModel(int w, int h) { return new PixelInterleavedSampleModel(transferType, w, h, 1, w, new int[]{0}); }
+    @Override public boolean isCompatibleRaster(Raster raster) { return raster.getTransferType() == transferType && raster.getNumBands() == 1 && raster.getSampleModel().getSampleSize(0) >= pixel_bits; }
+}

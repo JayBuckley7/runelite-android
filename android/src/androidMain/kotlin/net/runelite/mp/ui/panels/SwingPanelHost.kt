@@ -72,6 +72,8 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
     private var touchMount = -1L
     private var contextPopup: AlertDialog? = null
     private var inputPopup: AlertDialog? = null
+    private var comboPopup: Pair<JComboBox<*>, AlertDialog>? = null // Android thread
+    @Volatile private var comboGeneration = 0L
     private var swingPopup: JPopupMenu? = null // AWT thread only
     // A press captured by a drag handler (quest-helper's section grips): it gets
     // PRESSED/DRAGGED/RELEASED like a desktop mouse instead of the gesture scrolling.
@@ -133,7 +135,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
                     try {
                         if (running && attachment == attachmentSerial) {
                             if (hostedRoot != null) {
-                                if (root !== hostedRoot) { root = hostedRoot; mountSerial++ }
+                                if (root !== hostedRoot) { root = hostedRoot; hostedRoot.setHostShowing(true); mountSerial++ }
                             } else mountPanel(NavBarBridge.panel(panelKey), panelGeneration())
                             renderedMount = mountSerial
                             val component = root
@@ -186,18 +188,22 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        hosts.add(java.lang.ref.WeakReference(this))
         attachmentSerial++
         running = true
         post(render)
     }
 
     override fun onDetachedFromWindow() {
+        hosts.removeAll { it.get() == null || it.get() === this }
         running = false
         attachmentSerial++
         removeCallbacks(render)
         clearAndroidState(mountSerial)
         SwingUtilities.invokeLater {
+            root?.let { java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(it); it.setHostShowing(false) }
             mountPanel(null, -1L)
+            root = null
             // Full-res buffers are several MB each; don't park them while the sidebar is shut.
             raster = null
             bitmaps.fill(null)
@@ -216,12 +222,14 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
         gesture = null
         hovered = null
         panel?.let { SwingUtil.deactivate(it) }
+        root?.let { java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(it); it.setHostShowing(false) }
         root = null
         panel = next
         mountedGeneration = generation
         mountSerial++
         diagnosed = false
         root = next?.wrappedPanel
+        root?.setHostShowing(true)
         next?.let { SwingUtil.activate(it) }
         val serial = mountSerial
         post { clearAndroidState(serial) }
@@ -598,12 +606,21 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
 
     /** Edits a Swing text field through a native input: keyboard up immediately, text
      *  selected, and the IME's action key submits like pressing Enter in the field. */
-    private fun showTextInput(serial: Long, control: JTextComponent, text: String, search: Boolean, placeholder: String?, multiline: Boolean) {
+    private fun requestTextInput(serial: Long, control: JTextComponent, search: Boolean, placeholder: String?, multiline: Boolean) {
+        val text = control.text
+        val start = control.selectionStart
+        val end = control.selectionEnd
+        post {
+            if (running && serial == mountSerial) showTextInput(serial, control, text, start, end, search, placeholder, multiline)
+        }
+    }
+
+    private fun showTextInput(serial: Long, control: JTextComponent, text: String, start: Int, end: Int, search: Boolean, placeholder: String?, multiline: Boolean) {
         val themed = android.view.ContextThemeWrapper(context, android.R.style.Theme_Material_Dialog_Alert)
         val density = resources.displayMetrics.density
         val editor = EditText(themed).apply {
             setText(text)
-            selectAll()
+            setSelection(start.coerceIn(0, text.length), end.coerceIn(0, text.length))
             hint = placeholder ?: if (search) "Search" else null
             inputType = when {
                 control is JPasswordField -> android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -621,33 +638,94 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
             setPadding(pad, (8 * density).toInt(), pad, 0)
             addView(editor)
         }
+        lateinit var dialog: AlertDialog
         val apply = {
             val value = editor.text.toString()
+            val selectionStart = editor.selectionStart.coerceAtLeast(0)
+            val selectionEnd = editor.selectionEnd.coerceAtLeast(0)
             SwingUtilities.invokeLater {
                 if (isCurrentMount(serial) && control.isEnabled && control.isEditable) {
-                    control.text = value
-                    if (control is JTextField) control.postActionEvent()
+                    try {
+                        control.text = value
+                        if (control is JFormattedTextField) control.commitEdit()
+                        control.select(selectionStart.coerceAtMost(value.length), selectionEnd.coerceAtMost(value.length))
+                        if (control is JTextField) control.postActionEvent()
+                        post { dialog.dismiss() }
+                    } catch (_: java.text.ParseException) {
+                        post { editor.error = "Enter a valid value" }
+                    }
                 }
             }
         }
         inputPopup?.dismiss()
-        val dialog = dialogBuilder()
+        dialog = dialogBuilder()
             .setTitle(if (search) "Search" else "Edit value")
             .setView(container)
             .setNegativeButton("Cancel", null)
-            .setPositiveButton(if (search) "Search" else "OK") { _, _ -> apply() }
+            .setPositiveButton(if (search) "Search" else "OK", null)
             .create()
         if (!multiline) editor.setOnEditorActionListener { _, actionId, event ->
             val enter = event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN
             if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
                 actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || enter) {
-                apply(); dialog.dismiss(); true
+                apply(); true
             } else false
         }
         dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
         inputPopup = dialog
         dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { apply() }
         editor.requestFocus()
+    }
+
+    private fun hosts(component: Component): Boolean = running &&
+        generateSequence(component as Component?) { it.parent }.any { it === root }
+
+    /** Called on the Swing event thread, including programmatic showPopup(). */
+    private fun showCombo(control: JComboBox<*>, visible: Boolean) {
+        val generation = ++comboGeneration
+        if (!visible) {
+            post { comboPopup?.takeIf { it.first === control }?.second?.dismiss() }
+            return
+        }
+        val serial = mountSerial
+        val items = (0 until control.itemCount).map { control.getItemAt(it) }.toTypedArray()
+        val labels: Array<CharSequence> = items.mapIndexed { index, item ->
+            val text = control.hostDisplayText(item, index) ?: ""
+            if (text.regionMatches(0, "<html>", 0, 6, ignoreCase = true))
+                android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY)
+            else text
+        }.toTypedArray()
+        val editable = control.isEditable
+        post {
+            if (!running || serial != mountSerial || generation != comboGeneration) return@post
+            inputPopup?.dismiss()
+            val picker = dialogBuilder().setTitle("Select value").setItems(labels) { _, index ->
+                SwingUtilities.invokeLater {
+                    if (isCurrentMount(serial) && control.isEnabled && generation == comboGeneration)
+                        control.selectedItem = items[index]
+                }
+            }
+            if (editable) picker.setNeutralButton("Edit value") { _, _ ->
+                SwingUtilities.invokeLater {
+                    val field = control.editor?.editorComponent as? JTextComponent
+                    if (isCurrentMount(serial) && control.isEnabled && field != null)
+                        requestTextInput(serial, field, false, null, false)
+                }
+            }
+            val dialog = picker.create()
+            dialog.setOnCancelListener {
+                SwingUtilities.invokeLater { if (generation == comboGeneration) control.firePopupMenuCanceled() }
+            }
+            dialog.setOnDismissListener {
+                if (comboPopup?.second === dialog) comboPopup = null
+                if (inputPopup === dialog) inputPopup = null
+                SwingUtilities.invokeLater { if (generation == comboGeneration) control.hidePopup() }
+            }
+            comboPopup = control to dialog
+            inputPopup = dialog
+            dialog.show()
+        }
     }
 
     private fun showTip(text: String, x: Int, y: Int, touch: Boolean, dismissAfter: Long) {
@@ -773,7 +851,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
         var hit: Component? = hit(base, x, y)
         var innermost: JScrollPane? = null
         while (hit != null) {
-            if (hit is JScrollPane) {
+            if (hit is JScrollPane && hit.isWheelScrollingEnabled) {
                 if (innermost == null) innermost = hit
                 if (canScroll(hit, direction)) return hit
             }
@@ -806,56 +884,29 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
                 clicks.reset()
                 return
             }
-            if (ancestor is JComboBox<*> || ancestor is JSpinner) { target = ancestor; break }
+            if (ancestor is JComboBox<*> || ancestor is JSpinner || ancestor is JColorChooser) { target = ancestor; break }
             if (ancestor === base) break
             ancestor = ancestor.parent
         }
         if (target is JTextComponent || target is JComboBox<*> || target is JSpinner) clicks.reset()
+        if (target.isEnabled) target.requestFocusInWindow()
         when (val control = target) {
             is JTextComponent -> if (control.isEnabled && control.isEditable) {
-                val text = control.text
                 val search = generateSequence(control as Component?) { it.parent }.take(4)
                     .any { it.javaClass.simpleName == "IconTextField" }
                 val placeholder = (control.getClientProperty("JTextField.placeholderText") as? String)
                     ?: (control.parent as? javax.swing.JComponent)?.getClientProperty("JTextField.placeholderText") as? String
                 val multiline = control is JTextArea
-                post {
-                    if (!running || serial != mountSerial) return@post
-                    showTextInput(serial, control, text, search, placeholder, multiline)
-                }
+                requestTextInput(serial, control, search, placeholder, multiline)
                 return
             }
             is JComboBox<*> -> {
-                val items = (0 until control.itemCount).map { control.getItemAt(it) }.toTypedArray()
-                // Label rows the way the plugin's cell renderer would (resolved here, on the
-                // Swing thread); renderer HTML goes through Html.fromHtml rather than showing tags.
-                val labels: Array<CharSequence> = items.mapIndexed { index, item ->
-                    val text = control.hostDisplayText(item, index) ?: ""
-                    if (text.regionMatches(0, "<html>", 0, 6, ignoreCase = true))
-                        android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY)
-                    else text
-                }.toTypedArray()
-                post {
-                    if (!running || serial != mountSerial) return@post
-                    inputPopup?.dismiss()
-                    val picker = dialogBuilder().setTitle("Select value")
-                        .setItems(labels) { _, index ->
-                            SwingUtilities.invokeLater { if (isCurrentMount(serial) && control.isEnabled) control.selectedItem = items[index] }
-                        }
-                    if (control.isEditable) picker.setNeutralButton("Edit value") { _, _ ->
-                        SwingUtilities.invokeLater {
-                            val field = control.editor?.editorComponent as? JTextComponent
-                            if (isCurrentMount(serial) && control.isEnabled && field != null) {
-                                val value = field.text
-                                post {
-                                    if (running && serial == mountSerial)
-                                        showTextInput(serial, field, value, false, null, false)
-                                }
-                            }
-                        }
-                    }
-                    inputPopup = picker.show()
-                }
+                control.showPopup()
+                return
+            }
+            is JColorChooser -> {
+                val color = JColorChooser.showDialog(control, "Choose color", control.color)
+                if (color != null && isCurrentMount(serial) && control.isEnabled) control.color = color
                 return
             }
             is javax.swing.JSlider -> {
@@ -881,14 +932,21 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
                 return
             }
             is JSpinner -> {
+                val spinEditor = control.editor
                 post {
                     if (!running || serial != mountSerial) return@post
                     inputPopup?.dismiss()
-                    inputPopup = dialogBuilder().setTitle("Adjust value").setItems(arrayOf("Decrease", "Increase")) { _, index ->
+                    inputPopup = dialogBuilder().setTitle("Adjust value").setItems(arrayOf("Decrease", "Increase", "Edit value")) { _, index ->
                         SwingUtilities.invokeLater {
                             if (isCurrentMount(serial) && control.isEnabled) {
-                                val next = if (index == 0) control.previousValue else control.nextValue
-                                if (next != null) control.value = next
+                                if (index == 2) {
+                                    if (spinEditor is JSpinner.DefaultEditor)
+                                        requestTextInput(serial, spinEditor.textField, false, null, false)
+                                    else JOptionPane.showMessageDialog(control, spinEditor, "Edit value", JOptionPane.PLAIN_MESSAGE)
+                                } else {
+                                    val next = if (index == 0) control.previousValue else control.nextValue
+                                    if (next != null) control.value = next
+                                }
                             }
                         }
                     }.show()
@@ -1018,6 +1076,16 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
     }
 
     private companion object {
+        val hosts = java.util.concurrent.CopyOnWriteArrayList<java.lang.ref.WeakReference<SwingPanelView>>()
+        init {
+            JComboBox.setPopupHandler { combo, visible ->
+                SwingUtilities.invokeLater {
+                    val host = hosts.mapNotNull { it.get() }.lastOrNull { it.hosts(combo) }
+                    if (host != null) host.showCombo(combo, visible)
+                    else if (visible) combo.hidePopup()
+                }
+            }
+        }
         /** Desktop sidebar width (PluginPanel.PANEL_WIDTH + scrollbar), i.e. 100% scale. */
         const val BASE_LOGICAL_WIDTH = 240
 

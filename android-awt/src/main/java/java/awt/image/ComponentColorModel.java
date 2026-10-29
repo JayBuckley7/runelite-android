@@ -1,0 +1,59 @@
+package java.awt.image;
+
+import java.awt.color.ColorSpace;
+
+public class ComponentColorModel extends ColorModel {
+    private final int[] sizes;
+    public ComponentColorModel(ColorSpace space, boolean alpha, boolean premultiplied, int transparency, int type) {
+        this(space, defaultSizes(space.getNumComponents() + (alpha ? 1 : 0), type), alpha, premultiplied, transparency, type);
+    }
+    public ComponentColorModel(ColorSpace space, int[] bits, boolean alpha, boolean premultiplied, int transparency, int type) {
+        super(sum(bits), bits, space, alpha, premultiplied, transparency, type);
+        if (bits.length != getNumComponents()) throw new IllegalArgumentException("Component sizes");
+        sizes = bits.clone();
+    }
+    private static int sum(int[] bits) { int sum = 0; for (int bit : bits) sum += bit; return sum; }
+    private static int[] defaultSizes(int count, int type) { int[] bits = new int[count]; java.util.Arrays.fill(bits, type == DataBuffer.TYPE_BYTE ? 8 : type == DataBuffer.TYPE_INT ? 32 : 16); return bits; }
+    public int getRed(int pixel) { return getRGB(one(pixel)) >>> 16 & 255; }
+    public int getGreen(int pixel) { return getRGB(one(pixel)) >>> 8 & 255; }
+    public int getBlue(int pixel) { return getRGB(one(pixel)) & 255; }
+    public int getAlpha(int pixel) { return getRGB(one(pixel)) >>> 24; }
+    private Object one(int pixel) {
+        if (getNumComponents() != 1) throw new IllegalArgumentException("Pixel has multiple components");
+        Object result = array(null); SampleModel.transferSet(result, 0, pixel); return result;
+    }
+    private Object array(Object out) {
+        if (out != null) return out;
+        if (transferType == DataBuffer.TYPE_BYTE) return new byte[getNumComponents()];
+        if (transferType == DataBuffer.TYPE_USHORT) return new short[getNumComponents()];
+        if (transferType == DataBuffer.TYPE_INT) return new int[getNumComponents()];
+        throw new UnsupportedOperationException("Floating point color components");
+    }
+    private double max(int component) { return Math.pow(2, sizes[component]) - 1; }
+    @Override public int getRGB(Object data) {
+        int colors = getNumColorComponents();
+        double alpha = hasAlpha() ? SampleModel.transferGet(data, colors) / max(colors) : 1;
+        float[] components = new float[colors];
+        for (int i = 0; i < colors; i++) {
+            double value = SampleModel.transferGet(data, i) / max(i);
+            if (isAlphaPremultiplied()) value = alpha == 0 ? 0 : value / alpha;
+            components[i] = (float) Math.max(0, Math.min(1, value));
+        }
+        float[] rgb = getColorSpace().toRGB(components);
+        return (int)Math.round(alpha * 255) << 24 | channel(rgb[0]) << 16 | channel(rgb[1]) << 8 | channel(rgb[2]);
+    }
+    private static int channel(float value) { return Math.max(0, Math.min(255, Math.round(value * 255))); }
+    @Override public Object getDataElements(int rgb, Object out) {
+        Object data = array(out); int colors = getNumColorComponents();
+        double alpha = (rgb >>> 24) / 255d;
+        float[] components = getColorSpace().fromRGB(new float[]{(rgb >>> 16 & 255) / 255f, (rgb >>> 8 & 255) / 255f, (rgb & 255) / 255f});
+        for (int i = 0; i < colors; i++) SampleModel.transferSet(data, i, (int)Math.round(components[i] * (isAlphaPremultiplied() ? alpha : 1) * max(i)));
+        if (hasAlpha()) SampleModel.transferSet(data, colors, (int)Math.round(alpha * max(colors)));
+        return data;
+    }
+    @Override public SampleModel createCompatibleSampleModel(int width, int height) {
+        int[] offsets = new int[getNumComponents()]; for (int i = 0; i < offsets.length; i++) offsets[i] = i;
+        return new PixelInterleavedSampleModel(transferType, width, height, offsets.length, width * offsets.length, offsets);
+    }
+    @Override public boolean isCompatibleRaster(Raster raster) { return raster.getTransferType() == transferType && raster.getNumBands() == getNumComponents(); }
+}

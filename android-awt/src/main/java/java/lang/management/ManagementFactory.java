@@ -3,11 +3,7 @@ package java.lang.management;
 public class ManagementFactory {
     private ManagementFactory() {}
 
-    /**
-     * RuneLite registers JMX MBeans for diagnostics; we return a stub server that ignores
-     * registrations. Real JMX isn't available on Android — anything pulling metrics off
-     * this server would see an empty result.
-     */
+    /** In-process management registry; Android does not expose a remote JMX connector. */
     public static javax.management.MBeanServer getPlatformMBeanServer() {
         return net.runelite.awt.impl.StubMBeanServer.INSTANCE;
     }
@@ -17,11 +13,12 @@ public class ManagementFactory {
     }
 
     public static java.util.List<MemoryPoolMXBean> getMemoryPoolMXBeans() {
+        // ART exposes total heap usage, but no managed pool with peak/reset semantics.
         return java.util.Collections.emptyList();
     }
 
     public static java.util.List<GarbageCollectorMXBean> getGarbageCollectorMXBeans() {
-        return java.util.Collections.emptyList();
+        return java.util.Collections.singletonList(GC);
     }
 
     public static MemoryMXBean getMemoryMXBean() {
@@ -29,7 +26,7 @@ public class ManagementFactory {
     }
 
     public static ThreadMXBean getThreadMXBean() {
-        return new StubThreadMXBean();
+        return THREADS;
     }
 
     public static OperatingSystemMXBean getOperatingSystemMXBean() {
@@ -41,13 +38,29 @@ public class ManagementFactory {
     }
 
     public static java.util.List<java.lang.management.MemoryManagerMXBean> getMemoryManagerMXBeans() {
-        return java.util.Collections.emptyList();
+        return java.util.Collections.singletonList(GC);
     }
 
     private static final long START_TIME = System.currentTimeMillis();
+    private static final long START_NANOS = System.nanoTime();
+    private static final ThreadMXBean THREADS = new StubThreadMXBean();
+    private static final GarbageCollectorMXBean GC = new ArtGarbageCollector();
+
+    private static final class ArtGarbageCollector implements GarbageCollectorMXBean {
+        @Override public String getName() { return "ART"; }
+        @Override public boolean isValid() { return true; }
+        @Override public String[] getMemoryPoolNames() { return new String[0]; }
+        private long statistic(String name) {
+            String value = android.os.Debug.getRuntimeStat(name);
+            if (value == null) return -1;
+            try { return Long.parseLong(value); } catch (NumberFormatException unavailable) { return -1; }
+        }
+        @Override public long getCollectionCount() { return statistic("art.gc.gc-count"); }
+        @Override public long getCollectionTime() { return statistic("art.gc.gc-time"); }
+    }
 
     private static final class StubRuntimeMXBean implements RuntimeMXBean {
-        @Override public String getName() { return "android-runelite-shim"; }
+        @Override public String getName() { return android.os.Process.myPid() + "@android"; }
         @Override public String getVmName() { return "Dalvik"; }
         @Override public String getVmVendor() { return "Android"; }
         @Override public String getVmVersion() { return android.os.Build.VERSION.RELEASE; }
@@ -55,12 +68,12 @@ public class ManagementFactory {
         @Override public String getSpecVendor() { return "Oracle"; }
         @Override public String getSpecVersion() { return "1.8"; }
         @Override public String getManagementSpecVersion() { return "2.0"; }
-        @Override public String getClassPath() { return ""; }
-        @Override public String getLibraryPath() { return ""; }
+        @Override public String getClassPath() { return System.getProperty("java.class.path", ""); }
+        @Override public String getLibraryPath() { return System.getProperty("java.library.path", ""); }
         @Override public boolean isBootClassPathSupported() { return false; }
         @Override public String getBootClassPath() { throw new UnsupportedOperationException(); }
         @Override public java.util.List<String> getInputArguments() { return java.util.Collections.emptyList(); }
-        @Override public long getUptime() { return System.currentTimeMillis() - START_TIME; }
+        @Override public long getUptime() { return (System.nanoTime() - START_NANOS) / 1_000_000; }
         @Override public long getStartTime() { return START_TIME; }
         @Override public java.util.Map<String, String> getSystemProperties() {
             java.util.Map<String, String> m = new java.util.HashMap<>();
@@ -73,8 +86,13 @@ public class ManagementFactory {
     }
 
     private static final class StubMemoryMXBean implements MemoryMXBean {
-        @Override public MemoryUsage getHeapMemoryUsage() { return new MemoryUsage(0, 0, 0, Runtime.getRuntime().maxMemory()); }
-        @Override public MemoryUsage getNonHeapMemoryUsage() { return new MemoryUsage(0, 0, 0, 0); }
+        @Override public MemoryUsage getHeapMemoryUsage() {
+            Runtime runtime = Runtime.getRuntime(); long committed = runtime.totalMemory();
+            return new MemoryUsage(-1, committed - runtime.freeMemory(), committed, runtime.maxMemory());
+        }
+        @Override public MemoryUsage getNonHeapMemoryUsage() {
+            return new MemoryUsage(-1, android.os.Debug.getNativeHeapAllocatedSize(), android.os.Debug.getNativeHeapSize(), -1);
+        }
         @Override public int getObjectPendingFinalizationCount() { return 0; }
         @Override public boolean isVerbose() { return false; }
         @Override public void setVerbose(boolean value) {}
@@ -82,14 +100,18 @@ public class ManagementFactory {
     }
 
     private static final class StubThreadMXBean implements ThreadMXBean {
-        @Override public int getThreadCount() { return Thread.activeCount(); }
-        @Override public int getPeakThreadCount() { return Thread.activeCount(); }
-        @Override public long getTotalStartedThreadCount() { return Thread.activeCount(); }
-        @Override public int getDaemonThreadCount() { return 0; }
-        @Override public long[] getAllThreadIds() { return new long[0]; }
-        @Override public long getCurrentThreadCpuTime() { return -1; }
+        private int peak;
+        private synchronized java.util.Set<Thread> snapshot() {
+            java.util.Set<Thread> threads = Thread.getAllStackTraces().keySet(); peak = Math.max(peak, threads.size()); return threads;
+        }
+        @Override public int getThreadCount() { return snapshot().size(); }
+        @Override public int getPeakThreadCount() { snapshot(); return peak; }
+        @Override public long getTotalStartedThreadCount() { throw new UnsupportedOperationException("ART does not expose total started thread count"); }
+        @Override public int getDaemonThreadCount() { int count = 0; for (Thread thread : snapshot()) if (thread.isDaemon()) count++; return count; }
+        @Override public long[] getAllThreadIds() { return snapshot().stream().mapToLong(Thread::getId).toArray(); }
+        @Override public long getCurrentThreadCpuTime() { return android.os.Debug.threadCpuTimeNanos(); }
         @Override public long getCurrentThreadUserTime() { return -1; }
-        @Override public long getThreadCpuTime(long id) { return -1; }
+        @Override public long getThreadCpuTime(long id) { if (id <= 0) throw new IllegalArgumentException("invalid thread id"); return id == Thread.currentThread().getId() ? getCurrentThreadCpuTime() : -1; }
         @Override public long getThreadUserTime(long id) { return -1; }
         @Override public boolean isThreadCpuTimeSupported() { return false; }
         @Override public boolean isThreadCpuTimeEnabled() { return false; }
@@ -105,9 +127,9 @@ public class ManagementFactory {
     }
 
     private static final class StubClassLoadingMXBean implements ClassLoadingMXBean {
-        @Override public long getTotalLoadedClassCount() { return 0; }
-        @Override public int getLoadedClassCount() { return 0; }
-        @Override public long getUnloadedClassCount() { return 0; }
+        @Override public long getTotalLoadedClassCount() { throw new UnsupportedOperationException("ART does not expose total loaded class count"); }
+        @Override public int getLoadedClassCount() { return android.os.Debug.getLoadedClassCount(); }
+        @Override public long getUnloadedClassCount() { throw new UnsupportedOperationException("ART does not expose unloaded class count"); }
         @Override public boolean isVerbose() { return false; }
         @Override public void setVerbose(boolean value) {}
     }

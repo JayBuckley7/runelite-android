@@ -2,12 +2,7 @@ package java.awt.font;
 
 import java.text.AttributedCharacterIterator;
 
-/**
- * Stub of {@link java.awt.font.TextAttribute}. We don't actually shape glyphs with these
- * attributes — Android's Paint handles styling differently — but plugin code (quest-helper's
- * Fonts.java, etc.) uses the well-known field constants as map keys and the type is required
- * to exist for static-init chains to succeed.
- */
+/** Standard text attribute keys shared by font derivation and attributed rendering. */
 public final class TextAttribute extends AttributedCharacterIterator.Attribute {
     private static final long serialVersionUID = 7744112784117861702L;
 
@@ -41,8 +36,7 @@ public final class TextAttribute extends AttributedCharacterIterator.Attribute {
     public static final TextAttribute LIGATURES = new TextAttribute("ligatures");
     public static final TextAttribute TRACKING = new TextAttribute("tracking");
 
-    // Value constants. These are sentinel Numbers/Booleans that real AWT uses to mark
-    // styling; we just need identity-comparable objects with the expected boxed types.
+    // Public field types are part of the desktop bytecode ABI.
     public static final Float WEIGHT_EXTRA_LIGHT = 0.5f;
     public static final Float WEIGHT_LIGHT = 0.75f;
     public static final Float WEIGHT_DEMILIGHT = 0.875f;
@@ -64,8 +58,8 @@ public final class TextAttribute extends AttributedCharacterIterator.Attribute {
     public static final Float POSTURE_REGULAR = 0.0f;
     public static final Float POSTURE_OBLIQUE = 0.20f;
 
-    public static final Float SUPERSCRIPT_SUPER = (float) 1;
-    public static final Float SUPERSCRIPT_SUB = (float) -1;
+    public static final Integer SUPERSCRIPT_SUPER = 1;
+    public static final Integer SUPERSCRIPT_SUB = -1;
 
     public static final Integer UNDERLINE_ON = 0;
     public static final Integer UNDERLINE_LOW_ONE_PIXEL = 1;
@@ -80,5 +74,11 @@ public final class TextAttribute extends AttributedCharacterIterator.Attribute {
 
     public static final Integer LIGATURES_ON = 1;
 
-    public static final Boolean KERNING_ON = Boolean.TRUE;
+    public static final Integer KERNING_ON = 1;
+    public static final Boolean RUN_DIRECTION_LTR = false;
+    public static final Boolean RUN_DIRECTION_RTL = true;
+    public static final Float JUSTIFICATION_FULL = 1f;
+    public static final Float JUSTIFICATION_NONE = 0f;
+    public static final Float TRACKING_TIGHT = -0.04f;
+    public static final Float TRACKING_LOOSE = 0.04f;
 }

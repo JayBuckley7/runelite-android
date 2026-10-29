@@ -23,7 +23,7 @@ public class AWTKeyStroke implements Serializable {
     public int getKeyCode() { return keyCode; }
     public int getModifiers() { return modifiers; }
     public boolean isOnKeyRelease() { return onKeyRelease; }
-    public int getKeyEventType() { return onKeyRelease ? java.awt.event.KeyEvent.KEY_RELEASED : java.awt.event.KeyEvent.KEY_PRESSED; }
+    public int getKeyEventType() { return keyChar != java.awt.event.KeyEvent.CHAR_UNDEFINED ? java.awt.event.KeyEvent.KEY_TYPED : onKeyRelease ? java.awt.event.KeyEvent.KEY_RELEASED : java.awt.event.KeyEvent.KEY_PRESSED; }
 
     @Override public int hashCode() { return (keyChar + keyCode + modifiers) * 31 + (onKeyRelease ? 1 : 0); }
     @Override public boolean equals(Object obj) {

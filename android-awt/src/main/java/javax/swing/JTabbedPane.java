@@ -13,10 +13,17 @@ public class JTabbedPane extends JComponent implements SwingConstants {
     private int tabPlacement = TOP;
     private int tabLayoutPolicy = WRAP_TAB_LAYOUT;
     private int selectedIndex = -1;
+    private int firstVisibleTab;
+    private static final int OVERFLOW_CONTROL_SIZE = 16;
     private final java.util.List<Component> tabs = new java.util.ArrayList<>();
     private final java.util.List<String> titles = new java.util.ArrayList<>();
     private final java.util.List<Icon> icons = new java.util.ArrayList<>();
 
+    private static class Page {
+        String tip; Icon disabledIcon; Color foreground,background; boolean enabled=true;
+        int mnemonic,displayedMnemonic=-1; Component tabComponent;
+    }
+    private final java.util.List<Page> pages=new java.util.ArrayList<>();
     public JTabbedPane() { init(); }
     public JTabbedPane(int tabPlacement) { this.tabPlacement = tabPlacement; init(); }
     public JTabbedPane(int tabPlacement, int tabLayoutPolicy) {
@@ -34,6 +41,14 @@ public class JTabbedPane extends JComponent implements SwingConstants {
         setOpaque(true);
         setBackground(new java.awt.Color(0x28292D));
         setForeground(new java.awt.Color(0xC0C0C0));
+        addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                if(!isEnabled() || event.getButton()!=java.awt.event.MouseEvent.BUTTON1)return;
+                int direction=overflowDirection(event.getX(),event.getY());
+                if(direction!=0){scrollTabs(direction);event.consume();}
+            }
+        });
+        addMouseWheelListener(event->{if(inStrip(event.getX(),event.getY())&&hasOverflow()){scrollTabs(event.getWheelRotation());event.consume();}});
     }
 
     /**
@@ -53,7 +68,8 @@ public class JTabbedPane extends JComponent implements SwingConstants {
 
         // Available tab area excludes the trailing component region.
         int axisLen = vertical ? (getHeight() - trailing) : (getWidth() - trailing);
-        int maxTabs = Math.max(0, axisLen) / Math.max(1, vertical ? slotH : slotW);
+        int maxTabs = visibleTabCount();
+        clampTabOffset();
 
         // Strip origin: at right edge for RIGHT placement, etc.
         int baseX = stripX();
@@ -61,15 +77,18 @@ public class JTabbedPane extends JComponent implements SwingConstants {
 
         java.awt.Color saved = g.getColor();
         java.awt.Color selBg = new java.awt.Color(0x44464D);
-        int limit = Math.min(tabs.size(), maxTabs);
-        for (int i = 0; i < limit; i++) {
-            int x = baseX + (vertical ? 0 : i * slotW);
-            int y = baseY + (vertical ? i * slotH : 0);
+        int limit = Math.min(tabs.size(), firstVisibleTab + maxTabs);
+        for (int i = firstVisibleTab; i < limit; i++) {
+            int slot = i - firstVisibleTab;
+            int x = baseX + (vertical ? 0 : slot * slotW);
+            int y = baseY + (vertical ? slot * slotH : 0);
             if (i == selectedIndex) {
                 g.setColor(selBg);
                 g.fillRect(x, y, slotW, slotH);
             }
-            Icon icon = i < icons.size() ? icons.get(i) : null;
+            if(pages.get(i).tabComponent!=null)continue;
+            Icon icon = !pages.get(i).enabled&&pages.get(i).disabledIcon!=null?pages.get(i).disabledIcon:icons.get(i);
+            if(icon==null&&!titles.get(i).isEmpty()){g.setColor(pages.get(i).foreground==null?getForeground():pages.get(i).foreground);g.drawString(titles.get(i),x+2,y+slotH/2+5);}
             if (icon != null && icon.getIconWidth() > 0 && icon.getIconHeight() > 0) {
                 int iw = icon.getIconWidth();
                 int ih = icon.getIconHeight();
@@ -91,6 +110,15 @@ public class JTabbedPane extends JComponent implements SwingConstants {
                     }
                 }
                 try { icon.paintIcon(this, g, ix, iy); } catch (Throwable ignored) {}
+            }
+        }
+        if(hasOverflow()) {
+            int start=Math.max(0,axisLen-2*OVERFLOW_CONTROL_SIZE);
+            g.setColor(getForeground());
+            for(int i=0;i<2;i++) {
+                int x=baseX+(vertical?0:start+i*OVERFLOW_CONTROL_SIZE);
+                int y=baseY+(vertical?start+i*OVERFLOW_CONTROL_SIZE:0);
+                g.drawString(vertical?(i==0?"^":"v"):(i==0?"<":">"),x+4,y+(vertical?12:22));
             }
         }
         if (saved != null) g.setColor(saved);
@@ -165,12 +193,14 @@ public class JTabbedPane extends JComponent implements SwingConstants {
             }
         }
 
+        clampTabOffset();
         // Position every tab's panel to fill the non-strip area; only the selected one is visible.
         java.awt.Rectangle pr = panelRect();
         for (int i = 0; i < tabs.size(); i++) {
             Component c = tabs.get(i);
             if (c == null) continue;
             c.setBounds(pr.x, pr.y, pr.width, pr.height);
+            Component header=pages.get(i).tabComponent;if(header!=null){java.awt.Rectangle bounds=getBoundsAt(i);header.setBounds(bounds);header.setVisible(bounds.width>0&&bounds.height>0);}
         }
     }
 
@@ -197,8 +227,12 @@ public class JTabbedPane extends JComponent implements SwingConstants {
     public void setTabLayoutPolicy(int policy) { this.tabLayoutPolicy = policy; }
     public int getSelectedIndex() { return selectedIndex; }
     public void setSelectedIndex(int index) {
+        if(index < -1 || index >= tabs.size())throw new IndexOutOfBoundsException("tab index");
         if (index == this.selectedIndex) return;
         this.selectedIndex = index;
+        int visible=visibleTabCount();
+        if(index>=0&&visible>0){if(index<firstVisibleTab)firstVisibleTab=index;else if(index>=firstVisibleTab+visible)firstVisibleTab=index-visible+1;}
+        clampTabOffset();
         // Only the selected tab's component is visible; everything else hidden so paint
         // walker skips it.
         for (int i = 0; i < tabs.size(); i++) {
@@ -207,7 +241,7 @@ public class JTabbedPane extends JComponent implements SwingConstants {
         }
         javax.swing.event.ChangeEvent ev = new javax.swing.event.ChangeEvent(this);
         for (javax.swing.event.ChangeListener l : new java.util.ArrayList<>(changeListeners)) {
-            try { l.stateChanged(ev); } catch (Throwable ignored) {}
+            l.stateChanged(ev);
         }
         // Don't call doLayout directly — the next frame's validate() cascade will pick
         // up the new preferred size and re-flow the parent (avoids re-entrancy with
@@ -215,87 +249,83 @@ public class JTabbedPane extends JComponent implements SwingConstants {
         repaint();
     }
     public Component getSelectedComponent() { return selectedIndex < 0 || selectedIndex >= tabs.size() ? null : tabs.get(selectedIndex); }
-    public void setSelectedComponent(Component c) { selectedIndex = tabs.indexOf(c); invalidate(); }
+    public void setSelectedComponent(Component c) { int index=tabs.indexOf(c);if(index<0)throw new IllegalArgumentException("component is not a tab");setSelectedIndex(index); }
     public void addTab(String title, Component component) { addTab(title, null, component, null); }
     public void addTab(String title, Icon icon, Component component) { addTab(title, icon, component, null); }
-    public void addTab(String title, Icon icon, Component component, String tip) {
-        tabs.add(component); titles.add(title == null ? "" : title); icons.add(icon);
-        if (component != null) {
-            super.add(component);
-            component.setVisible(tabs.size() - 1 == selectedIndex);
-        }
-        if (getWidth() > 0 && getHeight() > 0) { doLayout(); repaint(); }
+    public void addTab(String title, Icon icon, Component component, String tip) { insertTab(title,icon,component,tip,tabs.size()); }
+    public void insertTab(String title,Icon icon,Component component,String tip,int index) {
+        if(index<0||index>tabs.size())throw new IndexOutOfBoundsException("tab index");
+        int existing=component==null?-1:tabs.indexOf(component);if(existing>=0){removeTabAt(existing);if(existing<index)index--;}
+        Page page=new Page();page.tip=tip;tabs.add(index,component);titles.add(index,title==null?"":title);icons.add(index,icon);pages.add(index,page);
+        if(component!=null){super.add(component);component.setVisible(false);}
+        if(tabs.size()==1)setSelectedIndex(0);else if(selectedIndex>=index)selectedIndex++;
+        updateVisibleTabs();revalidate();repaint();
     }
-    public void insertTab(String title, Icon icon, Component c, String tip, int index) {
-        tabs.add(index, c); titles.add(index, title == null ? "" : title); icons.add(index, icon);
-        if (c != null) {
-            super.add(c);
-            c.setVisible(index == selectedIndex);
-        }
-        if (getWidth() > 0 && getHeight() > 0) { doLayout(); repaint(); }
-    }
-    public Component add(Component component) { tabs.add(component); titles.add(""); icons.add(null); invalidate(); return component; }
-    public Component add(String title, Component component) { tabs.add(component); titles.add(title); icons.add(null); invalidate(); return component; }
-    public void remove(Component component) { int i = tabs.indexOf(component); if (i >= 0) removeTabAt(i); }
+    private void updateVisibleTabs(){for(int i=0;i<tabs.size();i++)if(tabs.get(i)!=null)tabs.get(i).setVisible(i==selectedIndex);}
+    public Component add(Component component) { addTab(component==null?"":component.getName(),component);return component; }
+    public Component add(String title,Component component) { addTab(title,component);return component; }
+    public void remove(Component component) { int index=tabs.indexOf(component);if(index>=0)removeTabAt(index);else super.remove(component); }
     public void remove(int index) { removeTabAt(index); }
     public void removeTabAt(int index) {
-        tabs.remove(index); titles.remove(index); icons.remove(index);
-        if (selectedIndex >= tabs.size()) selectedIndex = tabs.size() - 1;
-        invalidate();
+        Component removed=tabs.remove(index);titles.remove(index);icons.remove(index);Page page=pages.remove(index);
+        if(removed!=null)super.remove(removed);if(page.tabComponent!=null)super.remove(page.tabComponent);
+        int previous=selectedIndex;
+        if(previous==index){selectedIndex=-2;setSelectedIndex(tabs.isEmpty()?-1:Math.min(index,tabs.size()-1));}
+        else if(previous>index)selectedIndex--;
+        updateVisibleTabs();revalidate();repaint();
     }
-    public void removeAll() { tabs.clear(); titles.clear(); icons.clear(); selectedIndex = -1; invalidate(); }
+    public void removeAll() { while(!tabs.isEmpty())removeTabAt(tabs.size()-1); }
     public int getTabCount() { return tabs.size(); }
     public int getTabRunCount() { return 1; }
     public String getTitleAt(int index) { return titles.get(index); }
     public void setTitleAt(int index, String title) { titles.set(index, title); invalidate(); }
-    public Icon getIconAt(int index) { return null; }
-    public void setIconAt(int index, Icon icon) {}
-    public Icon getDisabledIconAt(int index) { return null; }
-    public void setDisabledIconAt(int index, Icon icon) {}
-    public String getToolTipTextAt(int index) { return null; }
-    public void setToolTipTextAt(int index, String tip) {}
-    public Color getForegroundAt(int index) { return null; }
-    public void setForegroundAt(int index, Color c) {}
-    public Color getBackgroundAt(int index) { return null; }
-    public void setBackgroundAt(int index, Color c) {}
-    public boolean isEnabledAt(int index) { return true; }
-    public void setEnabledAt(int index, boolean enabled) {}
+    public Icon getIconAt(int index) { return icons.get(index); }
+    public void setIconAt(int index, Icon icon) { icons.set(index,icon);revalidate();repaint(); }
+    public Icon getDisabledIconAt(int index) { return pages.get(index).disabledIcon; }
+    public void setDisabledIconAt(int index, Icon value) { pages.get(index).disabledIcon=value;repaint(); }
+    public String getToolTipTextAt(int index) { return pages.get(index).tip; }
+    public void setToolTipTextAt(int index, String value) { pages.get(index).tip=value;repaint(); }
+    public Color getForegroundAt(int index) { return pages.get(index).foreground; }
+    public void setForegroundAt(int index, Color value) { pages.get(index).foreground=value;repaint(); }
+    public Color getBackgroundAt(int index) { return pages.get(index).background; }
+    public void setBackgroundAt(int index, Color value) { pages.get(index).background=value;repaint(); }
+    public boolean isEnabledAt(int index) { return pages.get(index).enabled; }
+    public void setEnabledAt(int index, boolean enabled) { pages.get(index).enabled=enabled;repaint(); }
     public Component getComponentAt(int index) { return tabs.get(index); }
-    public void setComponentAt(int index, Component c) { tabs.set(index, c); }
-    public int getMnemonicAt(int tabIndex) { return -1; }
-    public void setMnemonicAt(int tabIndex, int mnemonic) {}
-    public int getDisplayedMnemonicIndexAt(int tabIndex) { return -1; }
-    public void setDisplayedMnemonicIndexAt(int tabIndex, int mnemonicIndex) {}
+    public void setComponentAt(int index, Component c) { Component old=tabs.set(index,c);if(old!=null)super.remove(old);if(c!=null){super.add(c);c.setVisible(index==selectedIndex);}revalidate();repaint(); }
+    public int getMnemonicAt(int tabIndex) { return pages.get(tabIndex).mnemonic; }
+    public void setMnemonicAt(int tabIndex, int mnemonic) { pages.get(tabIndex).mnemonic=mnemonic; }
+    public int getDisplayedMnemonicIndexAt(int tabIndex) { return pages.get(tabIndex).displayedMnemonic; }
+    public void setDisplayedMnemonicIndexAt(int tabIndex, int mnemonicIndex) { if(mnemonicIndex < -1 || mnemonicIndex>=titles.get(tabIndex).length())throw new IllegalArgumentException("mnemonic index");pages.get(tabIndex).displayedMnemonic=mnemonicIndex; }
+    private boolean verticalTabs(){return tabPlacement==LEFT||tabPlacement==RIGHT;}
+    private int tabAxisLength(){return Math.max(0,(verticalTabs()?getHeight():getWidth())-trailingExtent());}
+    private boolean hasOverflow(){return tabs.size()*TAB_SLOT_PX>tabAxisLength();}
+    private int visibleTabCount(){return Math.max(0,tabAxisLength()-(hasOverflow()?2*OVERFLOW_CONTROL_SIZE:0))/TAB_SLOT_PX;}
+    private void clampTabOffset(){firstVisibleTab=Math.max(0,Math.min(firstVisibleTab,Math.max(0,tabs.size()-visibleTabCount())));}
+    private boolean inStrip(int x,int y){return x>=stripX()&&y>=stripY()&&(verticalTabs()?x<stripX()+STRIP_THICKNESS&&y<tabAxisLength():y<stripY()+STRIP_THICKNESS&&x<tabAxisLength());}
+    private int overflowDirection(int x,int y){
+        if(!hasOverflow()||!inStrip(x,y))return 0;
+        int axis=verticalTabs()?y:x,start=Math.max(0,tabAxisLength()-2*OVERFLOW_CONTROL_SIZE);
+        return axis<start?0:axis<start+OVERFLOW_CONTROL_SIZE?-1:1;
+    }
+    private void scrollTabs(int amount){firstVisibleTab+=amount;clampTabOffset();doLayout();repaint();}
     public java.awt.Rectangle getBoundsAt(int index) {
-        if (index < 0 || index >= tabs.size()) return new java.awt.Rectangle();
-        boolean vertical = (tabPlacement == LEFT || tabPlacement == RIGHT);
-        if (vertical) {
-            return new java.awt.Rectangle(stripX(), index * TAB_SLOT_PX, STRIP_THICKNESS, TAB_SLOT_PX);
-        } else {
-            return new java.awt.Rectangle(index * TAB_SLOT_PX, stripY(), TAB_SLOT_PX, STRIP_THICKNESS);
-        }
+        int slot=index-firstVisibleTab;
+        if(index<0||index>=tabs.size()||slot<0||slot>=visibleTabCount())return new java.awt.Rectangle();
+        return verticalTabs()?new java.awt.Rectangle(stripX(),slot*TAB_SLOT_PX,STRIP_THICKNESS,TAB_SLOT_PX):new java.awt.Rectangle(slot*TAB_SLOT_PX,stripY(),TAB_SLOT_PX,STRIP_THICKNESS);
     }
     public int indexOfTab(String title) { return titles.indexOf(title); }
-    public int indexOfTab(Icon icon) { return -1; }
+    public int indexOfTab(Icon icon) { return icons.indexOf(icon); }
     public int indexOfComponent(Component c) { return tabs.indexOf(c); }
-    public int indexAtLocation(int x, int y) {
-        boolean vertical = (tabPlacement == LEFT || tabPlacement == RIGHT);
-        int trailing = trailingExtent();
-        // Reject taps outside the strip itself.
-        if (vertical) {
-            if (x < stripX() || x >= stripX() + STRIP_THICKNESS) return -1;
-            if (y >= getHeight() - trailing) return -1;
-        } else {
-            if (y < stripY() || y >= stripY() + STRIP_THICKNESS) return -1;
-            if (x >= getWidth() - trailing) return -1;
-        }
-        int idx = vertical ? y / TAB_SLOT_PX : x / TAB_SLOT_PX;
-        if (idx < 0 || idx >= tabs.size()) return -1;
-        return idx;
+    public int indexAtLocation(int x,int y) {
+        if(!inStrip(x,y)||overflowDirection(x,y)!=0)return -1;
+        int slot=(verticalTabs()?y:x)/TAB_SLOT_PX;
+        int index=firstVisibleTab+slot;
+        return slot<visibleTabCount()&&index<tabs.size()&&pages.get(index).enabled?index:-1;
     }
-    public Component getTabComponentAt(int index) { return null; }
-    public void setTabComponentAt(int index, Component component) {}
-    public int indexOfTabComponent(Component tabComponent) { return -1; }
+    public Component getTabComponentAt(int index) { return pages.get(index).tabComponent; }
+    public void setTabComponentAt(int index, Component component) { Page page=pages.get(index);if(page.tabComponent!=null)super.remove(page.tabComponent);page.tabComponent=component;if(component!=null)super.add(component);revalidate();repaint(); }
+    public int indexOfTabComponent(Component component) { for(int i=0;i<pages.size();i++)if(pages.get(i).tabComponent==component)return i;return -1; }
     private final java.util.List<javax.swing.event.ChangeListener> changeListeners = new java.util.ArrayList<>();
     public void addChangeListener(ChangeListener l) { if (l != null) changeListeners.add(l); }
     public void removeChangeListener(ChangeListener l) { changeListeners.remove(l); }

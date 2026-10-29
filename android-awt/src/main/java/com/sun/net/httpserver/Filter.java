@@ -9,6 +9,14 @@ public abstract class Filter {
     public abstract String description();
 
     public static class Chain {
-        public void doFilter(HttpExchange exchange) throws IOException {}
+        private final java.util.Iterator<Filter> filters;
+        private final HttpHandler handler;
+        public Chain(java.util.List<Filter> filters, HttpHandler handler) {
+            this.filters = new java.util.ArrayList<>(filters).iterator();
+            this.handler = java.util.Objects.requireNonNull(handler);
+        }
+        public void doFilter(HttpExchange exchange) throws IOException {
+            if (filters.hasNext()) filters.next().doFilter(exchange, this); else handler.handle(exchange);
+        }
     }
 }

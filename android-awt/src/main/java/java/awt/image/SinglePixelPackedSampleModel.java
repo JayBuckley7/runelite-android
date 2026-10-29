@@ -78,8 +78,21 @@ public class SinglePixelPackedSampleModel extends SampleModel {
         switch (dataType) {
             case DataBuffer.TYPE_INT:
                 return new DataBufferInt(scanlineStride * height);
+            case DataBuffer.TYPE_BYTE: return new DataBufferByte(scanlineStride * height);
+            case DataBuffer.TYPE_USHORT: return new DataBufferUShort(scanlineStride * height);
             default:
                 throw new IllegalStateException("Unsupported data type: " + dataType);
         }
+    }
+    @Override public Object getDataElements(int x, int y, Object out, DataBuffer data) {
+        Object result = transferArray(out, 1);
+        transferSet(result, 0, data.getElem(y * scanlineStride + x));
+        return result;
+    }
+    @Override public void setDataElements(int x, int y, Object in, DataBuffer data) { data.setElem(y * scanlineStride + x, transferGet(in, 0)); }
+    @Override public SampleModel createSubsetSampleModel(int[] bands) {
+        int[] masks = new int[bands.length];
+        for (int i = 0; i < masks.length; i++) masks[i] = bitMasks[bands[i]];
+        return new SinglePixelPackedSampleModel(dataType, width, height, scanlineStride, masks);
     }
 }

@@ -6,8 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.Executor;
 
-/** Loopback-only HTTP callback server for desktop browser sign-in on Android.
- * Supports bounded GET requests and buffered responses; not a general web server. */
+/** Loopback-only HTTP server with bounded requests for desktop plugin callbacks. */
 public abstract class HttpServer {
     protected HttpServer() {}
     public static HttpServer create() throws IOException { return create(null, 0); }
@@ -31,8 +30,13 @@ public abstract class HttpServer {
         private final Map<String, LocalContext> contexts = new HashMap<>();
         private ServerSocket listener;
         private Executor executor;
+        private final java.util.concurrent.ThreadPoolExecutor workers = new java.util.concurrent.ThreadPoolExecutor(
+            4, 4, 30, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<Runnable>(16), task -> {
+                Thread thread = new Thread(task, "RuneLite-loopback-request"); thread.setDaemon(true); return thread;
+            });
         private volatile boolean running;
         private boolean started;
+        private final Set<Socket> active = new HashSet<>();
         public synchronized void bind(InetSocketAddress address, int backlog) throws IOException {
             if (listener != null) throw new IOException("Already bound");
             if (address == null || address.getAddress() == null || !address.getAddress().isLoopbackAddress())
@@ -76,9 +80,12 @@ public abstract class HttpServer {
                 try {
                     Socket socket = listener.accept();
                     socket.setSoTimeout(5000);
-                    Runnable task = () -> serve(socket);
-                    try { if (executor == null) task.run(); else executor.execute(task); }
-                    catch (RuntimeException e) { socket.close(); }
+                    synchronized (this) { if (!running) { socket.close(); continue; } active.add(socket); }
+                    Runnable task = () -> { try { serve(socket); } finally { synchronized (this) { active.remove(socket); notifyAll(); } } };
+                    try {
+                        if (executor == null) workers.execute(task);
+                        else executor.execute(task);
+                    } catch (RuntimeException e) { synchronized (this) { active.remove(socket); notifyAll(); } socket.close(); }
                 } catch (IOException e) { if (listener.isClosed()) break; }
             }
         }
@@ -113,9 +120,19 @@ public abstract class HttpServer {
                     exchange.requestHeaders.add(lines[i].substring(0, colon), lines[i].substring(colon + 1).trim());
                 }
                 try {
-                    if (!"GET".equals(request[0])) exchange.sendResponseHeaders(405, -1);
-                    else if (context == null || context.handler == null) exchange.sendResponseHeaders(404, -1);
-                    else context.handler.handle(exchange);
+                    exchange.readRequestBody(input);
+                    if (context == null || context.handler == null) exchange.sendResponseHeaders(404, -1);
+                    else {
+                        Authenticator auth = context.getAuthenticator();
+                        Authenticator.Result result = auth == null ? null : auth.authenticate(exchange);
+                        if (result instanceof Authenticator.Failure) exchange.sendResponseHeaders(((Authenticator.Failure) result).getResponseCode(), -1);
+                        else if (result instanceof Authenticator.Retry) exchange.sendResponseHeaders(((Authenticator.Retry) result).getResponseCode(), -1);
+                        else if (auth != null && !(result instanceof Authenticator.Success)) exchange.sendResponseHeaders(500, -1);
+                        else {
+                            if (result instanceof Authenticator.Success) exchange.principal = ((Authenticator.Success) result).getPrincipal();
+                            new Filter.Chain(context.getFilters(), context.handler).doFilter(exchange);
+                        }
+                    }
                 } catch (Exception e) {
                     if (exchange.code == -1) exchange.sendResponseHeaders(500, -1);
                 } finally { exchange.close(); }
@@ -125,13 +142,23 @@ public abstract class HttpServer {
             if (delay < 0) throw new IllegalArgumentException("Negative delay");
             running = false;
             if (listener != null) try { listener.close(); } catch (IOException ignored) {}
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(delay);
+            while (!active.isEmpty()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) break;
+                try { java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining); }
+                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+            }
+            for (Socket socket : active) try { socket.close(); } catch (IOException ignored) {}
+            workers.shutdownNow();
+            active.clear();
         }
     }
     private static final class LocalContext extends HttpContext {
         final LocalServer server;
         final String path;
         volatile HttpHandler handler;
-        final Map<String, Object> attributes = new HashMap<>();
+        final Map<String, Object> attributes = new java.util.concurrent.ConcurrentHashMap<>();
         LocalContext(LocalServer server, String path, HttpHandler handler) { this.server = server; this.path = path; this.handler = handler; }
         public HttpHandler getHandler() { return handler; }
         public void setHandler(HttpHandler handler) {
@@ -148,7 +175,11 @@ public abstract class HttpServer {
         final String method, protocol;
         final LocalContext context;
         final Headers requestHeaders = new Headers(), responseHeaders = new Headers();
-        final ByteArrayOutputStream body = new ByteArrayOutputStream();
+        InputStream requestBody = new ByteArrayInputStream(new byte[0]);
+        OutputStream responseBody;
+        long remaining;
+        boolean chunked;
+        HttpPrincipal principal;
         final Map<String, Object> attributes = new HashMap<>();
         int code = -1;
         boolean closed;
@@ -160,40 +191,100 @@ public abstract class HttpServer {
         public URI getRequestURI() { return uri; }
         public String getRequestMethod() { return method; }
         public HttpContext getHttpContext() { return context; }
-        public InputStream getRequestBody() { return new ByteArrayInputStream(new byte[0]); }
-        public OutputStream getResponseBody() { return body; }
+        public InputStream getRequestBody() { return requestBody; }
+        public OutputStream getResponseBody() {
+            if (responseBody == null) responseBody = new OutputStream() {
+                public void write(int value) throws IOException { write(new byte[]{(byte) value}, 0, 1); }
+                public void write(byte[] bytes, int off, int len) throws IOException {
+                    if (code == -1 || closed) throw new IOException("Response headers not sent or exchange closed");
+                    if (len == 0) return;
+                    if (!chunked && len > remaining) throw new IOException("Response exceeds declared length");
+                    OutputStream out = socket.getOutputStream();
+                    if (chunked) out.write((Integer.toHexString(len) + "\r\n").getBytes(StandardCharsets.US_ASCII));
+                    out.write(bytes, off, len);
+                    if (chunked) out.write(new byte[]{13, 10}); else remaining -= len;
+                }
+                public void flush() throws IOException { socket.getOutputStream().flush(); }
+                public void close() { Exchange.this.close(); }
+            };
+            return responseBody;
+        }
+        private static String line(InputStream in) throws IOException {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            while (out.size() <= 16384) { int c = in.read(); if (c < 0) throw new EOFException(); if (c == 10) return new String(out.toByteArray(), StandardCharsets.US_ASCII).trim(); out.write(c); }
+            throw new IOException("Request line too long");
+        }
+        void readRequestBody(InputStream input) throws IOException {
+            final int max = 1024 * 1024;
+            ByteArrayOutputStream body = new ByteArrayOutputStream();
+            String encoding = requestHeaders.getFirst("Transfer-Encoding"), length = requestHeaders.getFirst("Content-Length");
+            if ((encoding != null && requestHeaders.get("Transfer-Encoding").size() != 1)
+                || (length != null && requestHeaders.get("Content-Length").size() != 1)) throw new IOException("Duplicate request framing");
+            if (encoding != null && (length != null || !"chunked".equalsIgnoreCase(encoding))) throw new IOException("Ambiguous request framing");
+            if (encoding != null) {
+                for (;;) {
+                    String size = line(input).split(";", 2)[0];
+                    int n; try { n = Integer.parseInt(size, 16); } catch (NumberFormatException e) { throw new IOException("Invalid chunk", e); }
+                    if (n < 0 || n > max - body.size()) throw new IOException("Request body too large");
+                    if (n == 0) {
+                        int trailerBytes = 0; String trailer;
+                        while (!(trailer = line(input)).isEmpty()) {
+                            trailerBytes += trailer.length() + 2;
+                            if (trailerBytes > 16384) throw new IOException("Request trailers too large");
+                        }
+                        break;
+                    }
+                    copy(input, body, n); if (!line(input).isEmpty()) throw new IOException("Invalid chunk ending");
+                }
+            } else if (length != null) {
+                int n; try { n = Integer.parseInt(length); } catch (NumberFormatException e) { throw new IOException("Invalid length", e); }
+                if (n < 0 || n > max) throw new IOException("Request body too large");
+                copy(input, body, n);
+            }
+            requestBody = new ByteArrayInputStream(body.toByteArray());
+        }
+        private static void copy(InputStream in, OutputStream out, int n) throws IOException {
+            byte[] bytes = new byte[Math.min(8192, Math.max(1,n))];
+            while (n > 0) { int count = in.read(bytes, 0, Math.min(n, bytes.length)); if (count < 0) throw new EOFException(); out.write(bytes, 0, count); n -= count; }
+        }
         public void sendResponseHeaders(int code, long length) throws IOException {
             if (this.code != -1) throw new IOException("Headers already sent");
+            if (code < 100 || length < -1) throw new IllegalArgumentException("Invalid response");
+            boolean noBody = "HEAD".equals(method) || code == 204 || code == 304 || code < 200;
+            chunked = length == 0 && !noBody;
+            remaining = length < 0 || noBody ? 0 : length;
+            StringBuilder headers = new StringBuilder("HTTP/1.1 ").append(code).append(" Response\r\n");
+            for (Map.Entry<String, List<String>> entry : responseHeaders.entrySet()) {
+                String key = entry.getKey();
+                if (key.equalsIgnoreCase("Content-Length") || key.equalsIgnoreCase("Connection") || key.equalsIgnoreCase("Transfer-Encoding")) continue;
+                if (!key.matches("[A-Za-z0-9-]+")) throw new IOException("Invalid header");
+                for (String value : entry.getValue()) {
+                    if (value.contains("\r") || value.contains("\n")) throw new IOException("Invalid header");
+                    headers.append(key).append(": ").append(value).append("\r\n");
+                }
+            }
+            if (chunked) headers.append("Transfer-Encoding: chunked\r\n");
+            else if (!noBody) headers.append("Content-Length: ").append(remaining).append("\r\n");
+            headers.append("Connection: close\r\n\r\n");
+            socket.getOutputStream().write(headers.toString().getBytes(StandardCharsets.ISO_8859_1));
             this.code = code;
         }
         public void close() {
             if (closed) return;
-            closed = true;
             try {
-                StringBuilder headers = new StringBuilder("HTTP/1.1 ").append(code == -1 ? 500 : code).append(" Response\r\n");
-                for (Map.Entry<String, List<String>> entry : responseHeaders.entrySet()) {
-                    String key = entry.getKey();
-                    if (key.equalsIgnoreCase("Content-Length") || key.equalsIgnoreCase("Connection") || key.equalsIgnoreCase("Transfer-Encoding")) continue;
-                    if (!key.matches("[A-Za-z0-9-]+")) throw new IOException("Invalid header");
-                    for (String value : entry.getValue()) {
-                        if (value.contains("\r") || value.contains("\n")) throw new IOException("Invalid header");
-                        headers.append(key).append(": ").append(value).append("\r\n");
-                    }
-                }
-                headers.append("Content-Length: ").append(body.size()).append("\r\nConnection: close\r\n\r\n");
-                OutputStream output = socket.getOutputStream();
-                output.write(headers.toString().getBytes(StandardCharsets.ISO_8859_1));
-                body.writeTo(output);
-                output.flush();
+                if (code == -1) sendResponseHeaders(500, -1);
+                if (chunked) socket.getOutputStream().write("0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                socket.getOutputStream().flush();
             } catch (IOException ignored) { }
-            finally { try { socket.close(); } catch (IOException ignored) {} }
+            finally { closed = true; try { socket.close(); } catch (IOException ignored) {} }
         }
         public InetSocketAddress getRemoteAddress() { return (InetSocketAddress) socket.getRemoteSocketAddress(); }
         public InetSocketAddress getLocalAddress() { return (InetSocketAddress) socket.getLocalSocketAddress(); }
         public int getResponseCode() { return code; }
         public String getProtocol() { return protocol; }
-        public Object getAttribute(String name) { return attributes.containsKey(name) ? attributes.get(name) : context.getAttributes().get(name); }
+        public Object getAttribute(String name) { return attributes.containsKey(name) ? attributes.get(name) : context == null ? null : context.getAttributes().get(name); }
         public void setAttribute(String name, Object value) { attributes.put(name, value); }
-        public void setStreams(InputStream input, OutputStream output) { throw new UnsupportedOperationException("Stream replacement"); }
+        public void setStreams(InputStream input, OutputStream output) { if (input != null) requestBody = input; if (output != null) responseBody = output; }
+        public HttpPrincipal getPrincipal() { return principal; }
     }
 }

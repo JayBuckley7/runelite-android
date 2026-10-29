@@ -16,6 +16,7 @@ public class JCheckBox extends JToggleButton {
 
     @Override
     protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         // Don't call AbstractButton.paintComponent because we draw our own box + text.
         if (getWidth() <= 0 || getHeight() <= 0) return;
         java.awt.Color saved = g.getColor();

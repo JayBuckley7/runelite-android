@@ -1,5 +1,5 @@
 use crate::fill::{src_over, src_atop};
-use crate::{CLEAR, SRC, SRC_ATOP};
+use crate::{CLEAR, SRC, SRC_ATOP, OPAQUE_SOURCE};
 use jni::sys::{jfloat, jint};
 
 /// Nearest-neighbour scaled blit with composite + global alpha. For dw==sw and dh==sh
@@ -33,6 +33,8 @@ pub fn blit(
         return;
     }
 
+    let opaque_source = composite_rule & OPAQUE_SOURCE != 0;
+    let composite_rule = composite_rule & !OPAQUE_SOURCE;
     let alpha = alpha.clamp(0.0, 1.0);
     let global_a = (alpha * 255.0 + 0.5) as u32;
 
@@ -55,6 +57,7 @@ pub fn blit(
                 continue;
             }
             let mut sp = src[src_off + sx_col as usize] as u32;
+            if opaque_source { sp |= 0xff000000; }
             if global_a != 255 {
                 let sa = (sp >> 24) & 0xFF;
                 let new_a = (sa * global_a + 127) / 255;
@@ -125,3 +128,22 @@ pub fn copy_area(
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn pixel(rule: i32, alpha: f32, source: u32, destination: u32) -> u32 {
+        let mut dst = [destination as i32];
+        blit(&[source as i32], 1, 1, 0, 0, 1, 1, &mut dst, 1, 1, 0, 0, 1, 1, rule, alpha);
+        dst[0] as u32
+    }
+    #[test]
+    fn opaque_sources_restore_alpha_before_compositing() {
+        assert_eq!(pixel(SRC | OPAQUE_SOURCE, 1.0, 0x00ff0000, 0), 0xffff0000);
+        assert_eq!(pixel(crate::SRC_OVER | OPAQUE_SOURCE, 1.0, 0, 0xffffffff), 0xff000000);
+        assert_eq!(pixel(SRC | OPAQUE_SOURCE, 0.5, 0x00ff0000, 0), 0x80ff0000);
+        assert_eq!(pixel(crate::SRC_OVER | OPAQUE_SOURCE, 0.5, 0x00ff0000, 0xff0000ff), 0xff80007f);
+        assert_eq!(pixel(CLEAR | OPAQUE_SOURCE, 1.0, 0xffffff, 0xffffffff), 0);
+        assert_eq!(pixel(SRC, 1.0, 0x00123456, 0xffffffff), 0x00123456);
+    }
+}

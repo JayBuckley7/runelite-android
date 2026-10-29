@@ -64,10 +64,31 @@ public class Raster {
     }
 
     public int getSample(int x, int y, int b) {
+        checkBounds(x,y);
         return sampleModel.getSample(x - sampleModelTranslateX, y - sampleModelTranslateY, b, dataBuffer);
     }
 
     public int[] getPixel(int x, int y, int[] iArray) {
+        checkBounds(x,y);
         return sampleModel.getPixel(x - sampleModelTranslateX, y - sampleModelTranslateY, iArray, dataBuffer);
     }
+    public int getTransferType() { return sampleModel.getTransferType(); }
+    protected final void checkBounds(int x, int y) {
+        if (x < minX || y < minY || x >= minX + width || y >= minY + height) throw new ArrayIndexOutOfBoundsException("Raster bounds");
+    }
+    public Object getDataElements(int x, int y, Object out) {
+        checkBounds(x, y);
+        return sampleModel.getDataElements(x - sampleModelTranslateX, y - sampleModelTranslateY, out, dataBuffer);
+    }
+    public Object getDataElements(int x, int y, int w, int h, Object out) {
+        Object result = sampleModel.transferArray(out, w * h * numDataElements), pixel = null;
+        int index = 0;
+        for (int row = 0; row < h; row++) for (int col = 0; col < w; col++) {
+            pixel = getDataElements(x + col, y + row, pixel);
+            for (int element = 0; element < numDataElements; element++) SampleModel.transferSet(result, index++, SampleModel.transferGet(pixel, element));
+        }
+        return result;
+    }
+    public WritableRaster createCompatibleWritableRaster(){return createCompatibleWritableRaster(width,height);}
+    public WritableRaster createCompatibleWritableRaster(int w,int h){SampleModel sm=sampleModel.createCompatibleSampleModel(w,h);return createWritableRaster(sm,sm.createDataBuffer(),new Point(0,0));}
 }

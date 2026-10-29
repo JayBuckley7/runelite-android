@@ -32,6 +32,13 @@ public class AffineTransform implements Cloneable, Serializable {
         this.m02 = m02; this.m12 = m12;
     }
 
+    public AffineTransform(float m00, float m10, float m01, float m11, float m02, float m12) {
+        this((double)m00, m10, m01, m11, m02, m12);
+    }
+    public AffineTransform(double[] flatmatrix) {
+        this(flatmatrix[0], flatmatrix[1], flatmatrix[2], flatmatrix[3], flatmatrix.length > 5 ? flatmatrix[4] : 0, flatmatrix.length > 5 ? flatmatrix[5] : 0);
+    }
+
     public AffineTransform(float[] flatmatrix) {
         m00 = flatmatrix[0]; m10 = flatmatrix[1];
         m01 = flatmatrix[2]; m11 = flatmatrix[3];
@@ -146,6 +153,10 @@ public class AffineTransform implements Cloneable, Serializable {
     /** Standard AWT API: transform {@code numPts} 2D points from {@code srcPts[srcOff..]}
      *  into {@code dstPts[dstOff..]}. Aliasing src and dst is allowed. */
     public void transform(float[] srcPts, int srcOff, float[] dstPts, int dstOff, int numPts) {
+        if (srcPts == dstPts && dstOff > srcOff && dstOff < srcOff + 2 * numPts) {
+            System.arraycopy(srcPts, srcOff, dstPts, dstOff, 2 * numPts);
+            srcOff = dstOff;
+        }
         for (int i = 0; i < numPts; i++) {
             double x = srcPts[srcOff++];
             double y = srcPts[srcOff++];
@@ -155,6 +166,10 @@ public class AffineTransform implements Cloneable, Serializable {
     }
 
     public void transform(double[] srcPts, int srcOff, double[] dstPts, int dstOff, int numPts) {
+        if (srcPts == dstPts && dstOff > srcOff && dstOff < srcOff + 2 * numPts) {
+            System.arraycopy(srcPts, srcOff, dstPts, dstOff, 2 * numPts);
+            srcOff = dstOff;
+        }
         for (int i = 0; i < numPts; i++) {
             double x = srcPts[srcOff++];
             double y = srcPts[srcOff++];
@@ -163,6 +178,14 @@ public class AffineTransform implements Cloneable, Serializable {
         }
     }
 
+    public AffineTransform createInverse() throws NoninvertibleTransformException {
+        double det=getDeterminant();
+        if(Math.abs(det)<=Double.MIN_VALUE)throw new NoninvertibleTransformException("determinant is zero");
+        return new AffineTransform(m11/det,-m10/det,-m01/det,m00/det,(m01*m12-m11*m02)/det,(m10*m02-m00*m12)/det);
+    }
+    public void invert() throws NoninvertibleTransformException {setTransform(createInverse());}
+    public Point2D inverseTransform(Point2D src,Point2D dst) throws NoninvertibleTransformException {return createInverse().transform(src,dst);}
+    public void inverseTransform(double[]src,int so,double[]dst,int d,int count) throws NoninvertibleTransformException {createInverse().transform(src,so,dst,d,count);}
     public double getDeterminant() {
         return m00 * m11 - m01 * m10;
     }

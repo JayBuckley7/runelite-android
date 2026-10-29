@@ -6,7 +6,7 @@ import java.awt.Color;
 import java.awt.Composite;
 import java.awt.Font;
 import java.awt.FontMetrics;
-import java.awt.FontRenderContext;
+import java.awt.font.FontRenderContext;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Paint;
@@ -69,6 +69,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     private Composite composite = AlphaComposite.SrcOver;
     private Stroke stroke = DEFAULT_STROKE;
     private Paint paint = Color.BLACK;
+    private Color xorColor;
     private final RenderingHints renderingHints = new RenderingHints(null);
     /** Uniform user→device multiplier applied on top of {@link #transform}. Lets a host lay a
      *  Swing tree out in logical pixels but rasterize it at the display's real density
@@ -180,6 +181,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
         copy.composite = composite;
         copy.stroke = stroke;
         copy.paint = paint;
+        copy.xorColor = xorColor;
         copy.renderingHints.add(renderingHints);
         copy.deviceScale = deviceScale;
         return copy;
@@ -242,8 +244,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override public Color getBackground() { return background; }
     @Override public void setBackground(Color c) { if (c != null) background = c; }
 
-    @Override public void setPaintMode() {}
-    @Override public void setXORMode(Color c1) {}
+    @Override public void setPaintMode() {xorColor=null;}
+    @Override public void setXORMode(Color c1) {xorColor=java.util.Objects.requireNonNull(c1);}
 
     @Override public Font getFont() { return font; }
     @Override public void setFont(Font font) { if (font != null) this.font = font; }
@@ -251,6 +253,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override public FontMetrics getFontMetrics(Font f) { return BufferedImageFontMetrics.forFont(f); }
 
     @Override public Rectangle getClipBounds() {
+        if (!transformIsTranslateOnly()) return getClip().getBounds();
         // Return clip in user space (subtract current translation).
         if (deviceScale != 1f) {
             // Round outward so a component's damage test never drops a partially covered
@@ -265,6 +268,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
         return new Rectangle(clip.x - tx(), clip.y - ty(), clip.width, clip.height);
     }
     @Override public void clipRect(int x, int y, int w, int h) {
+        if(!transformIsTranslateOnly()){clip(new java.awt.geom.Rectangle2D.Double(x,y,w,h));return;}
         // Inlined `clip.intersection(new Rectangle(...))` — the JDK version allocates
         // two Rectangles per call (the operand and the result). hostPaint hits this for
         // every component in the tree, so killing both allocations is a meaningful per-
@@ -336,10 +340,22 @@ public class BufferedImageGraphics2D extends Graphics2D {
         }
     }
     @Override public void setClip(int x, int y, int w, int h) {
+        if(!transformIsTranslateOnly()){setClip(new java.awt.geom.Rectangle2D.Double(x,y,w,h));return;}
         clip = deviceRect(x, y, w, h);
         clipRects = null;
     }
     @Override public Shape getClip() {
+        if (!transformIsTranslateOnly()) {
+            java.awt.geom.Path2D.Double devicePath = new java.awt.geom.Path2D.Double();
+            if (clipRects == null) devicePath.append(clip, false);
+            else for (int i = 0; i < clipRects.length; i += 4)
+                devicePath.append(new Rectangle(clipRects[i], clipRects[i + 1], clipRects[i + 2] - clipRects[i], clipRects[i + 3] - clipRects[i + 1]), false);
+            try {
+                AffineTransform inverse = transform.createInverse();
+                inverse.concatenate(AffineTransform.getScaleInstance(1 / deviceScale, 1 / deviceScale));
+                return inverse.createTransformedShape(devicePath);
+            } catch (java.awt.geom.NoninvertibleTransformException e) { return new java.awt.geom.Path2D.Double(); }
+        }
         if (clipRects == null) return getClipBounds();
         // Back to user space; the rects are disjoint, so the Area just merges their seams.
         java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
@@ -358,7 +374,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             clip = new Rectangle(0, 0, width, height);
             return;
         }
-        if (shape instanceof Rectangle) {
+        if (shape instanceof Rectangle && transformIsTranslateOnly()) {
             Rectangle b = (Rectangle) shape;
             clip = deviceRect(b.x, b.y, b.width, b.height);
             return;
@@ -377,7 +393,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             setClip(null);
             return;
         }
-        if (s instanceof Rectangle) {
+        if (s instanceof Rectangle && transformIsTranslateOnly()) {
             Rectangle r = (Rectangle) s;
             clipRect(r.x, r.y, r.width, r.height);
             return;
@@ -417,6 +433,27 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void copyArea(int x, int y, int w, int h, int dx, int dy) {
+        if (!image.isCanonicalBuffer() || !transformIsTranslateOnly()) {
+            syncTarget();
+            int[] original = image.getRGB(0, 0, width, height, null, 0, width);
+            java.awt.geom.AffineTransform device = new java.awt.geom.AffineTransform(transform);
+            device.preConcatenate(java.awt.geom.AffineTransform.getScaleInstance(deviceScale, deviceScale));
+            Shape source = device.createTransformedShape(new Rectangle(x, y, w, h));
+            java.awt.geom.Point2D delta = device.deltaTransform(new java.awt.geom.Point2D.Double(dx, dy), null);
+            int moveX = (int)Math.round(delta.getX()), moveY = (int)Math.round(delta.getY());
+            for (int row = 0; row < height; row++) for (int col = 0; col < width; col++) {
+                int sx = col - moveX, sy = row - moveY;
+                if (sx < 0 || sy < 0 || sx >= width || sy >= height || !source.contains(sx + .5, sy + .5)) continue;
+                boolean inside = clip.contains(col, row);
+                if (inside && clipRects != null) {
+                    inside = false;
+                    for (int i = 0; i < clipRects.length; i += 4) if (col >= clipRects[i] && col < clipRects[i + 2] && row >= clipRects[i + 1] && row < clipRects[i + 3]) { inside = true; break; }
+                }
+                if (inside) image.setRGB(col, row, original[sy * width + sx]);
+            }
+            return;
+        }
+
         syncTarget();
         Rectangle src = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         if (src.width == 0 || src.height == 0) return;
@@ -462,6 +499,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void drawLine(int x1, int y1, int x2, int y2) {
+        if(generalRendering()){generalShape(new java.awt.geom.Line2D.Double(x1,y1,x2,y2),false);return;}
         syncTarget();
         if (!plainThinStroke()) {
             strokeUserPolyline(new double[] {x1, y1, x2, y2}, 2, false);
@@ -529,6 +567,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void fillRect(int x, int y, int w, int h) {
+        if(generalRendering()){generalShape(new Rectangle(x,y,w,h),true);return;}
         syncTarget();
         if (paint instanceof TexturePaint) {
             if (w > 0 && h > 0) fillShape(new Rectangle(x, y, w, h));
@@ -558,7 +597,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     @Override
-    public void clearRect(int x, int y, int w, int h) {
+    public void clearRect(int x,int y,int w,int h) {
+        if(generalRendering()){Paint previous=paint;Composite comp=composite;Color xor=xorColor;try{paint=background;composite=AlphaComposite.Src;xorColor=null;generalShape(new Rectangle(x,y,w,h),true);}finally{paint=previous;composite=comp;xorColor=xor;}return;}
         syncTarget();
         Rectangle r = deviceScale == 1f ? clipped(x + tx(), y + ty(), w, h) : clippedDevice(x, y, w, h);
         fillDevice(r, background.getRGB(), AlphaComposite.SRC);
@@ -566,6 +606,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void drawRect(int x, int y, int w, int h) {
+        if(generalRendering()){generalShape(new Rectangle(x,y,w,h),false);return;}
         if (w < 0 || h < 0) return;
         if (plainThinStroke()) {
             super.drawRect(x, y, w, h);
@@ -705,6 +746,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     private static final int LINE_SKIP_LAST = 2;
 
     @Override public void drawRoundRect(int x, int y, int w, int h, int aw, int ah) {
+        if(generalRendering()){generalShape(new java.awt.geom.RoundRectangle2D.Double(x,y,w,h,aw,ah),false);return;}
         rasterizeShape(x, y, w, h, false, (c, p, sw, sh) -> c.drawRoundRect(
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
@@ -719,6 +761,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     @Override public void fillRoundRect(int x, int y, int w, int h, int aw, int ah) {
+        if(generalRendering()){generalShape(new java.awt.geom.RoundRectangle2D.Double(x,y,w,h,aw,ah),true);return;}
         syncTarget();
         if (paint instanceof TexturePaint) {
             if (w <= 0 || h <= 0) return;
@@ -748,6 +791,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), aw / 2f, ah / 2f, p));
     }
     @Override public void drawOval(int x, int y, int w, int h) {
+        if(generalRendering()){generalShape(new java.awt.geom.Ellipse2D.Double(x,y,w,h),false);return;}
         syncTarget();
         if (transformIsTranslateOnly() && strokeWidthIsOne() && deviceScale == 1f && nativeShapeFits(x, y, w, h)) {
             AwtNative.drawOval(pixels, width, height, x + tx(), y + ty(), w, h, foreground.getRGB());
@@ -757,6 +801,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), p));
     }
     @Override public void fillOval(int x, int y, int w, int h) {
+        if(generalRendering()){generalShape(new java.awt.geom.Ellipse2D.Double(x,y,w,h),true);return;}
         syncTarget();
         if (paint instanceof TexturePaint) {
             fillShape(new java.awt.geom.Ellipse2D.Double(x, y, w, h));
@@ -771,12 +816,14 @@ public class BufferedImageGraphics2D extends Graphics2D {
             new android.graphics.RectF(0, 0, sw, sh), p));
     }
     @Override public void drawArc(int x, int y, int w, int h, int sa, int aa) {
+        if(generalRendering()){generalShape(new java.awt.geom.Arc2D.Double(x,y,w,h,sa,aa,java.awt.geom.Arc2D.OPEN),false);return;}
         // AWT angles: 0° = 3 o'clock, positive = counter-clockwise.
         // Android angles: same origin, but positive = clockwise → negate both.
         rasterizeShape(x, y, w, h, false, (c, p, sw, sh) -> c.drawArc(
             new android.graphics.RectF(0, 0, sw, sh), -sa, -aa, false, p));
     }
     @Override public void fillArc(int x, int y, int w, int h, int sa, int aa) {
+        if(generalRendering()){generalShape(new java.awt.geom.Arc2D.Double(x,y,w,h,sa,aa,java.awt.geom.Arc2D.PIE),true);return;}
         // useCenter=true → pie slice (matches AWT fillArc semantics).
         rasterizeShape(x, y, w, h, true, (c, p, sw, sh) -> c.drawArc(
             new android.graphics.RectF(0, 0, sw, sh), -sa, -aa, true, p));
@@ -941,11 +988,13 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void drawPolyline(int[] xs, int[] ys, int n) {
+        if(generalRendering()){generalShape(polyline(xs,ys,n,false),false);return;}
         drawIntPath(xs, ys, n, false);
     }
 
     @Override
     public void drawPolygon(int[] xs, int[] ys, int n) {
+        if(generalRendering()){generalShape(polyline(xs,ys,n,true),false);return;}
         drawIntPath(xs, ys, n, true);
     }
 
@@ -997,6 +1046,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void fillPolygon(int[] xs, int[] ys, int n) {
+        if(generalRendering()){generalShape(polyline(xs,ys,n,true),true);return;}
         if (xs == null || ys == null) return;
         n = Math.min(n, Math.min(xs.length, ys.length));
         if (n < 3) return;
@@ -1054,7 +1104,12 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public void drawString(String str, int x, int y) {
-        if (str == null || str.isEmpty()) return;
+        if(str==null)throw new NullPointerException("text");
+        if(str.isEmpty())return;
+        if(generalRendering() || font.isTransformed() || font.getTracking() != 0){
+            drawGeneralText(str,x,y);
+            return;
+        }
         syncTarget();
         int baseX, baseY;
         if (deviceScale == 1f) {
@@ -1298,12 +1353,40 @@ public class BufferedImageGraphics2D extends Graphics2D {
         }
     }
 
-    @Override public void drawString(String str, float x, float y) { drawString(str, (int) x, (int) y); }
-    @Override public void drawString(AttributedCharacterIterator it, int x, int y) {}
-    @Override public void drawString(AttributedCharacterIterator it, float x, float y) {}
+    @Override public void drawString(String str, float x, float y) {
+        if(x==(int)x && y==(int)y)drawString(str,(int)x,(int)y);
+        else drawGeneralText(str,x,y);
+    }
+    private void drawGeneralText(String str,float x,float y){
+        if(str==null)throw new NullPointerException("text");
+        renderGeneral((canvas,p,mask)->{
+            canvas.save();canvas.translate(x,y);
+            AffineTransform ft=font.getTransform();android.graphics.Matrix matrix=new android.graphics.Matrix();
+            matrix.setValues(new float[]{(float)ft.getScaleX(),(float)ft.getShearX(),(float)ft.getTranslateX(),(float)ft.getShearY(),(float)ft.getScaleY(),(float)ft.getTranslateY(),0,0,1});
+            canvas.concat(matrix);canvas.drawText(str,0,0,p);canvas.restore();
+        },true);
+    }
+    @Override public void drawString(AttributedCharacterIterator it,int x,int y){drawString(it,(float)x,(float)y);}
+    @Override public void drawString(AttributedCharacterIterator it,float x,float y){
+        java.util.Objects.requireNonNull(it);Font savedFont=font;Paint savedPaint=paint;Color savedColor=foreground;float cursor=x;
+        try{
+            int end=it.getEndIndex();
+            for(int start=it.getBeginIndex();start<end;){
+                it.setIndex(start);int limit=it.getRunLimit();java.util.Map<AttributedCharacterIterator.Attribute,Object> attrs=it.getAttributes();
+                Object specified=attrs.get(java.awt.font.TextAttribute.FONT);font=specified instanceof Font?(Font)specified:savedFont.deriveFont(attrs);
+                Object fg=attrs.get(java.awt.font.TextAttribute.FOREGROUND);setPaint(fg instanceof Paint?(Paint)fg:savedPaint);
+                StringBuilder text=new StringBuilder();for(int i=start;i<limit;i++){it.setIndex(i);text.append(it.current());}
+                String part=text.toString();float advance=BufferedImageFontMetrics.forFont(font).stringWidth(part);
+                Object bg=attrs.get(java.awt.font.TextAttribute.BACKGROUND);if(bg instanceof Paint){Paint runPaint=paint;setPaint((Paint)bg);fillRect((int)cursor,(int)(y-getFontMetrics().getAscent()),(int)Math.ceil(advance),getFontMetrics().getHeight());setPaint(runPaint);}
+                drawString(part,cursor,y);cursor+=advance;start=limit;
+            }
+        }finally{font=savedFont;paint=savedPaint;foreground=savedColor;}
+    }
 
     @Override
     public boolean drawImage(java.awt.Image img, int x, int y, ImageObserver obs) {
+        img=buffered(img);
+        if(img==null)return false;
         if (img instanceof BufferedImage) {
             BufferedImage bi = (BufferedImage) img;
             blit(bi, 0, 0, bi.getWidth(), bi.getHeight(), x, y, bi.getWidth(), bi.getHeight());
@@ -1313,6 +1396,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
 
     @Override
     public boolean drawImage(java.awt.Image img, int x, int y, int w, int h, ImageObserver obs) {
+        img=buffered(img);
+        if(img==null)return false;
         if (img instanceof BufferedImage) {
             BufferedImage bi = (BufferedImage) img;
             blit(bi, 0, 0, bi.getWidth(), bi.getHeight(), x, y, w, h);
@@ -1320,12 +1405,14 @@ public class BufferedImageGraphics2D extends Graphics2D {
         return true;
     }
 
-    @Override public boolean drawImage(java.awt.Image img, int x, int y, Color bg, ImageObserver obs) { return drawImage(img, x, y, obs); }
-    @Override public boolean drawImage(java.awt.Image img, int x, int y, int w, int h, Color bg, ImageObserver obs) { return drawImage(img, x, y, w, h, obs); }
+    @Override public boolean drawImage(java.awt.Image img, int x, int y, Color bg, ImageObserver obs) { return drawImageBackground(img,x,y,-1,-1,bg); }
+    @Override public boolean drawImage(java.awt.Image img, int x, int y, int w, int h, Color bg, ImageObserver obs) { return drawImageBackground(img,x,y,w,h,bg); }
 
     @Override
     public boolean drawImage(java.awt.Image img, int dx1, int dy1, int dx2, int dy2,
                               int sx1, int sy1, int sx2, int sy2, ImageObserver obs) {
+        img=buffered(img);
+        if(img==null)return false;
         if (img instanceof BufferedImage) {
             BufferedImage bi = (BufferedImage) img;
             blit(bi, sx1, sy1, sx2 - sx1, sy2 - sy1, dx1, dy1, dx2 - dx1, dy2 - dy1);
@@ -1336,12 +1423,15 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override
     public boolean drawImage(java.awt.Image img, int dx1, int dy1, int dx2, int dy2,
                               int sx1, int sy1, int sx2, int sy2, Color bg, ImageObserver obs) {
-        return drawImage(img, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2, obs);
+        BufferedImage source=buffered(img);if(source==null)return false;
+        if(sx1==sx2||sy1==sy2)return true;AffineTransform at=AffineTransform.getTranslateInstance(dx1,dy1);at.scale((double)(dx2-dx1)/(sx2-sx1),(double)(dy2-dy1)/(sy2-sy1));at.translate(-sx1,-sy1);
+        generalImage(source,sx1,sy1,sx2-sx1,sy2-sy1,at,bg);return true;
     }
 
     @Override
     public boolean drawImage(java.awt.Image img, AffineTransform xform, ImageObserver obs) {
-        return drawImage(img, (int) xform.getTranslateX(), (int) xform.getTranslateY(), obs);
+        BufferedImage source=buffered(img);if(source==null)return false;
+        generalImage(source,0,0,source.getWidth(),source.getHeight(),new AffineTransform(xform),null);return true;
     }
 
     @Override
@@ -1350,6 +1440,11 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     private void blit(BufferedImage src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh) {
+        if(generalRendering()||!src.isCanonicalBuffer()||sw<0||sh<0||dw<0||dh<0){
+            if(sw==0||sh==0||dw==0||dh==0)return;
+            AffineTransform at=AffineTransform.getTranslateInstance(dx,dy);at.scale((double)dw/sw,(double)dh/sh);at.translate(-sx,-sy);
+            generalImage(src,sx,sy,sw,sh,at,null);return;
+        }
         int[] srcPixels = src.backingArray();
         if (srcPixels == null) return;
         syncTarget();
@@ -1483,21 +1578,13 @@ public class BufferedImageGraphics2D extends Graphics2D {
             compositeRule(), compositeAlpha());
     }
 
-    /**
-     * Pick the composite for blitting from this source image. For opaque source images
-     * (no alpha channel) the JDK treats source alpha as 1.0 regardless of what's in the
-     * pixel's high byte. Our Rust src_over honors source alpha literally — which means
-     * for OSRS-style raw RGB writes (alpha bits = 0) the blit becomes a no-op. Promote
-     * to SRC so the source pixels overwrite the destination unconditionally.
-     */
+    /** The native blitter must normalize an opaque source before applying global alpha. */
     private int compositeRuleFor(BufferedImage src) {
         int rule = compositeRule();
-        if (rule == AlphaComposite.SRC_OVER
-            && (isOpaqueSource(src)
-                || (backbufferSource != null && !java.awt.Canvas.isRenderedByGles()))) {
-            return AlphaComposite.SRC;
-        }
-        return rule;
+        boolean opaque = isOpaqueSource(src)
+            || (rule == AlphaComposite.SRC_OVER && backbufferSource != null && !java.awt.Canvas.isRenderedByGles());
+        if (opaque && rule == AlphaComposite.SRC_OVER && compositeAlpha() == 1f) rule = AlphaComposite.SRC;
+        return opaque ? rule | 0x10000 : rule;
     }
 
     private static boolean isOpaqueSource(BufferedImage src) {
@@ -1527,6 +1614,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     @Override public void draw(Shape s) {
+        if(s!=null&&generalRendering()){generalShape(s,false);return;}
         if (s == null) return;
         // Polygon / Rectangle honour the stroke inside drawPolygon / drawRect (thin fast
         // path, or the stroker for width > 1 — OverlayUtil.renderPolygon draws tile
@@ -1558,6 +1646,7 @@ public class BufferedImageGraphics2D extends Graphics2D {
     }
 
     @Override public void fill(Shape s) {
+        if(s!=null&&generalRendering()){generalShape(s,true);return;}
         if (s == null) return;
         if (s instanceof Polygon) {
             Polygon p = (Polygon) s;
@@ -1604,13 +1693,12 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override public AffineTransform getTransform() { return new AffineTransform(transform); }
     @Override public void setTransform(AffineTransform tx) { if (tx != null) transform.setTransform(tx); }
     @Override public void transform(AffineTransform tx) {
-        // Compose; ignored beyond translation for now.
-        translate(tx.getTranslateX(), tx.getTranslateY());
+        transform.concatenate(tx);
     }
-    @Override public void rotate(double theta) {}
-    @Override public void rotate(double theta, double x, double y) {}
+    @Override public void rotate(double theta) {transform.rotate(theta);}
+    @Override public void rotate(double theta,double x,double y) {transform.rotate(theta,x,y);}
     @Override public void scale(double sx, double sy) { transform.scale(sx, sy); }
-    @Override public void shear(double shx, double shy) {}
+    @Override public void shear(double shx,double shy) {transform.shear(shx,shy);}
 
     @Override public void setRenderingHint(RenderingHints.Key key, Object val) { renderingHints.put(key, val); }
     @Override public Object getRenderingHint(RenderingHints.Key key) { return renderingHints.get(key); }
@@ -1618,7 +1706,154 @@ public class BufferedImageGraphics2D extends Graphics2D {
     @Override public void addRenderingHints(java.util.Map<?, ?> hints) { renderingHints.putAll(hints); }
     @Override public RenderingHints getRenderingHints() { return (RenderingHints) renderingHints.clone(); }
 
-    @Override public FontRenderContext getFontRenderContext() { return new FontRenderContext(transform, false, false); }
+    @Override public FontRenderContext getFontRenderContext() { return new FontRenderContext(transform, renderingHints.get(RenderingHints.KEY_TEXT_ANTIALIASING)==null?RenderingHints.VALUE_TEXT_ANTIALIAS_DEFAULT:renderingHints.get(RenderingHints.KEY_TEXT_ANTIALIASING), renderingHints.get(RenderingHints.KEY_FRACTIONALMETRICS)==null?RenderingHints.VALUE_FRACTIONALMETRICS_DEFAULT:renderingHints.get(RenderingHints.KEY_FRACTIONALMETRICS)); }
+
+    private boolean generalRendering(){
+        int rule = compositeRule();
+        boolean nativeRule = rule == AlphaComposite.SRC_OVER || rule == AlphaComposite.SRC || rule == AlphaComposite.CLEAR || rule == AlphaComposite.SRC_ATOP;
+        return !nativeRule||!image.isCanonicalBuffer()||!transformIsTranslateOnly()||xorColor!=null||!(composite instanceof AlphaComposite)||(!(paint instanceof Color)&&!(paint instanceof TexturePaint));
+    }
+    private static BufferedImage buffered(java.awt.Image source){
+        if(source instanceof BufferedImage)return (BufferedImage)source;
+        if(source instanceof java.awt.image.VolatileImage)return ((java.awt.image.VolatileImage)source).getSnapshot();
+        if(source instanceof java.awt.image.ProducerImage)return ((java.awt.image.ProducerImage)source).getBufferedImage();
+        return source==null?null:new java.awt.image.ProducerImage(source.getSource()).getBufferedImage();
+    }
+    private static Shape polyline(int[]x,int[]y,int n,boolean closed){
+        java.awt.geom.Path2D.Double path=new java.awt.geom.Path2D.Double();
+        if(n>0){path.moveTo(x[0],y[0]);for(int i=1;i<n;i++)path.lineTo(x[i],y[i]);if(closed)path.closePath();}return path;
+    }
+    private static android.graphics.Path androidPath(Shape shape){
+        android.graphics.Path path=new android.graphics.Path();java.awt.geom.PathIterator it=shape.getPathIterator(null);
+        path.setFillType(it.getWindingRule()==java.awt.geom.PathIterator.WIND_EVEN_ODD?android.graphics.Path.FillType.EVEN_ODD:android.graphics.Path.FillType.WINDING);
+        float[]c=new float[6];while(!it.isDone()){
+            switch(it.currentSegment(c)){
+                case 0:path.moveTo(c[0],c[1]);break;case 1:path.lineTo(c[0],c[1]);break;
+                case 2:path.quadTo(c[0],c[1],c[2],c[3]);break;case 3:path.cubicTo(c[0],c[1],c[2],c[3],c[4],c[5]);break;case 4:path.close();break;
+            }it.next();
+        }return path;
+    }
+    private android.graphics.Matrix androidMatrix(AffineTransform at){
+        android.graphics.Matrix matrix=new android.graphics.Matrix();
+        matrix.setValues(new float[]{(float)(at.getScaleX()*deviceScale),(float)(at.getShearX()*deviceScale),(float)(at.getTranslateX()*deviceScale),(float)(at.getShearY()*deviceScale),(float)(at.getScaleY()*deviceScale),(float)(at.getTranslateY()*deviceScale),0,0,1});
+        return matrix;
+    }
+    private interface CanvasOperation{void draw(android.graphics.Canvas canvas,android.graphics.Paint paint,boolean mask);}
+    private void generalShape(Shape shape,boolean filled){
+        Shape outline=!filled?stroke.createStrokedShape(shape):shape;android.graphics.Path path=androidPath(outline);
+        renderGeneral((canvas,p,mask)->canvas.drawPath(path,p),false);
+    }
+    private boolean drawImageBackground(java.awt.Image img,int x,int y,int w,int h,Color background){
+        BufferedImage src=buffered(img);if(src==null)return false;
+        if(w<0)w=src.getWidth();if(h<0)h=src.getHeight();
+        AffineTransform local=AffineTransform.getTranslateInstance(x,y);local.scale((double)w/src.getWidth(),(double)h/src.getHeight());
+        generalImage(src,0,0,src.getWidth(),src.getHeight(),local,background);return true;
+    }
+    private void generalImage(BufferedImage src,int x,int y,int w,int h,AffineTransform local,Color background){
+        if(w==0||h==0)return;
+        int[] sourcePixels = src.getRGB(0, 0, src.getWidth(), src.getHeight(), null, 0, src.getWidth());
+        if (background != null) {
+            int bg = background.getRGB();
+            for (int i = 0; i < sourcePixels.length; i++) {
+                int pixel = sourcePixels[i], alpha = pixel >>> 24, ba = bg >>> 24;
+                int outAlpha = alpha + (ba * (255 - alpha) + 127) / 255;
+                int composed = outAlpha << 24;
+                for (int shift = 0; shift < 24; shift += 8) {
+                    int component = ((pixel >>> shift) & 255) * alpha + (((bg >>> shift) & 255) * ba * (255 - alpha) + 127) / 255;
+                    if (outAlpha != 0) component = (component + outAlpha / 2) / outAlpha;
+                    composed |= component << shift;
+                }
+                sourcePixels[i] = composed;
+            }
+        }
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(sourcePixels,src.getWidth(),src.getHeight(),android.graphics.Bitmap.Config.ARGB_8888);
+        try{
+            renderGeneral((canvas,p,mask)->{
+                android.graphics.Matrix m=new android.graphics.Matrix();m.setValues(new float[]{(float)local.getScaleX(),(float)local.getShearX(),(float)local.getTranslateX(),(float)local.getShearY(),(float)local.getScaleY(),(float)local.getTranslateY(),0,0,1});
+                canvas.save();canvas.concat(m);canvas.clipRect(Math.min(x,x+w),Math.min(y,y+h),Math.max(x,x+w),Math.max(y,y+h));
+                if(mask)canvas.drawRect(Math.min(x,x+w),Math.min(y,y+h),Math.max(x,x+w),Math.max(y,y+h),p);
+                else{
+                    p.setShader(null);p.setColor(android.graphics.Color.WHITE);
+                    canvas.drawBitmap(bitmap,0,0,p);
+                }
+                canvas.restore();
+            },false);
+        }finally{bitmap.recycle();}
+    }
+    /** Slow path for noncontiguous images and desktop drawing features; common UI raster calls retain native fast paths. */
+    private void renderGeneral(CanvasOperation operation,boolean text){
+        syncTarget();int w=image.getWidth(),h=image.getHeight();if(w<=0||h<=0)return;
+        boolean special=xorColor!=null||!(composite instanceof AlphaComposite);
+        int[] destination=image.getRGB(0,0,w,h,null,0,w);
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(w,h,android.graphics.Bitmap.Config.ARGB_8888);
+        if(!special)bitmap.setPixels(destination,0,w,0,0,w,h);
+        android.graphics.Bitmap paintBitmap=null,maskBitmap=null;
+        try{
+            android.graphics.Canvas canvas=new android.graphics.Canvas(bitmap);configureCanvas(canvas);
+            android.graphics.Paint p=new android.graphics.Paint();
+            p.setAntiAlias(text?renderingHints.get(RenderingHints.KEY_TEXT_ANTIALIASING)!=RenderingHints.VALUE_TEXT_ANTIALIAS_OFF:renderingHints.get(RenderingHints.KEY_ANTIALIASING)==RenderingHints.VALUE_ANTIALIAS_ON);
+            p.setFilterBitmap(renderingHints.get(RenderingHints.KEY_INTERPOLATION)!=RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            if(text){p.setTypeface(BufferedImageFontMetrics.typefaceFor(font));p.setTextSize(font.getSize2D());p.setLetterSpacing(font.getTracking());p.setUnderlineText(font.isUnderlined());p.setStrikeThruText(font.isStrikethrough());}
+            if(paint instanceof Color)p.setColor(((Color)paint).getRGB());
+            else{
+                AffineTransform device=new AffineTransform(transform);device.preConcatenate(AffineTransform.getScaleInstance(deviceScale,deviceScale));
+                PaintContext context=paint.createContext(java.awt.image.ColorModel.getRGBdefault(),new Rectangle(0,0,w,h),new java.awt.geom.Rectangle2D.Double(0,0,w,h),device,renderingHints);
+                try{
+                    java.awt.image.Raster raster=context.getRaster(0,0,w,h);int[] colors=new int[w*h];java.awt.image.ColorModel cm=context.getColorModel();
+                    if (raster instanceof java.awt.image.WritableRaster && raster.getMinX() == 0 && raster.getMinY() == 0) {
+                        BufferedImage sampled = new BufferedImage(cm, (java.awt.image.WritableRaster)raster, cm.isAlphaPremultiplied(), null);
+                        sampled.getRGB(0, 0, w, h, colors, 0, w);
+                    } else {
+                        Object pixel = null;
+                        for(int row=0;row<h;row++)for(int col=0;col<w;col++){pixel=raster.getDataElements(raster.getMinX()+col,raster.getMinY()+row,pixel);colors[row*w+col]=cm.getRGB(pixel);}
+                    }
+                    paintBitmap=android.graphics.Bitmap.createBitmap(colors,w,h,android.graphics.Bitmap.Config.ARGB_8888);
+                    android.graphics.BitmapShader shader=new android.graphics.BitmapShader(paintBitmap,android.graphics.Shader.TileMode.CLAMP,android.graphics.Shader.TileMode.CLAMP);
+                    android.graphics.Matrix inverse=new android.graphics.Matrix();androidMatrix(transform).invert(inverse);shader.setLocalMatrix(inverse);p.setShader(shader);
+                }finally{context.dispose();}
+            }
+            if(!special){
+                AlphaComposite alpha=(AlphaComposite)composite;p.setAlpha(Math.round(p.getAlpha()*alpha.getAlpha()));p.setXfermode(new android.graphics.PorterDuffXfermode(porterDuff(alpha.getRule())));
+            }
+            operation.draw(canvas,p,false);
+            int[] result=new int[w*h];bitmap.getPixels(result,0,w,0,0,w,h);
+            if(special){
+                maskBitmap=android.graphics.Bitmap.createBitmap(w,h,android.graphics.Bitmap.Config.ARGB_8888);android.graphics.Canvas maskCanvas=new android.graphics.Canvas(maskBitmap);configureCanvas(maskCanvas);
+                android.graphics.Paint maskPaint=new android.graphics.Paint(p);maskPaint.setShader(null);maskPaint.setColor(android.graphics.Color.WHITE);maskPaint.setXfermode(null);
+                operation.draw(maskCanvas,maskPaint,true);int[] coverage=new int[w*h];maskBitmap.getPixels(coverage,0,w,0,0,w,h);
+                if(xorColor!=null){for(int i=0;i<result.length;i++)result[i]=(coverage[i]>>>24)==0?destination[i]:(destination[i]&0xff000000)|((destination[i]^result[i]^xorColor.getRGB())&0xffffff);}
+                else{
+                    BufferedImage src=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB),dst=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB),out=new BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB);
+                    src.setRGB(0,0,w,h,result,0,w);dst.setRGB(0,0,w,h,destination,0,w);
+                    java.awt.CompositeContext context=composite.createContext(src.getColorModel(),dst.getColorModel(),renderingHints);
+                    try{context.compose(src.getRaster(),dst.getRaster(),out.getRaster());}finally{context.dispose();}
+                    result=out.getRGB(0,0,w,h,null,0,w);for(int i=0;i<result.length;i++)if((coverage[i]>>>24)==0)result[i]=destination[i];
+                }
+            }
+            image.setRGB(0,0,w,h,result,0,w);
+        }finally{bitmap.recycle();if(paintBitmap!=null)paintBitmap.recycle();if(maskBitmap!=null)maskBitmap.recycle();}
+    }
+    private void configureCanvas(android.graphics.Canvas canvas){
+        if(clipRects==null)canvas.clipRect(clip.x,clip.y,clip.x+clip.width,clip.y+clip.height);
+        else{android.graphics.Path clipping=new android.graphics.Path();for(int i=0;i<clipRects.length;i+=4)clipping.addRect(clipRects[i],clipRects[i+1],clipRects[i+2],clipRects[i+3],android.graphics.Path.Direction.CW);canvas.clipPath(clipping);}
+        canvas.concat(androidMatrix(transform));
+    }
+    private static android.graphics.PorterDuff.Mode porterDuff(int rule){
+        switch(rule){
+            case AlphaComposite.CLEAR:return android.graphics.PorterDuff.Mode.CLEAR;
+            case AlphaComposite.SRC:return android.graphics.PorterDuff.Mode.SRC;
+            case AlphaComposite.DST:return android.graphics.PorterDuff.Mode.DST;
+            case AlphaComposite.DST_OVER:return android.graphics.PorterDuff.Mode.DST_OVER;
+            case AlphaComposite.SRC_IN:return android.graphics.PorterDuff.Mode.SRC_IN;
+            case AlphaComposite.DST_IN:return android.graphics.PorterDuff.Mode.DST_IN;
+            case AlphaComposite.SRC_OUT:return android.graphics.PorterDuff.Mode.SRC_OUT;
+            case AlphaComposite.DST_OUT:return android.graphics.PorterDuff.Mode.DST_OUT;
+            case AlphaComposite.SRC_ATOP:return android.graphics.PorterDuff.Mode.SRC_ATOP;
+            case AlphaComposite.DST_ATOP:return android.graphics.PorterDuff.Mode.DST_ATOP;
+            case AlphaComposite.XOR:return android.graphics.PorterDuff.Mode.XOR;
+            default:return android.graphics.PorterDuff.Mode.SRC_OVER;
+        }
+    }
 
     @Override public void dispose() {}
 }

@@ -5,8 +5,8 @@ public abstract class GraphicsConfiguration {
     }
 
     public GraphicsDevice getDevice() { return null; }
-    public java.awt.image.ColorModel getColorModel() { return null; }
-    public java.awt.image.ColorModel getColorModel(int transparency) { return null; }
+    public java.awt.image.ColorModel getColorModel() { return java.awt.image.ColorModel.getRGBdefault(); }
+    public java.awt.image.ColorModel getColorModel(int transparency) { return transparency==Transparency.OPAQUE?new java.awt.image.DirectColorModel(24,0xff0000,0xff00,0xff):getColorModel(); }
     public java.awt.geom.AffineTransform getDefaultTransform() { return new java.awt.geom.AffineTransform(); }
     public java.awt.geom.AffineTransform getNormalizingTransform() { return new java.awt.geom.AffineTransform(); }
     public Rectangle getBounds() { return new Rectangle(0, 0, 0, 0); }
@@ -25,4 +25,6 @@ public abstract class GraphicsConfiguration {
     public java.awt.image.VolatileImage createCompatibleVolatileImage(int width, int height, int transparency) {
         return new net.runelite.awt.impl.BufferedBackedVolatileImage(width, height, transparency);
     }
+    public java.awt.image.BufferedImage createCompatibleImage(int width,int height){return createCompatibleImage(width,height,Transparency.OPAQUE);}
+    public java.awt.image.BufferedImage createCompatibleImage(int width,int height,int transparency){return new java.awt.image.BufferedImage(width,height,transparency==Transparency.OPAQUE?java.awt.image.BufferedImage.TYPE_INT_RGB:java.awt.image.BufferedImage.TYPE_INT_ARGB);}
 }

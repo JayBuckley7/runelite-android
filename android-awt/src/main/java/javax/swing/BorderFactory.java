@@ -27,11 +27,18 @@ public class BorderFactory {
     public static CompoundBorder createCompoundBorder() { return new CompoundBorder(); }
     public static CompoundBorder createCompoundBorder(Border outside, Border inside) { return new CompoundBorder(outside, inside); }
 
-    public static Border createRaisedBevelBorder() { return new EmptyBorder(2, 2, 2, 2); }
-    public static Border createLoweredBevelBorder() { return new EmptyBorder(2, 2, 2, 2); }
-    public static Border createEtchedBorder() { return new EmptyBorder(2, 2, 2, 2); }
-    public static Border createEtchedBorder(Color highlight, Color shadow) { return new EmptyBorder(2, 2, 2, 2); }
-    public static Border createTitledBorder(String title) { return new EmptyBorder(8, 4, 4, 4); }
-    public static Border createTitledBorder(Border border, String title) { return new EmptyBorder(8, 4, 4, 4); }
+    public static Border createRaisedBevelBorder() { return new javax.swing.border.BevelBorder(javax.swing.border.BevelBorder.RAISED); }
+    public static Border createLoweredBevelBorder() { return new javax.swing.border.BevelBorder(javax.swing.border.BevelBorder.LOWERED); }
+    public static Border createEtchedBorder() { return new javax.swing.border.EtchedBorder(); }
+    public static Border createEtchedBorder(Color highlight, Color shadow) { return new javax.swing.border.EtchedBorder(highlight,shadow); }
+    public static javax.swing.border.TitledBorder createTitledBorder(String title) { return new javax.swing.border.TitledBorder(title); }
+    public static javax.swing.border.TitledBorder createTitledBorder(Border border,String title) { return new javax.swing.border.TitledBorder(border,title); }
     public static Border createDashedBorder(java.awt.Paint paint) { return new EmptyBorder(1, 1, 1, 1); }
+    public static javax.swing.border.TitledBorder createTitledBorder(Border border){return new javax.swing.border.TitledBorder(border);}
+    public static javax.swing.border.TitledBorder createTitledBorder(Border border,String title,int justification,int position){return new javax.swing.border.TitledBorder(border,title,justification,position);}
+    public static javax.swing.border.TitledBorder createTitledBorder(Border border,String title,int justification,int position,java.awt.Font font){return new javax.swing.border.TitledBorder(border,title,justification,position,font);}
+    public static javax.swing.border.TitledBorder createTitledBorder(Border border,String title,int justification,int position,java.awt.Font font,Color color){return new javax.swing.border.TitledBorder(border,title,justification,position,font,color);}
+    public static Border createEtchedBorder(int type){return new javax.swing.border.EtchedBorder(type);}
+    public static Border createEtchedBorder(int type,Color highlight,Color shadow){return new javax.swing.border.EtchedBorder(type,highlight,shadow);}
+    public static Border createBevelBorder(int type){return new javax.swing.border.BevelBorder(type);}
 }

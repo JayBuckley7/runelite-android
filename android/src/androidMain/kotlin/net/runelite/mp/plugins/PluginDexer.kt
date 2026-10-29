@@ -9,6 +9,7 @@ import com.android.tools.r8.Diagnostic
 import com.android.tools.r8.DiagnosticsHandler
 import com.android.tools.r8.OutputMode
 import net.runelite.client.externalplugins.PluginHubHooks
+import net.runelite.mp.client.RuntimeDexConfiguration
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -27,10 +28,11 @@ private const val TAG = "PluginDexer"
  * companions, Method.isDefault() turns false, and ConfigInvocationHandler stops serving
  * @ConfigItem defaults (quest-helper NPE'd on its first enum config read).
  */
-internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
+internal class PluginDexer(private val context: Context) : PluginHubHooks.Dexer
 {
     private val cacheDir = File(context.filesDir, "plugin-dex").apply { mkdirs() }
-    private val workDir = File(context.cacheDir, "plugin-dex-work")
+    // Active compiler inputs must survive Android's low-storage cache eviction.
+    private val workDir = File(context.filesDir, "plugin-dex-work")
 
     override fun dex(internalName: String, displayName: String?, jarHash: String, jar: File): File
     {
@@ -82,7 +84,7 @@ internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
             try
             {
                 D8.run(
-                    D8Command.builder(handler)
+                    RuntimeDexConfiguration.configure(context, D8Command.builder(handler), tmpDir)
                         .addProgramFiles(compatibleJar.toPath())
                         .setMinApiLevel(26)
                         .setMode(CompilationMode.RELEASE)
@@ -171,8 +173,8 @@ internal class PluginDexer(context: Context) : PluginHubHooks.Dexer
 
     companion object
     {
-        /** v3: external JVM regex APIs use the isolated desktop engine. */
-        private const val FORMAT = "v3-regex21"
+        /** Core-library types must match the APK, including Flow publisher signatures. */
+        private const val FORMAT = "v4-regex21-${RuntimeDexConfiguration.CACHE_VERSION}"
         private val DEX_NAME = Regex("""classes\d*\.dex""")
         private val DESKTOP_ONLY = listOf(
             "org/lwjgl/" to "LWJGL (desktop OpenGL)",

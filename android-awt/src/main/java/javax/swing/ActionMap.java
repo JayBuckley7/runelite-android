@@ -23,7 +23,7 @@ public class ActionMap implements Serializable {
     public void clear() { map.clear(); }
     public int size() { return map.size(); }
     public Object[] keys() { return map.keySet().toArray(); }
-    public Object[] allKeys() { return keys(); }
+    public Object[] allKeys() { java.util.Set<Object> all = new java.util.LinkedHashSet<>(map.keySet()); if (parent != null && parent.allKeys() != null) java.util.Collections.addAll(all, parent.allKeys()); return all.toArray(new Object[0]); }
 
     public void setParent(ActionMap parent) { this.parent = parent; }
     public ActionMap getParent() { return parent; }

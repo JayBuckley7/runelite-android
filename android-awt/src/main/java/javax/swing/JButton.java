@@ -11,9 +11,10 @@ public class JButton extends AbstractButton {
         setText(text); setIcon(icon);
     }
 
-    public boolean isDefaultButton() { return false; }
-    public boolean isDefaultCapable() { return true; }
-    public void setDefaultCapable(boolean d) {}
+    private boolean defaultCapable=true;
+    public boolean isDefaultButton() { JRootPane root=SwingUtilities.getRootPane(this);return root!=null&&root.getDefaultButton()==this; }
+    public boolean isDefaultCapable() { return defaultCapable; }
+    public void setDefaultCapable(boolean value) { boolean old=defaultCapable;defaultCapable=value;firePropertyChange("defaultCapable",old,value); }
 
     /** Typed overload — plugins (e.g. via SwingUtil.removeButtonDecorations) call this. */
     public void setUI(javax.swing.plaf.ButtonUI ui) { super.setUI(ui); }
@@ -26,6 +27,7 @@ public class JButton extends AbstractButton {
      */
     @Override
     protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
         // SwingUtil.removeButtonDecorations sets FlatLaf.styleClass = "iconButton ...".

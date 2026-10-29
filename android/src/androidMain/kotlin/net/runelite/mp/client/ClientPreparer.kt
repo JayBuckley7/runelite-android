@@ -52,7 +52,7 @@ internal object ClientPrepStatus
 internal object ClientPreparer
 {
     /** Bump whenever a transform or the packaging changes, so cached clients are rebuilt. */
-    private const val TRANSFORM_VERSION = "t1"
+    private const val TRANSFORM_VERSION = "t2-${RuntimeDexConfiguration.CACHE_VERSION}"
     private const val REPO = "https://repo.runelite.net/net/runelite/injected-client"
 
     /** Prepares (or reuses) the client for [version] and makes it loadable. Blocking. */
@@ -120,7 +120,8 @@ internal object ClientPreparer
     {
         progress("Preparing game client for Android…")
         val started = System.nanoTime()
-        val work = File(context.cacheDir, "game-client-work").apply { deleteRecursively(); mkdirs() }
+        // Android may purge cacheDir while D8 is still reading its inputs.
+        val work = File(dir, "work").apply { deleteRecursively(); mkdirs() }
         try
         {
             // Same chain, same order as the old Gradle tasks.
@@ -176,7 +177,7 @@ internal object ClientPreparer
                 {
                     override fun error(error: Diagnostic) { errors += error.diagnosticMessage }
                     override fun warning(warning: Diagnostic) { Log.d(TAG, warning.diagnosticMessage) }
-                })
+                }).let { RuntimeDexConfiguration.configure(context, it, work) }
                     .addProgramFiles(final.toPath())
                     // As for hub plugins: below 26 D8 desugars default methods away and breaks
                     // RuneLite's config proxies; 26 is also the app's minSdk.

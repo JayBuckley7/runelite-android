@@ -77,6 +77,8 @@ pub extern "system" fn Java_net_runelite_awt_AwtCompat_nativeAbiVersion<'local>(
 const NATIVE_ABI_VERSION: jint = 1;
 
 // ---------- AlphaComposite rules (kept in sync with java.awt.AlphaComposite) ----------
+// Internal blit flag: source has no alpha channel, even when raw pixels have alpha zero.
+pub const OPAQUE_SOURCE: jint = 0x10000;
 pub const CLEAR: jint = 1;
 pub const SRC: jint = 2;
 pub const SRC_OVER: jint = 3;

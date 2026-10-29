@@ -5,6 +5,12 @@ import android.net.Uri
 import android.os.FileObserver
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
+import android.view.View
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,10 +48,12 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
     }
     private class Pick(val chooser: JFileChooser, val save: Boolean) {
         val done = Completion()
+        val folders = linkedSetOf<File>() // Android main thread
         @Volatile var result = JFileChooser.CANCEL_OPTION
     }
-    private val open = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { finishPick(it) }
-    private val save = activity.registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { finishPick(it) }
+    private val open = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { finishPick(listOfNotNull(it)) }
+    private val openMany = activity.registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { finishPick(it) }
+    private val save = activity.registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { finishPick(listOfNotNull(it)) }
 
     init {
         java.awt.Window.setVisibilityHandler { window, visible ->
@@ -55,11 +63,24 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                     val root = (window as? javax.swing.RootPaneContainer)?.rootPane
                     if (root != null) {
                         val view = net.runelite.mp.ui.panels.SwingPanelView(activity, "Swing window", root)
-                        val dialog = AlertDialog.Builder(activity).setView(view).setNegativeButton("Close", null).create()
+                        val title = (window as? java.awt.Dialog)?.title ?: (window as? java.awt.Frame)?.title
+                        val dialog = AlertDialog.Builder(activity).setTitle(title).setView(view).setNegativeButton("Close", null).create()
+                        fun requestClose() {
+                            javax.swing.SwingUtilities.invokeLater {
+                                if (window is javax.swing.JDialog)
+                                    window.dispatchEvent(java.awt.event.WindowEvent(window, java.awt.event.WindowEvent.WINDOW_CLOSING))
+                                else window.isVisible = false
+                            }
+                        }
                         windows[window] = dialog
+                        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { requestClose() } }
                         dialog.setOnDismissListener {
-                            windows.remove(window)
-                            javax.swing.SwingUtilities.invokeLater { window.isVisible = false }
+                            if (windows[window] === dialog && !closed) {
+                                requestClose()
+                                javax.swing.SwingUtilities.invokeLater {
+                                    main.post { if (window.isVisible && !closed) dialog.show() }
+                                }
+                            }
                         }
                         dialog.show()
                         dialog.window?.setLayout((activity.resources.displayMetrics.widthPixels * .9).toInt(), (activity.resources.displayMetrics.heightPixels * .85).toInt())
@@ -79,13 +100,60 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                     else {
                         pending = request
                         try {
-                            if (saving) save.launch(chooser.selectedFile?.name ?: "export.properties")
-                            else open.launch(arrayOf("*/*"))
+                            when {
+                                chooser.fileSelectionMode == JFileChooser.DIRECTORIES_ONLY -> showDirectory(request)
+                                saving -> save.launch(chooser.selectedFile?.name ?: "export.properties")
+                                chooser.fileSelectionMode == JFileChooser.FILES_AND_DIRECTORIES -> {
+                                    confirmation = AlertDialog.Builder(activity).setTitle(chooser.dialogTitle ?: "Select")
+                                        .setItems(arrayOf("File", "Folder")) { _, index ->
+                                            if (index == 1) showDirectory(request) else launchOpen(request)
+                                        }.setNegativeButton("Cancel") { _, _ -> cancelPick(request) }
+                                        .setOnCancelListener { cancelPick(request) }.show()
+                                }
+                                else -> launchOpen(request)
+                            }
                         } catch (e: Exception) { fail(e); pending = null; request.done.finish() }
                     }
                 }
                 try { request.done.await() } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
                 request.result
+            }
+        }
+        JOptionPane.setInputHandler { message, title, choices, initial ->
+            if (Looper.myLooper() == Looper.getMainLooper()) null
+            else {
+                val done = Completion()
+                var result: Any? = null
+                main.post {
+                    if (closed) done.finish()
+                    else {
+                        confirmation?.dismiss()
+                        val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+                        content.addView(messageView(message))
+                        val text = if (choices == null) EditText(activity).apply {
+                            setSingleLine(true); setText(initial?.toString() ?: ""); selectAll()
+                        } else null
+                        val options = if (choices != null) Spinner(activity).apply {
+                            adapter = ArrayAdapter(activity, android.R.layout.simple_spinner_dropdown_item, choices.map { it.toString() })
+                            val index = choices.indexOf(initial)
+                            if (index >= 0) setSelection(index)
+                        } else null
+                        content.addView(text ?: options!!)
+                        confirmation = AlertDialog.Builder(activity).setTitle(title).setView(content)
+                            .setPositiveButton("OK") { _, _ ->
+                                result = text?.text?.toString() ?: choices?.getOrNull(options?.selectedItemPosition ?: -1)
+                            }.setNegativeButton("Cancel", null).create().also { dialog ->
+                                dialog.setOnDismissListener { done.finish() }
+                                dialog.show()
+                                if (text != null) {
+                                    text.requestFocus()
+                                    dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+                                }
+                            }
+                    }
+                }
+                try { done.await() } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                result
             }
         }
         javax.swing.JColorChooser.setDialogHandler { _, title, initial ->
@@ -135,7 +203,7 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                             val cal = java.util.Calendar.getInstance().apply { time = dateSpinner.value as java.util.Date }
                             init(cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH), null)
                         } else null
-                        if (datePicker != null) builder.setView(datePicker) else builder.setMessage(message.toString())
+                        if (datePicker != null) builder.setView(datePicker) else builder.setView(messageView(message))
                         if (options != null) {
                             builder.setItems(options.map { it.toString() }.toTypedArray()) { _, index -> result = index }
                         } else {
@@ -165,13 +233,92 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
         }
     }
 
-    private fun finishPick(uri: Uri?) {
+    private fun messageView(message: Any?): View = when (message) {
+        is Array<*> -> LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            message.forEach { addView(messageView(it)) }
+        }
+        is java.awt.Component -> {
+            var root: javax.swing.JComponent? = null
+            javax.swing.SwingUtilities.invokeAndWait {
+                root = message as? javax.swing.JComponent ?: javax.swing.JPanel(java.awt.BorderLayout()).apply { add(message) }
+            }
+            net.runelite.mp.ui.panels.SwingPanelView(activity, "Dialog", root!!).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                    (activity.resources.displayMetrics.heightPixels * .45f).toInt())
+            }
+        }
+        else -> android.widget.TextView(activity).apply {
+            text = message?.toString() ?: ""
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+    }
+
+    private fun mimeTypes(chooser: JFileChooser): Array<String> {
+        val filter = chooser.fileFilter as? javax.swing.filechooser.FileNameExtensionFilter ?: return arrayOf("*/*")
+        val types = filter.extensions.mapNotNull { android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase(java.util.Locale.ROOT)) }.distinct()
+        // An unknown extension cannot be represented by MIME filtering; validate the selected filename instead.
+        return if (types.size != filter.extensions.size) arrayOf("*/*") else types.toTypedArray()
+    }
+
+    private fun launchOpen(request: Pick) {
+        if (request.chooser.isMultiSelectionEnabled) openMany.launch(mimeTypes(request.chooser))
+        else open.launch(mimeTypes(request.chooser))
+    }
+
+    private fun cancelPick(request: Pick) {
+        if (pending === request) pending = null
+        request.done.finish()
+    }
+
+    private fun completePick(request: Pick, files: Array<File>, folder: File? = null) {
+        if (closed || pending !== request) { request.done.finish(); return }
+        pending = null
+        javax.swing.SwingUtilities.invokeLater {
+            try {
+                if (folder != null) request.chooser.currentDirectory = folder
+                request.chooser.selectedFiles = files
+                request.result = JFileChooser.APPROVE_OPTION
+            } finally { request.done.finish() }
+        }
+    }
+
+    private fun showDirectory(request: Pick, current: File = request.chooser.currentDirectory ?: activity.filesDir) {
+        val folder = current.takeIf { it.isDirectory && it.canRead() } ?: activity.filesDir
+        val children = folder.listFiles()?.filter { it.isDirectory && it.canRead() }?.sortedBy { it.name.lowercase() }.orEmpty()
+        if (closed || pending !== request) return
+        val multiple = request.chooser.isMultiSelectionEnabled
+        val entries = listOf("..") + children.map { it.name }
+        val builder = AlertDialog.Builder(activity).setTitle(folder.absolutePath)
+            .setItems(entries.toTypedArray()) { _, index ->
+                showDirectory(request, if (index == 0) folder.parentFile ?: folder else children[index - 1])
+            }.setPositiveButton(if (multiple) "Add folder" else "Select folder") { _, _ ->
+                if (multiple) { request.folders.add(folder); showDirectory(request, folder) }
+                else completePick(request, arrayOf(folder), folder)
+            }.setNegativeButton("Cancel") { _, _ -> cancelPick(request) }
+            .setOnCancelListener { cancelPick(request) }
+        if (multiple) builder.setNeutralButton("Done (${request.folders.size})") { _, _ ->
+            completePick(request, request.folders.ifEmpty { setOf(folder) }.toTypedArray(), folder)
+        }
+        confirmation = builder.show()
+    }
+
+    private fun selectedName(uri: Uri, fallback: String): String {
+        val name = activity.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: fallback
+        return name.substringAfterLast('/').substringAfterLast('\\').takeIf { it.isNotBlank() && it != "." && it != ".." } ?: fallback
+    }
+
+    private fun finishPick(uris: List<Uri>) {
         val request = pending ?: return
-        if (uri == null) { pending = null; request.done.finish(); return }
+        if (uris.isEmpty()) { cancelPick(request); return }
         io.execute {
             try {
                 val folder = File(directory, java.util.UUID.randomUUID().toString()).apply { mkdirs() }
-                val file = File(folder, "selection.properties")
+                val uri = uris[0]
+                val file = File(folder, selectedName(uri, request.chooser.selectedFile?.name ?: "selection.properties"))
                 if (request.save) {
                     // Files.copy may replace the destination. Observe the directory, not its inode.
                     val observer = object : FileObserver(folder.absolutePath, CLOSE_WRITE or MOVED_TO) {
@@ -192,27 +339,32 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                         }
                     }
                     main.post {
-                        if (!closed) {
+                        if (!closed && pending === request) {
                             watchers.add(observer); observer.startWatching()
-                            request.chooser.selectedFile = file
-                            request.result = JFileChooser.APPROVE_OPTION
                             // If the Swing export fails before opening the file, release the watcher.
                             main.postDelayed({ observer.stopWatching(); watchers.remove(observer) }, 300_000)
+                            completePick(request, arrayOf(file))
+                        } else {
+                            request.done.finish()
                         }
-                        pending = null; request.done.finish()
                     }
                 } else {
-                    activity.contentResolver.openInputStream(uri)?.use { input ->
-                        file.outputStream().use { input.copyTo(it) }
-                    } ?: error("Could not open selected file")
+                    val files = uris.mapIndexed { index, selected ->
+                        val itemFolder = File(folder, index.toString()).apply { mkdirs() }
+                        val item = File(itemFolder, selectedName(selected, "selection.properties"))
+                        activity.contentResolver.openInputStream(selected)?.use { input ->
+                            item.outputStream().use { input.copyTo(it) }
+                        } ?: error("Could not open selected file")
+                        require(request.chooser.accept(item)) { "Selected file does not match ${request.chooser.fileFilter?.description}" }
+                        item
+                    }
                     main.post {
-                        if (!closed) { request.chooser.selectedFile = file; request.result = JFileChooser.APPROVE_OPTION }
-                        pending = null; request.done.finish()
+                        completePick(request, files.toTypedArray())
                     }
                 }
             } catch (e: Exception) {
                 fail(e)
-                main.post { pending = null; request.done.finish() }
+                main.post { cancelPick(request) }
             }
         }
     }
@@ -224,6 +376,8 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
 
     fun close() {
         closed = true
+        val openWindows = windows.keys.toList()
+        javax.swing.SwingUtilities.invokeLater { openWindows.forEach { it.dispose() } }
         windows.values.toList().forEach { it.dismiss() }; windows.clear()
         pending?.done?.finish(); pending = null
         confirmation?.dismiss(); confirmation = null
