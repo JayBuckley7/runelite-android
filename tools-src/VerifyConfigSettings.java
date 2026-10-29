@@ -41,9 +41,21 @@ public class VerifyConfigSettings {
             var decodedFont = (FontType)ConfigUiCodec.decode(ConfigUiCodec.encode(font), FontType.class);
             check(decodedFont.getSize() == 18 && decodedFont.isBold() && decodedFont.isItalic() && decodedFont.getFamily().equals("Dialog"));
             check(ConfigUiCodec.decode("BOLD", FontType.class) == FontType.BOLD);
+            int ctrlShift = java.awt.event.InputEvent.CTRL_DOWN_MASK | java.awt.event.InputEvent.SHIFT_DOWN_MASK;
+            Keybind shortcut = new Keybind(java.awt.event.KeyEvent.VK_A, ctrlShift);
+            check(ConfigUiCodec.encode(shortcut).equals("65:192"));
+            check(ConfigUiCodec.decode("65:192", Keybind.class).equals(shortcut));
+            check(ConfigUiCodec.decode(ConfigUiCodec.encode(Keybind.NOT_SET), Keybind.class).equals(Keybind.NOT_SET));
+            check(ConfigUiCodec.decode(ConfigUiCodec.encode(Keybind.CTRL), Keybind.class).equals(Keybind.CTRL));
+            ModifierlessKeybind arrow = new ModifierlessKeybind(java.awt.event.KeyEvent.VK_UP, ctrlShift);
+            check(arrow.getModifiers() == 0 && ConfigUiCodec.encode(arrow).equals("38:0"));
+            check(ConfigUiCodec.decode("38:192", ModifierlessKeybind.class).equals(arrow));
+            ModifierlessKeybind modifierOnly = new ModifierlessKeybind(java.awt.event.KeyEvent.VK_UNDEFINED, ctrlShift);
+            check(modifierOnly.getModifiers() == ctrlShift);
+            check(ConfigUiCodec.decode(ConfigUiCodec.encode(modifierOnly), ModifierlessKeybind.class).equals(modifierOnly));
             Defaults proxy = (Defaults) java.lang.reflect.Proxy.newProxyInstance(Defaults.class.getClassLoader(), new Class[]{Defaults.class}, (p,m,a) -> 99.0);
             check(ConfigUiCodec.defaultValue(proxy, Defaults.class.getMethod("width")).equals(2.5));
-            System.out.println("PASS: client codecs, empty/full sets, notification overrides and alpha, fonts, legacy values, real default vs override");
+            System.out.println("PASS: client codecs, keybinds, modifierless and modifier-only bindings, empty/full sets, notification overrides and alpha, fonts, legacy values, real default vs override");
         } finally { executor.shutdownNow(); }
     }
 }
