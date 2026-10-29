@@ -9,6 +9,12 @@ public class TestKeyDispatch {
         if (!ok) throw new AssertionError(message);
     }
     public static void main(String[] args) throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            try { verify(args); } catch (Exception e) { throw new RuntimeException(e); }
+        });
+        System.exit(0);
+    }
+    private static void verify(String[] args) throws Exception {
         Class<?> dispatchClass = Class.forName(args[0]);
         Method method = dispatchClass.getDeclaredMethod(args[1], KeyEvent.class); method.setAccessible(true);
         Object dispatch = null;

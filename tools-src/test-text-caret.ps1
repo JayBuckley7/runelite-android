@@ -5,7 +5,7 @@ $source = Join-Path $out 'source'
 $classes = Join-Path $out 'classes'
 $main = Join-Path $out 'main'
 $jdk = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin' } else { Split-Path (Get-Command javac).Source }
-$files = @('javax/swing/text/JTextComponent.java', 'javax/swing/text/DefaultCaret.java', 'javax/swing/JTextArea.java')
+$files = @('javax/swing/text/JTextComponent.java', 'javax/swing/text/DefaultCaret.java', 'javax/swing/text/DefaultHighlighter.java', 'javax/swing/JTextArea.java')
 New-Item -ItemType Directory -Force $classes, $main | Out-Null
 foreach ($file in $files) {
     $dest = Join-Path $source $file

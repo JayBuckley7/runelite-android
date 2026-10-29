@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Force "$source/javax/swing", $classes, $main | Out
 Copy-Item -LiteralPath (Join-Path $root 'android-awt/src/main/java/javax/swing/JOptionPane.java') -Destination "$source/javax/swing/JOptionPane.java"
 & "$jdk/javac.exe" --patch-module "java.desktop=$source" -d $classes "$source/javax/swing/JOptionPane.java"
 if ($LASTEXITCODE) { throw 'Input dialog compilation failed' }
-& "$jdk/javac.exe" --patch-module "java.desktop=$classes" -d $main (Join-Path $PSScriptRoot 'TestSwingInputDialogs.java')
+& "$jdk/javac.exe" --patch-module "java.desktop=$source" -d $main "$source/javax/swing/JOptionPane.java" (Join-Path $PSScriptRoot 'TestSwingInputDialogs.java')
 if ($LASTEXITCODE) { throw 'Input dialog test compilation failed' }
 & "$jdk/java.exe" '-Djava.awt.headless=true' --patch-module "java.desktop=$classes" -cp $main TestSwingInputDialogs
 if ($LASTEXITCODE) { throw 'Input dialog test failed' }

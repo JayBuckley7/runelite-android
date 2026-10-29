@@ -132,6 +132,7 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                         content.addView(messageView(message))
                         val text = if (choices == null) EditText(activity).apply {
                             setSingleLine(true); setText(initial?.toString() ?: ""); selectAll()
+                            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                         } else null
                         val options = if (choices != null) Spinner(activity).apply {
                             adapter = ArrayAdapter(activity, android.R.layout.simple_spinner_dropdown_item, choices.map { it.toString() })
@@ -146,6 +147,15 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                                 dialog.setOnDismissListener { done.finish() }
                                 dialog.show()
                                 if (text != null) {
+                                    text.setOnEditorActionListener { _, action, event ->
+                                        val enter = event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                                            event.action == android.view.KeyEvent.ACTION_DOWN
+                                        if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || enter) {
+                                            result = text.text.toString()
+                                            dialog.dismiss()
+                                            true
+                                        } else false
+                                    }
                                     text.requestFocus()
                                     dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
                                 }
@@ -182,60 +192,6 @@ internal class SwingDialogs(private val activity: ComponentActivity) {
                         }
                         dialog.setOnDismissListener { done.finish() }
                         confirmation = dialog; dialog.show()
-                    }
-                }
-                try { done.await() } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-                result
-            }
-        }
-        JOptionPane.setInputHandler { message, title, choices, initial ->
-            if (Looper.myLooper() == Looper.getMainLooper()) null
-            else {
-                val done = Completion()
-                var result: Any? = null
-                main.post {
-                    if (closed) done.finish()
-                    else {
-                        confirmation?.dismiss()
-                        val content = android.widget.LinearLayout(activity).apply {
-                            orientation = android.widget.LinearLayout.VERTICAL
-                            val padding = (20 * activity.resources.displayMetrics.density).toInt()
-                            setPadding(padding, padding, padding, 0)
-                        }
-                        content.addView(android.widget.TextView(activity).apply { text = message.toString() })
-                        val text = if (choices == null) android.widget.EditText(activity).apply {
-                            setSingleLine(true)
-                            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-                            setText(initial?.toString().orEmpty())
-                            selectAll()
-                        } else null
-                        val options = if (choices != null) android.widget.Spinner(activity).apply {
-                            adapter = android.widget.ArrayAdapter(activity, android.R.layout.simple_spinner_dropdown_item,
-                                choices.map { it.toString() })
-                            val index = choices.indexOf(initial)
-                            if (index >= 0) setSelection(index)
-                        } else null
-                        content.addView(text ?: options!!)
-                        confirmation = AlertDialog.Builder(activity).setTitle(title).setView(content)
-                            .setPositiveButton("OK") { _, _ ->
-                                result = text?.text?.toString() ?: choices?.getOrNull(options?.selectedItemPosition ?: -1)
-                            }.setNegativeButton("Cancel", null).create().also { dialog ->
-                                dialog.setOnDismissListener { done.finish() }
-                                dialog.show()
-                                if (text != null) {
-                                    text.setOnEditorActionListener { _, action, event ->
-                                        val enter = event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
-                                            event.action == android.view.KeyEvent.ACTION_DOWN
-                                        if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE || enter) {
-                                            result = text.text.toString()
-                                            dialog.dismiss()
-                                            true
-                                        } else false
-                                    }
-                                    text.requestFocus()
-                                    dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-                                }
-                            }
                     }
                 }
                 try { done.await() } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
