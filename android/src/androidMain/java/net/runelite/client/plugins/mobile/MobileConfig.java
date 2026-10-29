@@ -105,6 +105,26 @@ public interface MobileConfig extends Config
 		description = "Show 9 on the toolbar.", section = pinnedKeys, position = 14)
 	default boolean pin9() { return false; }
 
+	@ConfigItem(keyName = "pinUp", name = "Pin Up arrow",
+		description = "Show the Up arrow on the toolbar.", section = pinnedKeys, position = 15)
+	default boolean pinUp() { return false; }
+
+	@ConfigItem(keyName = "pinDown", name = "Pin Down arrow",
+		description = "Show the Down arrow on the toolbar.", section = pinnedKeys, position = 16)
+	default boolean pinDown() { return false; }
+
+	@ConfigItem(keyName = "pinLeft", name = "Pin Left arrow",
+		description = "Show the Left arrow on the toolbar.", section = pinnedKeys, position = 17)
+	default boolean pinLeft() { return false; }
+
+	@ConfigItem(keyName = "pinRight", name = "Pin Right arrow",
+		description = "Show the Right arrow on the toolbar.", section = pinnedKeys, position = 18)
+	default boolean pinRight() { return false; }
+
+	@ConfigItem(keyName = "pinEnter", name = "Pin Enter",
+		description = "Show Enter on the toolbar.", section = pinnedKeys, position = 19)
+	default boolean pinEnter() { return false; }
+
 	// No Lombok here: SwingPanelHost (Kotlin) reads getScale(), and Kotlin compiles
 	// against these sources before Lombok has generated anything.
 	enum SidebarScale
