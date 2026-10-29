@@ -209,6 +209,7 @@ private fun PinnedKeyChips(keys: List<String>, maxHeight: androidx.compose.ui.un
                     "Shift" -> ModifierState.toggleShift()
                     "Alt" -> ModifierState.toggleAlt()
                     "Space" -> KeyDispatch.sendSpace()
+                    "Enter" -> KeyDispatch.sendEnter()
                     "↑" -> KeyDispatch.sendKey(KeyEvent.VK_UP)
                     "↓" -> KeyDispatch.sendKey(KeyEvent.VK_DOWN)
                     "←" -> KeyDispatch.sendKey(KeyEvent.VK_LEFT)

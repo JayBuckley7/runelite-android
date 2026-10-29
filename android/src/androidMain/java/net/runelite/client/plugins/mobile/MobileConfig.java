@@ -121,6 +121,10 @@ public interface MobileConfig extends Config
 		description = "Show the Right arrow on the toolbar.", section = pinnedKeys, position = 18)
 	default boolean pinRight() { return false; }
 
+	@ConfigItem(keyName = "pinEnter", name = "Pin Enter",
+		description = "Show Enter on the toolbar.", section = pinnedKeys, position = 19)
+	default boolean pinEnter() { return false; }
+
 	// No Lombok here: SwingPanelHost (Kotlin) reads getScale(), and Kotlin compiles
 	// against these sources before Lombok has generated anything.
 	enum SidebarScale
