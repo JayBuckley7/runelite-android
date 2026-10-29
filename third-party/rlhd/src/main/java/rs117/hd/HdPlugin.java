@@ -1055,6 +1055,7 @@ public class HdPlugin extends Plugin {
 			.define("CENTROID_QUALIFIER", config.centroidQualifier().get(true))
 			.define("LEGACY_RENDERER", renderer instanceof LegacyRenderer)
 			.define("ZONE_RENDERER", renderer instanceof ZoneRenderer)
+			.define("ANDROID_VERTEX_COLORS", renderer instanceof ZoneRenderer)
 			.define("MAX_SIMULTANEOUS_WORLD_VIEWS", 0)
 			.define("WORLD_VIEW_GETTER", "")
 			.define("NEBULA_CLUSTER_COUNT", StarField.CLUSTER_COUNT)

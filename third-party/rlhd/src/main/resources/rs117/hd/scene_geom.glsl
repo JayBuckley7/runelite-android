@@ -54,11 +54,10 @@ flat out ivec3 fTerrainData;
     out vec3 fTexBlend;
 #endif
 
-out FragmentData {
-    vec3 position;
-    vec2 uv;
-    vec3 normal;
-} OUT;
+// Standalone varyings avoid mixed interface-block corruption on PowerVR GLES.
+out vec3 fPosition;
+out vec2 fUv;
+out vec3 fNormal;
 
 void main() {
     fWorldViewId = -1;
@@ -98,9 +97,9 @@ void main() {
         fTexBlend = vec3(0);
         fTexBlend[i] = 1;
 
-        OUT.position = pos.xyz;
-        OUT.uv = vUv[i].xy;
-        OUT.normal = length(normal) == 0 ? N : normalize(normal);
+        fPosition = pos.xyz;
+        fUv = vUv[i].xy;
+        fNormal = length(normal) == 0 ? N : normalize(normal);
 
         pos = uboGlobal.projectionMatrix * pos;
         gl_Position = pos;

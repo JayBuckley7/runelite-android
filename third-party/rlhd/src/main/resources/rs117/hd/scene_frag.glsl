@@ -58,9 +58,13 @@ flat in int fWorldViewId;
 flat in ivec3 fAlphaBiasHsl;
 flat in ivec3 fMaterialData;
 flat in ivec3 fTerrainData;
+
+#include ANDROID_VERTEX_COLORS
+#if ANDROID_VERTEX_COLORS
 flat in vec4 fBaseColor1;
 flat in vec4 fBaseColor2;
 flat in vec4 fBaseColor3;
+#endif
 
 #if CENTROID_QUALIFIER
     // Prevent negative components due to MSAA
@@ -69,16 +73,14 @@ flat in vec4 fBaseColor3;
     in vec3 fTexBlend;
 #endif
 
-in FragmentData {
-    vec3 position;
-    vec2 uv;
-    vec3 normal;
-} IN;
+in vec3 fPosition;
+in vec2 fUv;
+in vec3 fNormal;
 
 out vec4 FragColor;
 
 vec2 worldUvs(float scale) {
-    return -(vec2(uboGlobal.sceneBase) + IN.position.xz) / (128.0 * scale);
+    return -(vec2(uboGlobal.sceneBase) + fPosition.xz) / (128.0 * scale);
 }
 
 #include <utils/hash.glsl>
@@ -110,8 +112,8 @@ void main() {
 
     vec3 downDir = vec3(0, -1, 0);
     // View & light directions are from the fragment to the camera/light
-    vec3 viewDir = normalize(uboGlobal.cameraPos - IN.position);
-    vec3 flatNormal = normalize(cross(dFdx(IN.position), dFdy(IN.position)));
+    vec3 viewDir = normalize(uboGlobal.cameraPos - fPosition);
+    vec3 flatNormal = normalize(cross(dFdx(fPosition), dFdy(fPosition)));
 
     bool identicalMaterials = !isTerrain || (
         ((fMaterialData[0] ^ fMaterialData[1] | (fMaterialData[0] ^ fMaterialData[2]))
@@ -124,10 +126,11 @@ void main() {
     } else {
         material1 = getMaterial(fMaterialData[0] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK);
     }
-    Material material2 = identicalMaterials ? material1 :
-        getMaterial(fMaterialData[1] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK);
-    Material material3 = identicalMaterials ? material1 :
-        getMaterial(fMaterialData[2] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK);
+    // PowerVR GLES miscompiles ternary expressions returning material structs.
+    Material material2 = material1;
+    if (!identicalMaterials) material2 = getMaterial(fMaterialData[1] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK);
+    Material material3 = material1;
+    if (!identicalMaterials) material3 = getMaterial(fMaterialData[2] >> MATERIAL_INDEX_SHIFT & MATERIAL_INDEX_MASK);
 
     // Water data
     int waterDepth1 = fTerrainData[0] >> 11 & 0xFFF;
@@ -166,7 +169,7 @@ void main() {
     } else
     #endif
     {
-        vec2 blendedUv = IN.uv;
+        vec2 blendedUv = fUv;
 
         float mipBias = 0.0;
         // Vanilla tree textures rely on UVs being clamped horizontally, which HD doesn't do at the texture level.
@@ -209,7 +212,7 @@ void main() {
         #if FLAT_SHADING
             N = flatNormal;
         #else
-            N = normalize(IN.normal);
+            N = normalize(fNormal);
         #endif
         if (isSquashed)
             N = vec3(0, -1, 0);
@@ -227,12 +230,12 @@ void main() {
         #endif
 
         #if DISPLAY_TANGENT
-            FragColor = vec4(cotangent_frame(N, IN.position, IN.uv * -1.0)[0] * 0.5 + 0.5, 1.0);
+            FragColor = vec4(cotangent_frame(N, fPosition, fUv * -1.0)[0] * 0.5 + 0.5, 1.0);
             if (DISPLAY_TANGENT == 1) // Redundant, for syntax highlighting in IntelliJ
                 return;
         #endif
 
-        vec3 fragPos = IN.position;
+        vec3 fragPos = fPosition;
         #if PARALLAX_OCCLUSION_MAPPING
             applyDisplacement(
                 fragPos,
@@ -246,12 +249,25 @@ void main() {
             );
         #endif
 
-        ivec4 tint = getWorldViewTint(fWorldViewId);
-
-        // Vertex colors: tinted and converted to linear RGB once per triangle in scene_vert
+        #if ANDROID_VERTEX_COLORS
         vec4 baseColor1 = fBaseColor1;
         vec4 baseColor2 = fBaseColor2;
         vec4 baseColor3 = fBaseColor3;
+        #else
+        ivec4 tint = getWorldViewTint(fWorldViewId);
+
+        // The legacy geometry shader supplies packed colors instead of converted colors.
+        vec3 hsl1 = unpackRawHsl(fAlphaBiasHsl.x);
+        if (tint.w > 0) hsl1 += (vec3(tint.xyz) - hsl1) * float(tint.w) / 128.0;
+        vec4 baseColor1 = vec4(srgbToLinear(hslToSrgb(convertHsl(hsl1))), 1.0 - float(fAlphaBiasHsl.x >> 24 & 255) / 255.0);
+        vec3 hsl2 = unpackRawHsl(fAlphaBiasHsl.y);
+        if (tint.w > 0) hsl2 += (vec3(tint.xyz) - hsl2) * float(tint.w) / 128.0;
+        vec4 baseColor2 = vec4(srgbToLinear(hslToSrgb(convertHsl(hsl2))), 1.0 - float(fAlphaBiasHsl.y >> 24 & 255) / 255.0);
+        vec3 hsl3 = unpackRawHsl(fAlphaBiasHsl.z);
+        if (tint.w > 0) hsl3 += (vec3(tint.xyz) - hsl3) * float(tint.w) / 128.0;
+        vec4 baseColor3 = vec4(srgbToLinear(hslToSrgb(convertHsl(hsl3))), 1.0 - float(fAlphaBiasHsl.z >> 24 & 255) / 255.0);
+
+        #endif
 
         if (isSquashed)
             baseColor1 = baseColor2 = baseColor3 = baseColor1 * .4;
@@ -354,7 +370,7 @@ void main() {
         if ((fMaterialData[0] >> MATERIAL_FLAG_UPWARDS_NORMALS & 1) == 1) {
             normals = vec3(0, -1, 0);
         } else {
-            mat3 TBN = cotangent_frame(N, IN.position, IN.uv * -1.0);
+            mat3 TBN = cotangent_frame(N, fPosition, fUv * -1.0);
             vec3 n1 = sampleNormalMap(material1, uv1, TBN);
             if (identicalMaterials) {
                 normals = normalize(n1);
@@ -465,7 +481,7 @@ void main() {
         vec3 pointLightsOut = vec3(0);
         vec3 pointLightsSpecularOut = vec3(0);
         float subsurface = material1.subsurface;
-        calculateLighting(IN.position, normals, viewDir, fTexBlend, vSpecularGloss, vSpecularStrength,
+        calculateLighting(fPosition, normals, viewDir, fTexBlend, vSpecularGloss, vSpecularStrength,
             subsurface, pointLightsOut, pointLightsSpecularOut);
 
         // sky light
@@ -533,7 +549,7 @@ void main() {
     #endif // WATER_PASS
 
     #if LEGACY_RENDERER
-        vec2 tiledist = abs(floor(IN.position.xz / 128) - floor(uboGlobal.cameraPos.xz / 128));
+        vec2 tiledist = abs(floor(fPosition.xz / 128) - floor(uboGlobal.cameraPos.xz / 128));
         float maxDist = max(tiledist.x, tiledist.y);
         if (maxDist > uboGlobal.drawDistance) {
             // Rapidly fade out any geometry that extends beyond the draw distance.
@@ -549,9 +565,9 @@ void main() {
     // apply fog
     if (!isUnderwater) {
         // ground fog
-        float distance = distance(IN.position, uboGlobal.cameraPos);
+        float distance = distance(fPosition, uboGlobal.cameraPos);
         float closeFadeDistance = 1500.0;
-        float groundFog = 1.0 - clamp((IN.position.y - uboGlobal.groundFogStart) / (uboGlobal.groundFogEnd - uboGlobal.groundFogStart), 0.0, 1.0);
+        float groundFog = 1.0 - clamp((fPosition.y - uboGlobal.groundFogStart) / (uboGlobal.groundFogEnd - uboGlobal.groundFogStart), 0.0, 1.0);
         groundFog = mix(0.0, uboGlobal.groundFogOpacity, groundFog);
         groundFog *= clamp(distance / closeFadeDistance, 0.0, 1.0);
         #if DAYLIGHT_CYCLE
@@ -565,7 +581,7 @@ void main() {
         #endif
 
         // multiply the visibility of each fog
-        float fogAmount = calculateFogAmount(IN.position);
+        float fogAmount = calculateFogAmount(fPosition);
         float combinedFog = 1.0 - (1.0 - fogAmount) * (1.0 - groundFog);
 
         if (isWater) {
@@ -575,7 +591,7 @@ void main() {
         #if DAYLIGHT_CYCLE
         if (uboSky.enabled) {
             if (combinedFog > 1e-4) {
-                vec3 fogViewDir = normalize(IN.position - uboGlobal.cameraPos);
+                vec3 fogViewDir = normalize(fPosition - uboGlobal.cameraPos);
                 vec3 distanceFogColor = foggedSkyColor(fogViewDir);
                 if (groundFog > 1e-4 && fogAmount < 1.0) {
                     // Approximate reduced nighttime color sensitivity without changing luminance.

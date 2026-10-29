@@ -50,11 +50,14 @@ layout (location = 0) in vec3 vPosition;
     layout (location = 5) in int vTerrainData;
 #endif
 
+#include ANDROID_VERTEX_COLORS
+
 #if ZONE_RENDERER
     flat out int fWorldViewId;
     flat out ivec3 fAlphaBiasHsl;
     flat out ivec3 fMaterialData;
     flat out ivec3 fTerrainData;
+    #if ANDROID_VERTEX_COLORS
     // Android: the three vertex colors (tinted, linear RGB + alpha), converted once per
     // triangle here instead of three times per fragment. Inputs are flat, so the result is
     // the same for every fragment of the triangle.
@@ -62,12 +65,15 @@ layout (location = 0) in vec3 vPosition;
     flat out vec4 fBaseColor2;
     flat out vec4 fBaseColor3;
 
+    #endif
+
     #if CENTROID_QUALIFIER
         centroid out vec3 fTexBlend;
     #else
         out vec3 fTexBlend;
     #endif
 
+    #if ANDROID_VERTEX_COLORS
     vec4 vertexBaseColor(int alphaBiasHsl, ivec4 tint) {
         vec3 hsl = unpackRawHsl(alphaBiasHsl);
         if (tint.w > 0)
@@ -77,11 +83,12 @@ layout (location = 0) in vec3 vPosition;
         return color;
     }
 
-    out FragmentData {
-        vec3 position;
-        vec2 uv;
-        vec3 normal;
-    } OUT;
+    #endif
+
+    // Standalone varyings avoid mixed interface-block corruption on PowerVR GLES.
+    out vec3 fPosition;
+    out vec2 fUv;
+    out vec3 fNormal;
 
     void main() {
         int vertex = gl_VertexID % 3;
@@ -101,18 +108,22 @@ layout (location = 0) in vec3 vPosition;
             fWorldViewId = vWorldViewId;
             alphaBiasHsl = fAlphaBiasHsl[vertex];
             materialData = fMaterialData[vertex];
+            #if ANDROID_VERTEX_COLORS
             ivec4 tint = getWorldViewTint(vWorldViewId);
             fBaseColor1 = vertexBaseColor(fAlphaBiasHsl[0], tint);
             fBaseColor2 = vertexBaseColor(fAlphaBiasHsl[1], tint);
             fBaseColor3 = vertexBaseColor(fAlphaBiasHsl[2], tint);
+            #endif
         } else {
             // All outputs must be written to for macOS compatibility
             fAlphaBiasHsl = ivec3(0);
             fMaterialData = ivec3(0);
             fWorldViewId  = 0;
+            #if ANDROID_VERTEX_COLORS
             fBaseColor1 = vec4(0);
             fBaseColor2 = vec4(0);
             fBaseColor3 = vec4(0);
+            #endif
             alphaBiasHsl = texelFetch(textureFaces, faceIdx)[vertex];
             materialData = texelFetch(textureFaces, faceIdx + 1)[vertex];
         }
@@ -141,9 +152,9 @@ layout (location = 0) in vec3 vPosition;
         fTexBlend = vec3(0);
         fTexBlend[vertex] = 1.0;
 
-        OUT.position = worldPosition;
-        OUT.uv = computeVertexUvs(materialData, worldPosition, vUv.xyz);
-        OUT.normal = worldNormal;
+        fPosition = worldPosition;
+        fUv = computeVertexUvs(materialData, worldPosition, vUv.xyz);
+        fNormal = worldNormal;
 
         vec4 clipPosition = uboGlobal.projectionMatrix * vec4(worldPosition, 1.0);
         int depthBias = (alphaBiasHsl >> 16) & 0xff;

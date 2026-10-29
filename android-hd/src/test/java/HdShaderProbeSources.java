@@ -19,6 +19,7 @@ public class HdShaderProbeSources {
         }
         // Fixture counts exercise indexed UBO arrays; actual game counts are verified during live startup.
         defs.put("NEBULA_CLUSTER_COUNT",Integer.toString(rs117.hd.scene.daylight_cycle.StarField.CLUSTER_COUNT)); defs.put("SHADOW_FILTERING_KERNEL","3");
+        defs.put("ANDROID_VERTEX_COLORS", System.getProperty("hd.vertexColors", "true").equals("true") ? "1" : "0");
         defs.put("ZONE_RENDERER","1"); defs.put("MATERIAL_COUNT","512"); defs.put("WATER_TYPE_COUNT","32");
         defs.put("MAX_SIMULTANEOUS_WORLD_VIEWS","64"); defs.put("MAX_LIGHT_COUNT","16");
         defs.put("TILED_LIGHTING_LAYER_COUNT","1"); defs.put("TILED_LIGHTING_TILE_SIZE","16");
