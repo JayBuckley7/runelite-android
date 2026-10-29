@@ -4,7 +4,7 @@ import javax.swing.text.*;
 public class TestTextCaret {
     static void check(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
     public static void main(String[] args) throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
+        Runnable verify = () -> {
             try {
                 JTextArea notes = new JTextArea("previous notes");
                 check(notes.getCaret() instanceof DefaultCaret, "text controls provide a DefaultCaret");
@@ -32,7 +32,11 @@ public class TestTextCaret {
                 notes.selectAll(); check("zabc".equals(notes.getSelectedText()), "select all");
                 notes.setCaretPosition(0); check(notes.getSelectedText() == null, "collapsed selection");
             } catch (Exception e) { throw new RuntimeException(e); }
-        });
+        };
+        if ("Dalvik".equals(System.getProperty("java.vm.name"))) {
+            Thread.currentThread().setName("AWT-InvokeProbe");
+            verify.run();
+        } else SwingUtilities.invokeAndWait(verify);
         System.out.println("PASS: notes caret policies, selection, document edits, listeners and document replacement");
         System.exit(0); // The Android shim owns a persistent EDT worker.
     }

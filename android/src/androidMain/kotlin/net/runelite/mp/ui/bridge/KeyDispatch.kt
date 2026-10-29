@@ -251,7 +251,8 @@ object KeyDispatch {
         }
 
         val focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
-        val target = focused?.takeIf { acceptsKeys(it) }
+        // A top-level window can own activation focus without being a text/key target.
+        val target = focused?.takeIf { it !is Window && acceptsKeys(it) }
             ?: ev.component.takeIf { acceptsKeys(it) }
             ?: return
         val delivered = if (ev.component === target) ev else KeyEvent(target, ev.id, ev.`when`,

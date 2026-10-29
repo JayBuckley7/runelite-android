@@ -10,6 +10,11 @@ function Run($Exe, [string[]]$Arguments) {
     & $Exe @Arguments
     if ($LASTEXITCODE) { throw "$Exe failed ($LASTEXITCODE)" }
 }
+function RunProbe($Exe, [string[]]$Arguments) {
+    $result = Run $Exe $Arguments
+    $result | Write-Output
+    if (($result -join "`n") -notmatch 'PASS:') { throw 'Probe did not report success' }
+}
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root 'build/key-routing-test'
 New-Item -ItemType Directory -Force "$out/classes", "$out/lib" | Out-Null
@@ -30,6 +35,6 @@ Run $adb @('-s', $Serial, 'shell', 'mkdir', '-p', "$remote/lib")
 Run $adb @('-s', $Serial, 'push', $Apk, "$remote/host.apk")
 Run $adb @('-s', $Serial, 'push', "$out/probe-dex.jar", "$remote/probe.jar")
 Run $adb @('-s', $Serial, 'push', "$out/lib/librunelite_awt_native.so", "$remote/lib/")
-Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestKeyDispatch net.runelite.mp.ui.bridge.KeyDispatch dispatchAwtEvent")
-Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestLayeredPane host")
-Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestTextCaret")
+RunProbe $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestKeyDispatch net.runelite.mp.ui.bridge.KeyDispatch dispatchAwtEvent")
+RunProbe $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestLayeredPane host")
+RunProbe $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestTextCaret")

@@ -9,9 +9,10 @@ public class TestKeyDispatch {
         if (!ok) throw new AssertionError(message);
     }
     public static void main(String[] args) throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            try { verify(args); } catch (Exception e) { throw new RuntimeException(e); }
-        });
+        // Shell dalvikvm lacks Android framework native initialization. Mark this
+        // fixture thread as the shim EDT; the Activity suite tests the real queue.
+        Thread.currentThread().setName("AWT-InvokeProbe");
+        verify(args);
         System.exit(0);
     }
     private static void verify(String[] args) throws Exception {
@@ -38,7 +39,7 @@ public class TestKeyDispatch {
         for (int id : new int[]{KeyEvent.KEY_PRESSED, KeyEvent.KEY_TYPED, KeyEvent.KEY_RELEASED}) {
             method.invoke(dispatch, new KeyEvent(canvas, id, 0, 0, id == KeyEvent.KEY_TYPED ? 0 : KeyEvent.VK_ENTER, '\n'));
         }
-        check(received[0] == 1 && received[3] == 1 && received[4] == 1, "game receives each event exactly once");
+        check(received[0] == 1 && received[3] == 1 && received[4] == 1, "game receives each event exactly once: " + java.util.Arrays.toString(received) + " focus=" + KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner());
         check(received[1] == 0 && received[2] == 0, "plugin fields must not receive game Enter");
         KeyEventDispatcher consume = e -> { e.consume(); return true; };
         KeyboardFocusManager manager = KeyboardFocusManager.getCurrentKeyboardFocusManager();
@@ -49,6 +50,11 @@ public class TestKeyDispatch {
         canvas.setVisible(false);
         method.invoke(dispatch, new KeyEvent(canvas, KeyEvent.KEY_PRESSED, 0, 0, KeyEvent.VK_ENTER, '\n'));
         check(received[0] == 1, "hidden target must not receive keys");
+        visibleSearch.requestFocusInWindow();
+        check(manager.getFocusOwner() == visibleSearch, "plugin input can take focus");
+        method.invoke(dispatch, new KeyEvent(canvas, KeyEvent.KEY_PRESSED, 0, 0, KeyEvent.VK_ENTER, '\n'));
+        check(received[1] == 1 && received[2] == 0 && received[0] == 1,
+            "focused plugin field receives one event without game or hidden broadcast");
         System.out.println("PASS: game Enter once, no visible/hidden plugin broadcast, global consumption, hidden targets");
     }
 }
