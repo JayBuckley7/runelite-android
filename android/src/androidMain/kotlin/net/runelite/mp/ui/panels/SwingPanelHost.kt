@@ -316,6 +316,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
                 SwingUtilities.invokeLater {
                     try {
                         if (isCurrentMount(serial)) {
+                            JPopupMenu.takeShownPopupMenu()?.isVisible = false
                             if (tool != MotionEvent.TOOL_TYPE_MOUSE) hover(null)
                             // A mouse drag never scrolls on desktop, so any drag handler takes it.
                             if (!secondary) press(x, y, tool, tool == MotionEvent.TOOL_TYPE_MOUSE)
@@ -390,7 +391,10 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
                                 val captured = release(x, y, clicked, pressedAt, releasedAt, px, py, device, tool, tolerance)
                                 // Wait for release before giving another window touch focus.
                                 if (held) contextMenu(menuX, menuY, tool != MotionEvent.TOOL_TYPE_MOUSE)
-                                else if (clicked && !captured) tap(x, y, pressedAt, releasedAt, px, py, device, tool, tolerance)
+                                else if (clicked) {
+                                    if (!captured) tap(x, y, pressedAt, releasedAt, px, py, device, tool, tolerance)
+                                    JPopupMenu.takeShownPopupMenu()?.let { showPopupMenu(it, serial) }
+                                }
                             }
                         } catch (t: Throwable) {
                             android.util.Log.e("SwingPanelHost", "Panel input failed: $panelKey", t)
@@ -1007,14 +1011,20 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
         val shown = JPopupMenu.takeShownPopupMenu()
         val menu = shown ?: owner?.componentPopupMenu
         if (menu == null) { if (touch) toolTip(x, y, true); return }
-        swingPopup = menu
         if (shown == null) {
             val at = SwingUtilities.convertPoint(base, x, y, owner)
             menu.show(owner, at.x, at.y)
             JPopupMenu.takeShownPopupMenu()
         }
+        if (!showPopupMenu(menu, serial) && touch) toolTip(x, y, true)
+    }
+
+    /** Present the actual menu opened by a plugin, for either mouse button or touch. */
+    private fun showPopupMenu(menu: JPopupMenu, serial: Long): Boolean {
+        if (!isCurrentMount(serial)) { menu.isVisible = false; return false }
         val items = menu.components.filterIsInstance<JMenuItem>().filter { it.isVisible }
-        if (items.isEmpty()) { menu.isVisible = false; if (touch) toolTip(x, y, true); return }
+        if (items.isEmpty()) { menu.isVisible = false; return false }
+        swingPopup = menu
         val labels = items.map { it.text ?: "" }
         val enabled = items.map { it.isEnabled }
         val checked = items.map { it.isSelected }
@@ -1060,6 +1070,7 @@ internal class SwingPanelView(context: Context, private val panelKey: String, pr
             popup.window?.setLayout(width.coerceAtLeast(240), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             android.util.Log.i("SwingPanelHost", "Context menu $panelKey: ${labels.joinToString()}")
         }
+        return true
     }
 
     private fun hit(component: Component, x: Int, y: Int): Component {
