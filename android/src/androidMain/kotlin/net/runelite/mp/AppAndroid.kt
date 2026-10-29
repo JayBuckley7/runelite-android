@@ -631,8 +631,8 @@ private val DarkerGray = Color(0xFF1E1E1E)            // DARKER_GRAY_COLOR
  * state — same overallProgress / actionText / subActionText / progressText values, just
  * rendered in Compose at native device resolution. Stays up from app launch until the
  * AWT splash has opened AND then closed (`SplashScreen.isOpen()` was true once and is
- * now false). A 30s hard cap prevents getting stuck if the splash never opens at all
- * (eg. RuneLite.main aborted before reaching SplashScreen.init).
+ * now false). Completion lives with the running client so recreating the Activity
+ * cannot cover an already-started game with a fresh splash.
  */
 @Composable
 private fun ComposeSplash() {
@@ -641,7 +641,7 @@ private fun ComposeSplash() {
     val scope = rememberCoroutineScope()
     val gate = net.runelite.mp.update.UpdateGate
     val update = gate.state
-    var bootDone by remember { mutableStateOf(false) }
+    var bootDone by net.runelite.mp.ui.WindowImpl.bootComplete
     var actionText by remember { mutableStateOf("Checking for updates…") }
     var subActionText by remember { mutableStateOf("") }
     var progressText by remember { mutableStateOf<String?>(null) }
@@ -701,7 +701,6 @@ private fun ComposeSplash() {
         }
         // The client has finished starting; the Compose chrome can render its sidebar and
         // icon strip now.
-        net.runelite.mp.ui.WindowImpl.bootComplete.value = true
         gate.onBootComplete()
     }
 
