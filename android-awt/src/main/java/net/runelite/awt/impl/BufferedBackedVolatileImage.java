@@ -37,7 +37,7 @@ public final class BufferedBackedVolatileImage extends VolatileImage {
         this.transparency = transparency;
     }
 
-    @Override public BufferedImage getSnapshot() { return backing; }
+    @Override public BufferedImage getSnapshot() { BufferedImage copy=new BufferedImage(getWidth(),getHeight(),backing.getType());copy.setRGB(0,0,getWidth(),getHeight(),backing.getRGB(0,0,getWidth(),getHeight(),null,0,getWidth()),0,getWidth());return copy; }
     @Override public int getWidth() { return backing.getWidth(); }
     @Override public int getHeight() { return backing.getHeight(); }
     @Override public Graphics2D createGraphics() { return backing.createGraphics(); }

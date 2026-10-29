@@ -21,10 +21,37 @@ import java.util.List;
  * AWT-using callers query. Painting and event dispatch are wired in at the host layer
  * (e.g. an Android View bridge), not here.
  */
-public abstract class Component implements ImageObserver, Serializable {
+public abstract class Component implements ImageObserver, Serializable, MenuContainer {
     private static final long serialVersionUID = -7644114512714619750L;
     private static final Object TREE_LOCK = new Object();
     private boolean ignoreRepaint;
+    private final java.util.List<PopupMenu> popupMenus = new java.util.ArrayList<>();
+    public void add(PopupMenu popup) {
+        if (popup == null) throw new NullPointerException("popup");
+        if (popup.parent != null) popup.parent.remove(popup);
+        popupMenus.add(popup); popup.parent = this;
+    }
+    public void remove(MenuComponent menu) { if (popupMenus.remove(menu)) menu.parent = null; }
+    private java.beans.PropertyChangeSupport propertyChanges;
+    private synchronized java.beans.PropertyChangeSupport properties() {
+        if (propertyChanges == null) propertyChanges = new java.beans.PropertyChangeSupport(this);
+        return propertyChanges;
+    }
+    public void addPropertyChangeListener(java.beans.PropertyChangeListener listener) { properties().addPropertyChangeListener(listener); }
+    public void removePropertyChangeListener(java.beans.PropertyChangeListener listener) { properties().removePropertyChangeListener(listener); }
+    public void addPropertyChangeListener(String name, java.beans.PropertyChangeListener listener) { properties().addPropertyChangeListener(name, listener); }
+    public void removePropertyChangeListener(String name, java.beans.PropertyChangeListener listener) { properties().removePropertyChangeListener(name, listener); }
+    public java.beans.PropertyChangeListener[] getPropertyChangeListeners() { return properties().getPropertyChangeListeners(); }
+    public java.beans.PropertyChangeListener[] getPropertyChangeListeners(String name) { return properties().getPropertyChangeListeners(name); }
+    public void firePropertyChange(String name, Object oldValue, Object newValue) { if (propertyChanges != null) propertyChanges.firePropertyChange(name, oldValue, newValue); }
+    public void firePropertyChange(String name, boolean oldValue, boolean newValue) { if (oldValue != newValue) firePropertyChange(name, Boolean.valueOf(oldValue), Boolean.valueOf(newValue)); }
+    public void firePropertyChange(String name, int oldValue, int newValue) { if (oldValue != newValue) firePropertyChange(name, Integer.valueOf(oldValue), Integer.valueOf(newValue)); }
+    public void firePropertyChange(String name, byte oldValue, byte newValue) { if (oldValue != newValue) firePropertyChange(name, Byte.valueOf(oldValue), Byte.valueOf(newValue)); }
+    public void firePropertyChange(String name, char oldValue, char newValue) { if (oldValue != newValue) firePropertyChange(name, Character.valueOf(oldValue), Character.valueOf(newValue)); }
+    public void firePropertyChange(String name, short oldValue, short newValue) { if (oldValue != newValue) firePropertyChange(name, Short.valueOf(oldValue), Short.valueOf(newValue)); }
+    public void firePropertyChange(String name, long oldValue, long newValue) { if (oldValue != newValue) firePropertyChange(name, Long.valueOf(oldValue), Long.valueOf(newValue)); }
+    public void firePropertyChange(String name, float oldValue, float newValue) { if (oldValue != newValue) firePropertyChange(name, Float.valueOf(oldValue), Float.valueOf(newValue)); }
+    public void firePropertyChange(String name, double oldValue, double newValue) { if (oldValue != newValue) firePropertyChange(name, Double.valueOf(oldValue), Double.valueOf(newValue)); }
 
     public final Object getTreeLock() { return TREE_LOCK; }
     public void setIgnoreRepaint(boolean ignoreRepaint) { this.ignoreRepaint = ignoreRepaint; }
@@ -42,6 +69,13 @@ public abstract class Component implements ImageObserver, Serializable {
     protected Font font = new Font(Font.DIALOG, Font.PLAIN, 12);
     protected boolean visible = true;
     protected boolean enabled = true;
+    private boolean hostShowing;
+    /** Visibility of a detached component tree mounted directly by the Android host. */
+    public void setHostShowing(boolean showing) {
+        boolean previous = isShowing(); hostShowing = showing;
+        if (!showing) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this);
+        if (previous != isShowing()) fireHierarchyChanged(this, parent, java.awt.event.HierarchyEvent.SHOWING_CHANGED);
+    }
     protected Container parent;
     /** Mouse cursor — Android can't actually show one but RuneLite plugins
      *  (CustomCursorPlugin, drag handlers) call setCursor/getCursor a lot and
@@ -68,7 +102,25 @@ public abstract class Component implements ImageObserver, Serializable {
     }
 
     public Container getParent()  { return parent; }
-    void setParent(Container p)   { this.parent = p; }
+    void setParent(Container p) {
+        Container previous = parent;
+        if (previous == p) return;
+        boolean showing = isShowing();
+        this.parent = p;
+        if (p == null) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this);
+        fireHierarchyChanged(this, p != null ? p : previous,
+            java.awt.event.HierarchyEvent.PARENT_CHANGED
+            | (showing != isShowing() ? java.awt.event.HierarchyEvent.SHOWING_CHANGED : 0));
+    }
+
+    private void fireHierarchyChanged(Component changed, Container changedParent, long flags) {
+        dispatchEvent(new java.awt.event.HierarchyEvent(this,
+            java.awt.event.HierarchyEvent.HIERARCHY_CHANGED, changed, changedParent, flags));
+        if (this instanceof Container) {
+            for (Component child : ((Container) this).getComponents())
+                child.fireHierarchyChanged(changed, changedParent, flags);
+        }
+    }
 
     public int getX()             { return x; }
     public int getY()             { return y; }
@@ -163,23 +215,29 @@ public abstract class Component implements ImageObserver, Serializable {
     }
 
     public Color getForeground()  { return foreground; }
-    public void setForeground(Color c) { foreground = c; }
+    public void setForeground(Color c) { Color old = foreground; foreground = c; firePropertyChange("foreground", old, c); }
     public Color getBackground()  { return background; }
-    public void setBackground(Color c) { background = c; }
+    public void setBackground(Color c) { Color old = background; background = c; firePropertyChange("background", old, c); }
 
     public Font getFont()         { return font; }
-    public void setFont(Font f)   { if (f != null && !f.equals(font)) { font = f; invalidate(); } }
+    public void setFont(Font f)   { if (f != null && !f.equals(font)) { Font old = font; font = f; invalidate(); firePropertyChange("font", old, f); } }
 
     public boolean isVisible()    { return visible; }
     public void setVisible(boolean v) {
         if (visible == v) return;
+        boolean showing = isShowing();
         visible = v;
+        if (!v) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this);
+        dispatchEvent(new java.awt.event.ComponentEvent(this, v
+            ? java.awt.event.ComponentEvent.COMPONENT_SHOWN : java.awt.event.ComponentEvent.COMPONENT_HIDDEN));
+        if (showing != isShowing()) fireHierarchyChanged(this, parent,
+            java.awt.event.HierarchyEvent.SHOWING_CHANGED);
         // Layout managers skip invisible children, so this changes the parent's layout.
         invalidate();
     }
     public boolean isEnabled()    { return enabled; }
-    public void setEnabled(boolean e) { enabled = e; }
-    public boolean isShowing()    { return visible && parent == null ? false : (parent != null ? parent.isShowing() : visible); }
+    public void setEnabled(boolean e) { boolean old = enabled; enabled = e; if (!e) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this); firePropertyChange("enabled", old, e); }
+    public boolean isShowing()    { return visible && (hostShowing || parent != null && parent.isShowing()); }
     public boolean isDisplayable() { return true; }
     /** Android components have no native AWT peer to dispose; discard layout validity. */
     public void removeNotify() { invalidate(); }
@@ -307,7 +365,7 @@ public abstract class Component implements ImageObserver, Serializable {
     }
 
     public Image createImage(java.awt.image.ImageProducer producer) {
-        return null;
+        return new java.awt.image.ProducerImage(producer);
     }
 
     public boolean imageUpdate(Image img, int infoflags, int x, int y, int w, int h) {
@@ -318,23 +376,62 @@ public abstract class Component implements ImageObserver, Serializable {
         return x >= 0 && x < width && y >= 0 && y < height;
     }
 
-    public boolean requestFocus(boolean temporary) { return false; }
-    public void requestFocus() {}
-    public boolean requestFocusInWindow() { return false; }
-    public boolean isFocusOwner() { return false; }
+    public boolean requestFocus(boolean temporary) { return requestFocusInWindow(); }
+    public void requestFocus() { requestFocusInWindow(); }
+    public boolean requestFocusInWindow() { return KeyboardFocusManager.getCurrentKeyboardFocusManager().requestFocus(this); }
+    public boolean isFocusOwner() { return KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() == this; }
     public float getAlignmentX() { return 0.5f; }
     public float getAlignmentY() { return 0.5f; }
     public boolean hasFocus() { return isFocusOwner(); }
-    public void setFocusTraversalKeysEnabled(boolean v) {}
-    public boolean getFocusTraversalKeysEnabled() { return true; }
-    public void setFocusable(boolean focusable) {}
-    public boolean isFocusable() { return true; }
-    public void setFocusTraversalKeys(int id, java.util.Set<? extends java.awt.AWTKeyStroke> keys) {}
-    public java.util.Set<java.awt.AWTKeyStroke> getFocusTraversalKeys(int id) { return java.util.Collections.emptySet(); }
-    public boolean areFocusTraversalKeysSet(int id) { return false; }
-    public void transferFocus() {}
-    public void transferFocusUpCycle() {}
-    public void transferFocusBackward() {}
+    private boolean focusable = true, focusTraversalKeysEnabled = true;
+    private final java.util.Map<Integer, java.util.Set<AWTKeyStroke>> traversalKeys = new java.util.HashMap<>();
+    public void setFocusTraversalKeysEnabled(boolean v) { focusTraversalKeysEnabled = v; }
+    public boolean getFocusTraversalKeysEnabled() { return focusTraversalKeysEnabled; }
+    public void setFocusable(boolean focusable) {
+        boolean old = this.focusable;
+        this.focusable = focusable;
+        if (!focusable) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this);
+        firePropertyChange("focusable", old, focusable);
+    }
+    public boolean isFocusable() { return focusable; }
+    public void setFocusTraversalKeys(int id, java.util.Set<? extends AWTKeyStroke> keys) {
+        if (id < 0 || id > 3) throw new IllegalArgumentException("invalid traversal key id");
+        if (keys == null) { traversalKeys.remove(id); return; }
+        java.util.Set<AWTKeyStroke> copy = new java.util.HashSet<>(keys);
+        for (AWTKeyStroke key : copy)
+            if (key == null || key.getKeyEventType() == KeyEvent.KEY_TYPED)
+                throw new IllegalArgumentException("invalid traversal key");
+        traversalKeys.put(id, java.util.Collections.unmodifiableSet(copy));
+    }
+    public java.util.Set<AWTKeyStroke> getFocusTraversalKeys(int id) {
+        if (id < 0 || id > 3) throw new IllegalArgumentException("invalid traversal key id");
+        java.util.Set<AWTKeyStroke> keys = traversalKeys.get(id);
+        return keys != null ? keys : parent != null ? parent.getFocusTraversalKeys(id) : java.util.Collections.emptySet();
+    }
+    public boolean areFocusTraversalKeysSet(int id) {
+        if (id < 0 || id > 3) throw new IllegalArgumentException("invalid traversal key id");
+        return traversalKeys.containsKey(id);
+    }
+    public void transferFocus() { transferFocus(false); }
+    public void transferFocusUpCycle() { if (parent != null) parent.requestFocusInWindow(); }
+    public void transferFocusBackward() { transferFocus(true); }
+    private void transferFocus(boolean backwards) {
+        Component root = this;
+        while (root.parent != null) root = root.parent;
+        java.util.List<Component> candidates = new java.util.ArrayList<>();
+        collectFocusable(root, candidates);
+        int size = candidates.size(), index = candidates.indexOf(this);
+        for (int offset = 1; offset <= size; offset++) {
+            Component next = candidates.get(Math.floorMod(index + (backwards ? -offset : offset), size));
+            if (next.requestFocusInWindow()) return;
+        }
+    }
+    private static void collectFocusable(Component component, java.util.List<Component> out) {
+        if (!component.isVisible() || !component.isEnabled()) return;
+        if (component.isFocusable()) out.add(component);
+        if (component instanceof Container)
+            for (Component child : ((Container) component).getComponents()) collectFocusable(child, out);
+    }
     public java.awt.Container getFocusCycleRootAncestor() { return parent; }
     public boolean isFocusCycleRoot(java.awt.Container container) { return false; }
 
@@ -355,7 +452,7 @@ public abstract class Component implements ImageObserver, Serializable {
 
     private String name = "";
     public String getName() { return name; }
-    public void setName(String name) { this.name = name == null ? "" : name; }
+    public void setName(String name) { String old = this.name; this.name = name; firePropertyChange("name", old, name); }
 
     public ComponentListener[] getComponentListeners() { return componentListeners.toArray(new ComponentListener[0]); }
     public FocusListener[] getFocusListeners() { return focusListeners.toArray(new FocusListener[0]); }
@@ -418,6 +515,11 @@ public abstract class Component implements ImageObserver, Serializable {
     /** Desktop entry point for plugins sending input to a component's listeners. */
     public final void dispatchEvent(AWTEvent event) {
         if (event == null) throw new NullPointerException("event");
+        AWTEvent previous = EventQueue.beginDispatch(event);
+        try { processEvent(event); } finally { EventQueue.endDispatch(previous); }
+    }
+
+    protected void processEvent(AWTEvent event) {
         if (event instanceof KeyEvent) {
             KeyEvent key = (KeyEvent) event;
             if (!key.isConsumed()
@@ -427,6 +529,30 @@ public abstract class Component implements ImageObserver, Serializable {
             }
         } else if (event instanceof MouseEvent) {
             dispatchMouseEvent((MouseEvent) event);
+        } else if (event instanceof java.awt.event.FocusEvent) {
+            processFocusEvent((java.awt.event.FocusEvent) event);
+        } else if (event instanceof java.awt.event.HierarchyEvent) {
+            processHierarchyEvent((java.awt.event.HierarchyEvent) event);
+        } else if (event instanceof java.awt.event.ComponentEvent) {
+            processComponentEvent((java.awt.event.ComponentEvent) event);
+        }
+    }
+
+    protected void processFocusEvent(java.awt.event.FocusEvent event) {
+        for (FocusListener listener : focusListeners) {
+            if (event.getID() == java.awt.event.FocusEvent.FOCUS_GAINED) listener.focusGained(event);
+            else if (event.getID() == java.awt.event.FocusEvent.FOCUS_LOST) listener.focusLost(event);
+        }
+    }
+    protected void processHierarchyEvent(java.awt.event.HierarchyEvent event) {
+        for (HierarchyListener listener : hierarchyListeners) listener.hierarchyChanged(event);
+    }
+    protected void processComponentEvent(java.awt.event.ComponentEvent event) {
+        for (ComponentListener listener : componentListeners) switch (event.getID()) {
+            case java.awt.event.ComponentEvent.COMPONENT_SHOWN: listener.componentShown(event); break;
+            case java.awt.event.ComponentEvent.COMPONENT_HIDDEN: listener.componentHidden(event); break;
+            case java.awt.event.ComponentEvent.COMPONENT_MOVED: listener.componentMoved(event); break;
+            case java.awt.event.ComponentEvent.COMPONENT_RESIZED: listener.componentResized(event); break;
         }
     }
 

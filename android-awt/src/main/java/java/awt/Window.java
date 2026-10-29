@@ -16,13 +16,18 @@ public class Window extends Container {
     private java.util.List<Image> iconImages = new java.util.ArrayList<>();
     private BufferedImage backbuffer;
     private Color windowBackground = new Color(0x1E1F22);
+    private final Window owner;
+    private boolean opened, disposed, autoRequestFocus = true, focusableWindowState = true;
+    private final java.util.List<java.awt.event.WindowListener> windowListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.List<java.awt.event.WindowFocusListener> windowFocusListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.List<java.awt.event.WindowStateListener> windowStateListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
-    public Window() {
-        LATEST.set(this);
-        ALL_WINDOWS.add(new java.lang.ref.WeakReference<>(this));
-    }
-
-    public Window(Frame owner) {
+    public Window() { this((Window) null); }
+    public Window(Frame owner) { this((Window) owner); }
+    public Window(Window owner) { this(owner, null); }
+    public Window(Window owner, GraphicsConfiguration configuration) {
+        this.owner = owner;
+        visible = false;
         LATEST.set(this);
         ALL_WINDOWS.add(new java.lang.ref.WeakReference<>(this));
     }
@@ -327,7 +332,7 @@ public class Window extends Container {
                 if (jc instanceof Container) {
                     Container cont = (Container) jc;
                     int count = cont.getComponentCount();
-                    for (int i = 0; i < count; i++) hostPaint(g, cont.getComponent(i));
+                    for (int i = count - 1; i >= 0; i--) hostPaint(g, cont.getComponent(i));
                 }
                 return;
             }
@@ -342,7 +347,7 @@ public class Window extends Container {
                 }
                 Container cont = (Container) c;
                 int count = cont.getComponentCount();
-                for (int i = 0; i < count; i++) hostPaint(g, cont.getComponent(i));
+                for (int i = count - 1; i >= 0; i--) hostPaint(g, cont.getComponent(i));
                 return;
             }
 
@@ -417,23 +422,35 @@ public class Window extends Container {
     }
     public void show() { setVisible(true); }
     public void dispose() {
-        // Mark invisible so picker logic stops choosing this window (e.g. splash after dispose).
         setVisible(false);
+        for (Window child : getOwnedWindows()) child.dispose();
+        if (!disposed) {
+            disposed = true;
+            dispatchEvent(new java.awt.event.WindowEvent(this, java.awt.event.WindowEvent.WINDOW_CLOSED));
+        }
     }
 
     @Override
     public void setVisible(boolean v) {
         boolean wasVisible = isVisible();
+        if (v) disposed = false;
         super.setVisible(v);
         VisibilityHandler handler = visibilityHandler;
         if (handler != null && (this instanceof javax.swing.JWindow || this instanceof javax.swing.JDialog)) handler.changed(this, v);
         if (v && !wasVisible) {
             // Real Swing validates the tree on first showing.
             try { validate(); } catch (Throwable ignored) {}
+            if (!opened) {
+                opened = true;
+                dispatchEvent(new java.awt.event.WindowEvent(this, java.awt.event.WindowEvent.WINDOW_OPENED));
+            }
+            if (autoRequestFocus) requestFocusInWindow();
         }
     }
-    public boolean isActive() { return false; }
-    public boolean isFocused() { return false; }
+    @Override public boolean isShowing() { return isVisible() && !disposed; }
+    @Override public boolean isDisplayable() { return !disposed; }
+    public boolean isActive() { return KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow() == this; }
+    public boolean isFocused() { return KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusedWindow() == this; }
 
     public void setIconImage(Image image) {
         iconImages.clear();
@@ -446,34 +463,61 @@ public class Window extends Container {
     }
     public java.util.List<Image> getIconImages() { return new java.util.ArrayList<>(iconImages); }
 
-    public Window getOwner() { return null; }
-    public Window[] getOwnedWindows() { return new Window[0]; }
-    public static Window[] getWindows() { return new Window[0]; }
-    public static Window[] getOwnerlessWindows() { return new Window[0]; }
-    public void toFront() {}
+    public Window getOwner() { return owner; }
+    public Window[] getOwnedWindows() { return getAllWindows().stream().filter(w -> w.owner == this).toArray(Window[]::new); }
+    public static Window[] getWindows() { return getAllWindows().toArray(new Window[0]); }
+    public static Window[] getOwnerlessWindows() { return getAllWindows().stream().filter(w -> w.owner == null).toArray(Window[]::new); }
+    public void toFront() { if (isVisible() && autoRequestFocus) requestFocusInWindow(); }
     public void toBack() {}
 
-    public void addWindowListener(java.awt.event.WindowListener l) {}
-    public void removeWindowListener(java.awt.event.WindowListener l) {}
-    public java.awt.event.WindowListener[] getWindowListeners() { return new java.awt.event.WindowListener[0]; }
-    public void addWindowFocusListener(java.awt.event.WindowFocusListener l) {}
-    public void removeWindowFocusListener(java.awt.event.WindowFocusListener l) {}
-    public java.awt.event.WindowFocusListener[] getWindowFocusListeners() { return new java.awt.event.WindowFocusListener[0]; }
-    public void addWindowStateListener(java.awt.event.WindowStateListener l) {}
-    public void removeWindowStateListener(java.awt.event.WindowStateListener l) {}
-    public java.awt.event.WindowStateListener[] getWindowStateListeners() { return new java.awt.event.WindowStateListener[0]; }
+    public void addWindowListener(java.awt.event.WindowListener l) { if (l != null) windowListeners.add(l); }
+    public void removeWindowListener(java.awt.event.WindowListener l) { windowListeners.remove(l); }
+    public java.awt.event.WindowListener[] getWindowListeners() { return windowListeners.toArray(new java.awt.event.WindowListener[0]); }
+    public void addWindowFocusListener(java.awt.event.WindowFocusListener l) { if (l != null) windowFocusListeners.add(l); }
+    public void removeWindowFocusListener(java.awt.event.WindowFocusListener l) { windowFocusListeners.remove(l); }
+    public java.awt.event.WindowFocusListener[] getWindowFocusListeners() { return windowFocusListeners.toArray(new java.awt.event.WindowFocusListener[0]); }
+    public void addWindowStateListener(java.awt.event.WindowStateListener l) { if (l != null) windowStateListeners.add(l); }
+    public void removeWindowStateListener(java.awt.event.WindowStateListener l) { windowStateListeners.remove(l); }
+    public java.awt.event.WindowStateListener[] getWindowStateListeners() { return windowStateListeners.toArray(new java.awt.event.WindowStateListener[0]); }
+    @Override protected void processEvent(AWTEvent event) {
+        if (event instanceof java.awt.event.WindowEvent) {
+            java.awt.event.WindowEvent windowEvent = (java.awt.event.WindowEvent) event;
+            if (event.getID() == java.awt.event.WindowEvent.WINDOW_GAINED_FOCUS || event.getID() == java.awt.event.WindowEvent.WINDOW_LOST_FOCUS)
+                processWindowFocusEvent(windowEvent);
+            else if (event.getID() == java.awt.event.WindowEvent.WINDOW_STATE_CHANGED) processWindowStateEvent(windowEvent);
+            else processWindowEvent(windowEvent);
+        } else super.processEvent(event);
+    }
+    protected void processWindowEvent(java.awt.event.WindowEvent event) {
+        for (java.awt.event.WindowListener l : windowListeners) switch (event.getID()) {
+            case java.awt.event.WindowEvent.WINDOW_OPENED: l.windowOpened(event); break;
+            case java.awt.event.WindowEvent.WINDOW_CLOSING: l.windowClosing(event); break;
+            case java.awt.event.WindowEvent.WINDOW_CLOSED: l.windowClosed(event); break;
+            case java.awt.event.WindowEvent.WINDOW_ICONIFIED: l.windowIconified(event); break;
+            case java.awt.event.WindowEvent.WINDOW_DEICONIFIED: l.windowDeiconified(event); break;
+            case java.awt.event.WindowEvent.WINDOW_ACTIVATED: l.windowActivated(event); break;
+            case java.awt.event.WindowEvent.WINDOW_DEACTIVATED: l.windowDeactivated(event); break;
+        }
+    }
+    protected void processWindowFocusEvent(java.awt.event.WindowEvent event) {
+        for (java.awt.event.WindowFocusListener l : windowFocusListeners)
+            if (event.getID() == java.awt.event.WindowEvent.WINDOW_GAINED_FOCUS) l.windowGainedFocus(event); else l.windowLostFocus(event);
+    }
+    protected void processWindowStateEvent(java.awt.event.WindowEvent event) {
+        for (java.awt.event.WindowStateListener l : windowStateListeners) l.windowStateChanged(event);
+    }
     public void setOpacity(float opacity) {}
     public float getOpacity() { return 1.0f; }
     public void setShape(java.awt.Shape shape) {}
     public java.awt.Shape getShape() { return null; }
-    public void setAutoRequestFocus(boolean autoRequestFocus) {}
-    public boolean isAutoRequestFocus() { return false; }
+    public void setAutoRequestFocus(boolean autoRequestFocus) { this.autoRequestFocus = autoRequestFocus; }
+    public boolean isAutoRequestFocus() { return autoRequestFocus; }
     public void setAlwaysOnTop(boolean alwaysOnTop) {}
     public boolean isAlwaysOnTop() { return false; }
     public boolean isAlwaysOnTopSupported() { return false; }
-    public boolean isFocusableWindow() { return false; }
-    public void setFocusableWindowState(boolean state) {}
-    public boolean getFocusableWindowState() { return true; }
+    public boolean isFocusableWindow() { return focusableWindowState && isFocusable(); }
+    public void setFocusableWindowState(boolean state) { focusableWindowState = state; if (!state) KeyboardFocusManager.getCurrentKeyboardFocusManager().clearFocusIn(this); }
+    public boolean getFocusableWindowState() { return focusableWindowState; }
     public void setLocationRelativeTo(Component c) {}
     public Type getType() { return Type.NORMAL; }
     public void setType(Type type) {}

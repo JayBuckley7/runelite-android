@@ -14,6 +14,8 @@ public abstract class JTextComponent extends JComponent {
 
     public JTextComponent() {
         this.doc = new PlainDocument();
+        setCaret(new DefaultCaret());
+        setHighlighter(new DefaultHighlighter());
     }
 
     public String getText() {
@@ -35,7 +37,12 @@ public abstract class JTextComponent extends JComponent {
     }
 
     public Document getDocument() { return doc; }
-    public void setDocument(Document d) { this.doc = d; }
+    public void setDocument(Document d) {
+        if(d==null)throw new IllegalArgumentException("document");Document old=doc;
+        if(caret!=null&&old!=null)caret.deinstall(this);doc=d;if(caret!=null)caret.install(this);
+        if(highlighter!=null)highlighter.install(this);firePropertyChange("document",old,d);revalidate();repaint();
+    }
+    public String getText(int offset,int length) throws BadLocationException { return doc.getText(offset,length); }
 
     /** Shared plain-text measurement for multiline Swing controls. */
     protected java.util.List<String> textLines(int width, boolean wrap, boolean words, int tabs) {
@@ -83,12 +90,15 @@ public abstract class JTextComponent extends JComponent {
         try {
             java.awt.Insets in = getInsets();
             copy.clipRect(in.left, in.top, textWidth(), Math.max(0, getHeight() - in.top - in.bottom));
-            copy.setFont(getFont()); copy.setColor(getForeground());
+            if(highlighter!=null)highlighter.paint(copy);
+            if(caret!=null&&caret.isSelectionVisible()&&getSelectionStart()!=getSelectionEnd())new DefaultHighlighter.DefaultHighlightPainter(getSelectionColor()).paint(copy,getSelectionStart(),getSelectionEnd(),new java.awt.Rectangle(0,0,getWidth(),getHeight()),this);
+            copy.setFont(getFont()); copy.setColor(isEnabled()?getForeground():getDisabledTextColor());
             java.awt.FontMetrics fm = getFontMetrics(getFont());
             int y = in.top + fm.getAscent();
             for (String line : textLines(textWidth(), wrap, words, tabs)) {
                 copy.drawString(line, in.left, y); y += fm.getHeight();
             }
+            if(caret!=null)caret.paint(copy);
         } finally { copy.dispose(); }
     }
 
@@ -96,32 +106,36 @@ public abstract class JTextComponent extends JComponent {
     public boolean isEditable() { return editable; }
     public void setEditable(boolean b) { editable = b; }
 
-    public void selectAll() {}
-    public String getSelectedText() { return null; }
-    public int getSelectionStart() { return 0; }
-    public int getSelectionEnd() { return 0; }
-
-    public void setCaretPosition(int position) {}
-    public int getCaretPosition() { return 0; }
-
-    public void addCaretListener(CaretListener l) {}
-    public void removeCaretListener(CaretListener l) {}
-
-    public Caret getCaret() { return null; }
-    public Highlighter getHighlighter() { return null; }
-    public void setHighlighter(Highlighter h) {}
-    public void setCaret(Caret c) {}
-
-    public void setSelectedTextColor(java.awt.Color c) {}
-    public java.awt.Color getSelectedTextColor() { return java.awt.Color.WHITE; }
-    public void setSelectionColor(java.awt.Color c) {}
-    public java.awt.Color getSelectionColor() { return java.awt.Color.BLUE; }
-    public void setDisabledTextColor(java.awt.Color c) {}
-    public java.awt.Color getDisabledTextColor() { return java.awt.Color.GRAY; }
-    public void setCaretColor(java.awt.Color c) {}
-    public java.awt.Color getCaretColor() { return java.awt.Color.BLACK; }
-
-    public void copy() {}
-    public void cut() {}
-    public void paste() {}
+    private Caret caret;
+    private Highlighter highlighter;
+    private java.awt.Color selectedTextColor=java.awt.Color.WHITE,selectionColor=java.awt.Color.BLUE,disabledTextColor=java.awt.Color.GRAY,caretColor=java.awt.Color.BLACK;
+    private final javax.swing.event.EventListenerList caretListeners=new javax.swing.event.EventListenerList();
+    private final javax.swing.event.ChangeListener caretChanged=e -> {
+        javax.swing.event.CaretEvent event=new javax.swing.event.CaretEvent(this){public int getDot(){return caret.getDot();}public int getMark(){return caret.getMark();}};
+        for(CaretListener listener:caretListeners.getListeners(CaretListener.class))listener.caretUpdate(event);
+        repaint();
+    };
+    public void selectAll(){select(0,doc.getLength());}
+    public void select(int start,int end){start=Math.max(0,Math.min(start,doc.getLength()));end=Math.max(start,Math.min(end,doc.getLength()));caret.setDot(start);caret.moveDot(end);}
+    public String getSelectedText(){int start=getSelectionStart(),end=getSelectionEnd();if(start==end)return null;try{return doc.getText(start,end-start);}catch(BadLocationException e){throw new IllegalStateException(e);}}
+    public int getSelectionStart(){return Math.min(caret.getDot(),caret.getMark());}public int getSelectionEnd(){return Math.max(caret.getDot(),caret.getMark());}
+    public void setSelectionStart(int value){select(value,Math.max(value,getSelectionEnd()));}public void setSelectionEnd(int value){select(Math.min(getSelectionStart(),value),value);}
+    public void setCaretPosition(int position){if(position<0||position>doc.getLength())throw new IllegalArgumentException("caret position");caret.setDot(position);}
+    public void moveCaretPosition(int position){if(position<0||position>doc.getLength())throw new IllegalArgumentException("caret position");caret.moveDot(position);}
+    public int getCaretPosition(){return caret.getDot();}
+    public void addCaretListener(CaretListener listener){caretListeners.add(CaretListener.class,listener);}public void removeCaretListener(CaretListener listener){caretListeners.remove(CaretListener.class,listener);}
+    public CaretListener[] getCaretListeners(){return caretListeners.getListeners(CaretListener.class);}
+    public Caret getCaret(){return caret;}public Highlighter getHighlighter(){return highlighter;}
+    public void setHighlighter(Highlighter value){Highlighter old=highlighter;if(old!=null)old.deinstall(this);highlighter=value;if(value!=null)value.install(this);firePropertyChange("highlighter",old,value);repaint();}
+    public void setCaret(Caret value){if(value==null)throw new IllegalArgumentException("caret");Caret old=caret;if(old!=null){old.removeChangeListener(caretChanged);old.deinstall(this);}caret=value;value.install(this);value.addChangeListener(caretChanged);firePropertyChange("caret",old,value);repaint();}
+    public void setSelectedTextColor(java.awt.Color value){java.awt.Color old=selectedTextColor;selectedTextColor=value;firePropertyChange("selectedTextColor",old,value);repaint();}public java.awt.Color getSelectedTextColor(){return selectedTextColor;}
+    public void setSelectionColor(java.awt.Color value){java.awt.Color old=selectionColor;selectionColor=value;firePropertyChange("selectionColor",old,value);repaint();}public java.awt.Color getSelectionColor(){return selectionColor;}
+    public void setDisabledTextColor(java.awt.Color value){java.awt.Color old=disabledTextColor;disabledTextColor=value;firePropertyChange("disabledTextColor",old,value);repaint();}public java.awt.Color getDisabledTextColor(){return disabledTextColor;}
+    public void setCaretColor(java.awt.Color value){java.awt.Color old=caretColor;caretColor=value;firePropertyChange("caretColor",old,value);repaint();}public java.awt.Color getCaretColor(){return caretColor;}
+    public void replaceSelection(String value){if(!isEditable())return;int start=getSelectionStart(),length=getSelectionEnd()-start;try{if(doc instanceof AbstractDocument)((AbstractDocument)doc).replace(start,length,value,null);else{doc.remove(start,length);doc.insertString(start,value,null);}setCaretPosition(Math.min(doc.getLength(),start+(value==null?0:value.length())));}catch(BadLocationException e){throw new IllegalArgumentException(e);}}
+    public void copy(){String value=getSelectedText();if(value!=null)getToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(value),null);}
+    public void cut(){if(isEditable()){copy();replaceSelection("");}}
+    public void paste(){if(!isEditable())return;try{java.awt.datatransfer.Transferable value=getToolkit().getSystemClipboard().getContents(this);if(value!=null&&value.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.stringFlavor))replaceSelection((String)value.getTransferData(java.awt.datatransfer.DataFlavor.stringFlavor));}catch(java.awt.datatransfer.UnsupportedFlavorException|java.io.IOException ignored){}}
+    public java.awt.Rectangle modelToView(int offset)throws BadLocationException{if(offset<0||offset>doc.getLength())throw new BadLocationException("offset",offset);String before=doc.getText(0,offset);int newline=before.lastIndexOf('\n');int row=0;for(int i=0;i<before.length();i++)if(before.charAt(i)=='\n')row++;java.awt.FontMetrics fm=getFontMetrics(getFont());java.awt.Insets in=getInsets();return new java.awt.Rectangle(in.left+fm.stringWidth(before.substring(newline+1)),in.top+row*fm.getHeight(),1,fm.getHeight());}
+    public int viewToModel(java.awt.Point point){java.awt.FontMetrics fm=getFontMetrics(getFont());java.awt.Insets in=getInsets();int row=Math.max(0,(point.y-in.top)/Math.max(1,fm.getHeight()));String value=getText();int start=0;while(row-->0){int n=value.indexOf('\n',start);if(n<0)return value.length();start=n+1;}int end=value.indexOf('\n',start);if(end<0)end=value.length();for(int i=start;i<end;i++)if(fm.stringWidth(value.substring(start,i+1))>point.x-in.left)return i;return end;}
 }

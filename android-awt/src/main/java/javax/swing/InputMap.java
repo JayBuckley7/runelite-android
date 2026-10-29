@@ -23,7 +23,7 @@ public class InputMap implements Serializable {
     public void clear() { map.clear(); }
     public int size() { return map.size(); }
     public KeyStroke[] keys() { return map.keySet().toArray(new KeyStroke[0]); }
-    public KeyStroke[] allKeys() { return keys(); }
+    public KeyStroke[] allKeys() { java.util.Set<KeyStroke> all = new java.util.LinkedHashSet<>(map.keySet()); if (parent != null && parent.allKeys() != null) java.util.Collections.addAll(all, parent.allKeys()); return all.toArray(new KeyStroke[0]); }
 
     public void setParent(InputMap parent) { this.parent = parent; }
     public InputMap getParent() { return parent; }

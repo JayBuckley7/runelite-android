@@ -28,11 +28,12 @@ public abstract class Toolkit {
     }
 
     public Dimension getScreenSize() {
-        return new Dimension(0, 0);
+        Rectangle bounds = net.runelite.awt.impl.HeadlessGraphicsConfiguration.INSTANCE.getBounds();
+        return new Dimension(bounds.width, bounds.height);
     }
 
     public int getScreenResolution() {
-        return 96;
+        return net.runelite.awt.impl.HeadlessGraphicsConfiguration.getResolution();
     }
 
     public ColorModel getColorModel() {
@@ -65,6 +66,8 @@ public abstract class Toolkit {
         try { return javax.imageio.ImageIO.read(url); }
         catch (Throwable ignored) { return null; }
     }
+
+    public Image createImage(java.awt.image.ImageProducer producer) { return new java.awt.image.ProducerImage(producer); }
 
     public Image createImage(String filename) { return getImage(filename); }
     public Image createImage(java.net.URL url) { return getImage(url); }

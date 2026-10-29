@@ -26,15 +26,26 @@ public class JComponent extends Container {
     private float alignmentX = 0.5f;
     private float alignmentY = 0.5f;
 
-    public JComponent() {}
-
+    public JComponent() {
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & (java.awt.event.HierarchyEvent.PARENT_CHANGED | java.awt.event.HierarchyEvent.SHOWING_CHANGED)) == 0) return;
+            boolean attached = getParent() != null && isVisible();
+            int id = attached ? javax.swing.event.AncestorEvent.ANCESTOR_ADDED : javax.swing.event.AncestorEvent.ANCESTOR_REMOVED;
+            javax.swing.event.AncestorEvent event = new javax.swing.event.AncestorEvent(this, id,
+                e.getChanged() instanceof Container ? (Container)e.getChanged() : getParent(), e.getChangedParent());
+            for (AncestorListener listener : ancestorListeners.getListeners(AncestorListener.class)) {
+                if (attached) listener.ancestorAdded(event); else listener.ancestorRemoved(event);
+            }
+        });
+    }
+    private final javax.swing.event.EventListenerList ancestorListeners = new javax.swing.event.EventListenerList();
     public Border getBorder() { return border; }
     // Border drives getInsets(), which every layout manager reads — a border change is a
     // layout change.
-    public void setBorder(Border border) { this.border = border; invalidate(); }
+    public void setBorder(Border border) { Border old = this.border; this.border = border; firePropertyChange("border", old, border); revalidate(); repaint(); }
 
     public String getToolTipText() { return toolTipText; }
-    public void setToolTipText(String text) { this.toolTipText = text; }
+    public void setToolTipText(String text) { String old = this.toolTipText; this.toolTipText = text; firePropertyChange(TOOL_TIP_TEXT_KEY, old, text); }
 
     // Sizing is inherited from Component — JComponent used to keep parallel `preferred` /
     // `minimum` / `maximum` fields, but that made `isPreferredSizeSet()` (which reads
@@ -77,41 +88,89 @@ public class JComponent extends Container {
     public boolean isDoubleBuffered() { return doubleBuffered; }
     public void setDoubleBuffered(boolean d) { this.doubleBuffered = d; }
     public boolean isOpaque() { return opaque; }
-    public void setOpaque(boolean o) { this.opaque = o; }
+    public void setOpaque(boolean o) { boolean old = opaque; this.opaque = o; firePropertyChange("opaque", old, o); repaint(); }
 
     public float getAlignmentX() { return alignmentX; }
     public void setAlignmentX(float f) { this.alignmentX = f; }
     public float getAlignmentY() { return alignmentY; }
     public void setAlignmentY(float f) { this.alignmentY = f; }
 
-    public void addPropertyChangeListener(PropertyChangeListener l) {}
-    public void removePropertyChangeListener(PropertyChangeListener l) {}
-    public void addPropertyChangeListener(String name, PropertyChangeListener l) {}
-    public void removePropertyChangeListener(String name, PropertyChangeListener l) {}
-    public void firePropertyChange(String propertyName, Object oldValue, Object newValue) {}
-
-    public void addAncestorListener(AncestorListener l) {}
-    public void removeAncestorListener(AncestorListener l) {}
+    public void addAncestorListener(AncestorListener l) { ancestorListeners.add(AncestorListener.class, l); }
+    public void removeAncestorListener(AncestorListener l) { ancestorListeners.remove(AncestorListener.class, l); }
+    public AncestorListener[] getAncestorListeners() { return ancestorListeners.getListeners(AncestorListener.class); }
 
     public javax.swing.plaf.ComponentUI getUI() { return ui; }
-    public void setUI(javax.swing.plaf.ComponentUI ui) { this.ui = ui; }
+    public void setUI(javax.swing.plaf.ComponentUI ui) { javax.swing.plaf.ComponentUI old=this.ui;if(old!=null)old.uninstallUI(this);this.ui=ui;if(ui!=null)ui.installUI(this);firePropertyChange("UI",old,ui);revalidate();repaint(); }
     public String getUIClassID() { return "ComponentUI"; }
 
-    public void updateUI() {}
+    public void updateUI() { javax.swing.plaf.ComponentUI delegate=UIManager.getUI(this);if(delegate!=null)setUI(delegate); }
 
     public void repaint(java.awt.Rectangle r) {
         repaint(0, r.x, r.y, r.width, r.height);
     }
 
-    public ActionMap getActionMap() { return new ActionMap(); }
-    public void setActionMap(ActionMap am) {}
-    public InputMap getInputMap() { return new InputMap(); }
-    public InputMap getInputMap(int condition) { return new InputMap(); }
-    public void setInputMap(int condition, InputMap map) {}
-
-    public void registerKeyboardAction(ActionListener anAction, KeyStroke aKeyStroke, int aCondition) {}
-    public void registerKeyboardAction(ActionListener anAction, String aCommand, KeyStroke aKeyStroke, int aCondition) {}
-    public void unregisterKeyboardAction(KeyStroke aKeyStroke) {}
+    private ActionMap actionMap;
+    private final InputMap[] inputMaps = new InputMap[3];
+    public ActionMap getActionMap() { if (actionMap == null) actionMap = new ActionMap(); return actionMap; }
+    public void setActionMap(ActionMap map) { actionMap = map; }
+    public InputMap getInputMap() { return getInputMap(WHEN_FOCUSED); }
+    public InputMap getInputMap(int condition) {
+        checkCondition(condition);
+        if (inputMaps[condition] == null) inputMaps[condition] = new InputMap();
+        return inputMaps[condition];
+    }
+    public void setInputMap(int condition, InputMap map) { checkCondition(condition); inputMaps[condition] = map; }
+    private void checkCondition(int condition) { if (condition < 0 || condition > 2) throw new IllegalArgumentException("condition"); }
+    public void registerKeyboardAction(ActionListener listener, KeyStroke stroke, int condition) { registerKeyboardAction(listener, null, stroke, condition); }
+    public void registerKeyboardAction(ActionListener listener, String command, KeyStroke stroke, int condition) {
+        if (listener == null || stroke == null) return;
+        Object key = new Object();
+        getInputMap(condition).put(stroke, key);
+        getActionMap().put(key, new AbstractAction(command) {
+            { putValue(Action.ACTION_COMMAND_KEY, command); }
+            public void actionPerformed(java.awt.event.ActionEvent e) { listener.actionPerformed(e); }
+        });
+    }
+    public void unregisterKeyboardAction(KeyStroke stroke) {
+        for (InputMap map : inputMaps) if (map != null) { Object key = map.get(stroke); map.remove(stroke); if (key != null && actionMap != null) actionMap.remove(key); }
+    }
+    public KeyStroke[] getRegisteredKeyStrokes() {
+        java.util.Set<KeyStroke> result = new java.util.LinkedHashSet<>();
+        for (InputMap map : inputMaps) if (map != null && map.allKeys() != null) java.util.Collections.addAll(result, map.allKeys());
+        return result.toArray(new KeyStroke[0]);
+    }
+    public int getConditionForKeyStroke(KeyStroke stroke) { for (int i=0;i<3;i++) if (inputMaps[i] != null && inputMaps[i].get(stroke) != null) return i; return UNDEFINED_CONDITION; }
+    public ActionListener getActionForKeyStroke(KeyStroke stroke) {
+        int condition = getConditionForKeyStroke(stroke);
+        return condition < 0 || actionMap == null ? null : actionMap.get(inputMaps[condition].get(stroke));
+    }
+    protected boolean processKeyBinding(KeyStroke stroke, java.awt.event.KeyEvent event, int condition, boolean pressed) {
+        if (!isEnabled() || inputMaps[condition] == null || actionMap == null) return false;
+        Action action = actionMap.get(inputMaps[condition].get(stroke));
+        if (action == null || !action.isEnabled()) return false;
+        Object command = action.getValue(Action.ACTION_COMMAND_KEY);
+        action.actionPerformed(new java.awt.event.ActionEvent(this, java.awt.event.ActionEvent.ACTION_PERFORMED,
+            command == null ? String.valueOf(event.getKeyChar()) : command.toString(), event.getWhen(), event.getModifiers()));
+        event.consume(); return true;
+    }
+    /** Host entry point after normal KeyListeners and before game-wide fallback. */
+    public boolean hostProcessKeyBinding(java.awt.event.KeyEvent event) {
+        if (event.isConsumed()) return false;
+        KeyStroke stroke = KeyStroke.getKeyStrokeForEvent(event);
+        if (processKeyBinding(stroke, event, WHEN_FOCUSED, event.getID() == java.awt.event.KeyEvent.KEY_PRESSED)) return true;
+        java.awt.Component root = this;
+        for (Container p = getParent(); p != null; p = p.getParent()) {
+            root = p;
+            if (p instanceof JComponent && ((JComponent)p).processKeyBinding(stroke, event, WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, event.getID() == java.awt.event.KeyEvent.KEY_PRESSED)) return true;
+        }
+        return windowBinding(root, stroke, event);
+    }
+    private static boolean windowBinding(java.awt.Component component, KeyStroke stroke, java.awt.event.KeyEvent event) {
+        if (!component.isVisible() || !component.isEnabled()) return false;
+        if (component instanceof JComponent && ((JComponent)component).processKeyBinding(stroke, event, WHEN_IN_FOCUSED_WINDOW, event.getID() == java.awt.event.KeyEvent.KEY_PRESSED)) return true;
+        if (component instanceof Container) for (java.awt.Component child : ((Container)component).getComponents()) if (windowBinding(child, stroke, event)) return true;
+        return false;
+    }
 
     private java.util.Map<Object, Object> clientProperties;
     public void putClientProperty(Object key, Object value) {
@@ -165,18 +224,19 @@ public class JComponent extends Container {
         return r;
     }
 
-    public boolean requestFocusInWindow() { return false; }
-    public void grabFocus() {}
-    public void resetKeyboardActions() {}
+    public boolean requestFocusInWindow() { return super.requestFocusInWindow(); }
+    public void grabFocus() { requestFocus(); }
+    public void resetKeyboardActions() { for (int i=0;i<3;i++) inputMaps[i]=null; actionMap=null; }
 
-    public boolean getInheritsPopupMenu() { return false; }
-    public void setInheritsPopupMenu(boolean value) {}
+    private boolean inheritsPopupMenu;
+    public boolean getInheritsPopupMenu() { return inheritsPopupMenu; }
+    public void setInheritsPopupMenu(boolean value) { inheritsPopupMenu = value; }
 
     public java.awt.Insets getInsets() { return border != null ? border.getBorderInsets(this) : super.getInsets(); }
 
     private JPopupMenu componentPopupMenu;
     public void setComponentPopupMenu(JPopupMenu menu) { this.componentPopupMenu = menu; }
-    public JPopupMenu getComponentPopupMenu() { return componentPopupMenu; }
+    public JPopupMenu getComponentPopupMenu() { if (componentPopupMenu == null && inheritsPopupMenu && getParent() instanceof JComponent) return ((JComponent)getParent()).getComponentPopupMenu(); return componentPopupMenu; }
 
     @Override
     public void paint(java.awt.Graphics g) {
@@ -193,7 +253,7 @@ public class JComponent extends Container {
     }
 
     protected void paintComponent(java.awt.Graphics g) {
-        // Subclass hook — JLabel/JButton/etc draw text, icons, etc here.
+        if(!paintingDefault&&ui!=null)ui.update(g,this);
     }
 
     protected void paintBorder(java.awt.Graphics g) {
@@ -201,6 +261,11 @@ public class JComponent extends Container {
             border.paintBorder(this, g, 0, 0, getWidth(), getHeight());
         }
     }
+
+    private boolean paintingDefault;
+    protected final boolean paintDelegate(java.awt.Graphics g){if(ui==null||paintingDefault)return false;ui.update(g,this);return true;}
+    public final void hostPaintDefaultComponent(java.awt.Graphics g){boolean old=paintingDefault;paintingDefault=true;try{paintComponent(g);}finally{paintingDefault=old;}}
+    public final java.awt.Dimension hostDefaultPreferredSize(){return getPreferredSize();}
 
     /** Host-side bridges so the Compose paint walker can invoke our protected paint hooks. */
     public final void hostPaintComponent(java.awt.Graphics g) { paintComponent(g); }

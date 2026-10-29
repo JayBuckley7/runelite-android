@@ -21,10 +21,42 @@ public abstract class KeyboardFocusManager {
         current = mgr;
     }
 
-    public Component getFocusOwner() { return null; }
-    public Window getFocusedWindow() { return null; }
-    public Window getActiveWindow() { return null; }
-    public void clearGlobalFocusOwner() {}
+    private volatile Component focusOwner;
+    public Component getFocusOwner() { return focusOwner; }
+    public Component getPermanentFocusOwner() { return focusOwner; }
+    public Window getFocusedWindow() { return windowOf(focusOwner); }
+    public Window getActiveWindow() { return getFocusedWindow(); }
+    private static Window windowOf(Component component) {
+        while (component != null && !(component instanceof Window)) component = component.getParent();
+        return (Window) component;
+    }
+    public void clearGlobalFocusOwner() { changeFocus(null); }
+    public boolean requestFocus(Component component) {
+        if (component == null || !component.isEnabled() || !component.isVisible() || !component.isFocusable()) return false;
+        for (Component p = component.getParent(); p != null; p = p.getParent()) if (!p.isVisible()) return false;
+        Window window = windowOf(component);
+        if (window != null && !window.isFocusableWindow()) return false;
+        changeFocus(component); return true;
+    }
+    public void clearFocusIn(Component subtree) {
+        for (Component p = focusOwner; p != null; p = p.getParent()) if (p == subtree) { changeFocus(null); return; }
+    }
+    private synchronized void changeFocus(Component next) {
+        Component old = focusOwner;
+        if (old == next) return;
+        Window oldWindow = windowOf(old), nextWindow = windowOf(next);
+        focusOwner = next;
+        if (old != null) old.dispatchEvent(new java.awt.event.FocusEvent(old, java.awt.event.FocusEvent.FOCUS_LOST, false, next));
+        if (oldWindow != nextWindow && oldWindow != null) {
+            oldWindow.dispatchEvent(new java.awt.event.WindowEvent(oldWindow, java.awt.event.WindowEvent.WINDOW_LOST_FOCUS));
+            oldWindow.dispatchEvent(new java.awt.event.WindowEvent(oldWindow, java.awt.event.WindowEvent.WINDOW_DEACTIVATED));
+        }
+        if (next != null) next.dispatchEvent(new java.awt.event.FocusEvent(next, java.awt.event.FocusEvent.FOCUS_GAINED, false, old));
+        if (oldWindow != nextWindow && nextWindow != null) {
+            nextWindow.dispatchEvent(new java.awt.event.WindowEvent(nextWindow, java.awt.event.WindowEvent.WINDOW_ACTIVATED));
+            nextWindow.dispatchEvent(new java.awt.event.WindowEvent(nextWindow, java.awt.event.WindowEvent.WINDOW_GAINED_FOCUS));
+        }
+    }
 
     public abstract boolean dispatchEvent(AWTEvent e);
     public abstract boolean dispatchKeyEvent(KeyEvent e);

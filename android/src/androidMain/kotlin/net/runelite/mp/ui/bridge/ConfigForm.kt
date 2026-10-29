@@ -22,7 +22,7 @@ internal data class ConfigForm(
     val values: Map<String, String?>,
 )
 {
-    enum class Kind { BOOL, INT, STRING, ENUM, COLOR, DOUBLE, DIMENSION, MULTI, NOTIFICATION, FONT, OTHER }
+    enum class Kind { BOOL, INT, STRING, ENUM, COLOR, DOUBLE, DIMENSION, MULTI, NOTIFICATION, FONT, KEYBIND, MODIFIERLESS_KEYBIND, OTHER }
 
     data class Section(val key: String, val name: String, val closedByDefault: Boolean)
 
@@ -139,6 +139,8 @@ internal data class ConfigForm(
                 clazz == Double::class.javaPrimitiveType || clazz == java.lang.Double::class.java ->
                     base.copy(kind = Kind.DOUBLE, min = item.range?.min ?: 0, max = item.range?.max, units = item.units?.value)
                 clazz == java.awt.Dimension::class.java -> base.copy(kind = Kind.DIMENSION)
+                clazz == net.runelite.client.config.Keybind::class.java -> base.copy(kind = Kind.KEYBIND)
+                clazz == net.runelite.client.config.ModifierlessKeybind::class.java -> base.copy(kind = Kind.MODIFIERLESS_KEYBIND)
                 clazz == net.runelite.client.config.Notification::class.java -> base.copy(kind = Kind.NOTIFICATION)
                 clazz == net.runelite.client.config.FontType::class.java -> base.copy(kind = Kind.FONT,
                     options = (listOf(net.runelite.client.config.FontType.REGULAR.family, net.runelite.client.config.FontType.BOLD.family,

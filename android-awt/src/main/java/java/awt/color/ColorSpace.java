@@ -48,13 +48,15 @@ public abstract class ColorSpace implements Serializable {
     public static ColorSpace getInstance(int colorspace) {
         switch (colorspace) {
             case CS_sRGB:
-            case CS_LINEAR_RGB:
                 return SRGB;
+            case CS_LINEAR_RGB:
+                return LINEAR;
             case CS_GRAY:
                 return GRAY;
             case CS_CIEXYZ:
-            case CS_PYCC:
                 return CIEXYZ;
+            case CS_PYCC:
+                throw new IllegalArgumentException("Photo YCC profiles are not available");
             default:
                 throw new IllegalArgumentException("Unknown color space: " + colorspace);
         }
@@ -98,21 +100,32 @@ public abstract class ColorSpace implements Serializable {
     public abstract float[] toCIEXYZ(float[] colorvalue);
     public abstract float[] fromCIEXYZ(float[] colorvalue);
 
-    // sRGB singleton — RuneLite only needs identity transforms over sRGB.
-    private static final ColorSpace SRGB = new SimpleColorSpace(TYPE_RGB, 3);
-    private static final ColorSpace GRAY = new SimpleColorSpace(TYPE_GRAY, 1);
-    private static final ColorSpace CIEXYZ = new SimpleColorSpace(TYPE_XYZ, 3);
-
-    private static final class SimpleColorSpace extends ColorSpace {
-        private static final long serialVersionUID = 1L;
-
-        SimpleColorSpace(int type, int n) {
-            super(type, n);
+    private static final ColorSpace SRGB=new SimpleColorSpace(TYPE_RGB,3,false);
+    private static final ColorSpace LINEAR=new SimpleColorSpace(TYPE_RGB,3,true);
+    private static final ColorSpace GRAY=new SimpleColorSpace(TYPE_GRAY,1,true);
+    private static final ColorSpace CIEXYZ=new SimpleColorSpace(TYPE_XYZ,3,true);
+    private static double linear(double v){return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4);}
+    private static float encoded(double v){return (float)Math.max(0,Math.min(1,v<=0.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-0.055));}
+    private static final class SimpleColorSpace extends ColorSpace{
+        private final boolean linear;
+        SimpleColorSpace(int type,int count,boolean linear){super(type,count);this.linear=linear;}
+        public float[] toRGB(float[] v){
+            if(getType()==TYPE_GRAY)return new float[]{encoded(v[0]),encoded(v[0]),encoded(v[0])};
+            if(getType()==TYPE_XYZ)return new float[]{encoded(3.1338561*v[0]-1.6168667*v[1]-0.4906146*v[2]),encoded(-0.9787684*v[0]+1.9161415*v[1]+0.0334540*v[2]),encoded(0.0719453*v[0]-0.2289914*v[1]+1.4052427*v[2])};
+            return linear?new float[]{encoded(v[0]),encoded(v[1]),encoded(v[2])}:v.clone();
         }
-
-        @Override public float[] toRGB(float[] v) { return v.clone(); }
-        @Override public float[] fromRGB(float[] v) { return v.clone(); }
-        @Override public float[] toCIEXYZ(float[] v) { return v.clone(); }
-        @Override public float[] fromCIEXYZ(float[] v) { return v.clone(); }
+        public float[] fromRGB(float[] v){
+            if(getType()==TYPE_XYZ)return SRGB.toCIEXYZ(v);
+            double r=linear(v[0]),g=linear(v[1]),b=linear(v[2]);
+            if(getType()==TYPE_GRAY)return new float[]{(float)(0.2225045*r+0.7168786*g+0.0606169*b)};
+            return linear?new float[]{(float)r,(float)g,(float)b}:v.clone();
+        }
+        public float[] toCIEXYZ(float[] v){
+            if(getType()==TYPE_XYZ)return v.clone();
+            if(getType()==TYPE_GRAY)return new float[]{0.9642f*v[0],v[0],0.8249f*v[0]};
+            double r=linear?v[0]:linear(v[0]),g=linear?v[1]:linear(v[1]),b=linear?v[2]:linear(v[2]);
+            return new float[]{(float)(0.4360747*r+0.3850649*g+0.1430804*b),(float)(0.2225045*r+0.7168786*g+0.0606169*b),(float)(0.0139322*r+0.0971045*g+0.7141733*b)};
+        }
+        public float[] fromCIEXYZ(float[] v){if(getType()==TYPE_XYZ)return v.clone();if(getType()==TYPE_GRAY)return new float[]{v[1]};return fromRGB(CIEXYZ.toRGB(v));}
     }
 }

@@ -19,8 +19,11 @@ public class ItemEvent extends AWTEvent {
         this.item = item;
         this.stateChange = stateChange;
     }
+    public ItemEvent(java.awt.ItemSelectable source, int id, Object item, int stateChange) {
+        this((Object) source, id, item, stateChange);
+    }
 
     public Object getItem() { return item; }
     public int getStateChange() { return stateChange; }
-    public Object getItemSelectable() { return source; }
+    public java.awt.ItemSelectable getItemSelectable() { return (java.awt.ItemSelectable) source; }
 }

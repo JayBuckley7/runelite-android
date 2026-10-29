@@ -26,17 +26,30 @@ public class UIDefaults extends Hashtable<Object, Object> {
     public boolean getBoolean(Object key) { Object v = get(key); return v instanceof Boolean && (Boolean) v; }
     public String getString(Object key) { Object v = get(key); return v == null ? null : v.toString(); }
 
-    public Object get(Object key, Locale l) { return get(key); }
+    public synchronized Object get(Object key,Locale locale) {
+        Object value=super.get(key);
+        if(value instanceof LazyValue){value=((LazyValue)value).createValue(this);if(value==null)super.remove(key);else super.put(key,value);}
+        else if(value instanceof ActiveValue)value=((ActiveValue)value).createValue(this);
+        if(value==null&&key instanceof String)for(int i=bundles.size()-1;i>=0;i--)try{return java.util.ResourceBundle.getBundle(bundles.get(i),locale==null?defaultLocale:locale).getObject((String)key);}catch(java.util.MissingResourceException missing){}
+        return value;
+    }
     public Color getColor(Object key, Locale l) { return getColor(key); }
     public Font getFont(Object key, Locale l) { return getFont(key); }
 
-    public void addPropertyChangeListener(PropertyChangeListener l) {}
-    public void removePropertyChangeListener(PropertyChangeListener l) {}
-    public PropertyChangeListener[] getPropertyChangeListeners() { return new PropertyChangeListener[0]; }
-
-    public void addResourceBundle(String bundleName) {}
-    public void removeResourceBundle(String bundleName) {}
-
-    public Class<? extends ComponentUI> getUIClass(String uiClassID) { return null; }
-    public ComponentUI getUI(JComponent target) { return null; }
+    private final java.beans.PropertyChangeSupport changes=new java.beans.PropertyChangeSupport(this);
+    private final java.util.List<String> bundles=new java.util.ArrayList<>();
+    private Locale defaultLocale=Locale.getDefault();
+    @Override public Object get(Object key){return get(key,defaultLocale);}
+    @Override public synchronized Object put(Object key,Object value){Object old=value==null?super.remove(key):super.put(key,value);if(key instanceof String)changes.firePropertyChange((String)key,old,value);return old;}
+    public void putDefaults(Object[] values){for(int i=0;i+1<values.length;i+=2){if(values[i+1]==null)super.remove(values[i]);else super.put(values[i],values[i+1]);}changes.firePropertyChange("UIDefaults",null,null);}
+    public void setDefaultLocale(Locale locale){defaultLocale=locale;}
+    public Locale getDefaultLocale(){return defaultLocale;}
+    public void addPropertyChangeListener(PropertyChangeListener l){changes.addPropertyChangeListener(l);}
+    public void removePropertyChangeListener(PropertyChangeListener l){changes.removePropertyChangeListener(l);}
+    public PropertyChangeListener[] getPropertyChangeListeners(){return changes.getPropertyChangeListeners();}
+    public void addResourceBundle(String name){if(name!=null&&!bundles.contains(name))bundles.add(name);}
+    public void removeResourceBundle(String name){bundles.remove(name);}
+    public Class<? extends ComponentUI> getUIClass(String id){return getUIClass(id,Thread.currentThread().getContextClassLoader());}
+    public Class<? extends ComponentUI> getUIClass(String id,ClassLoader loader){Object value=get(id);try{return value instanceof Class?((Class<?>)value).asSubclass(ComponentUI.class):value instanceof String?Class.forName((String)value,true,loader).asSubclass(ComponentUI.class):null;}catch(ReflectiveOperationException|ClassCastException e){return null;}}
+    public ComponentUI getUI(JComponent target){Class<? extends ComponentUI> type=getUIClass(target.getUIClassID());if(type==null)return null;try{return (ComponentUI)type.getMethod("createUI",JComponent.class).invoke(null,target);}catch(ReflectiveOperationException e){throw new IllegalStateException("Cannot create UI "+type.getName(),e);}}
 }

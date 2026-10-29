@@ -92,8 +92,10 @@ public class JViewport extends JComponent {
             // scrollable content can grow; horizontal stays clamped to viewport.
             Dimension pref = view.getPreferredSize();
             int h = Math.max(getHeight(), pref.height);
-            boolean wideTable = view instanceof JTable || view instanceof javax.swing.table.JTableHeader;
-            view.setSize(wideTable ? Math.max(getWidth(), pref.width) : getWidth(), h);
+            boolean tracksWidth=!(view instanceof Scrollable)||((Scrollable)view).getScrollableTracksViewportWidth();
+            boolean tracksHeight=view instanceof Scrollable&&((Scrollable)view).getScrollableTracksViewportHeight();
+            boolean wideTable=view instanceof JTable||view instanceof javax.swing.table.JTableHeader;
+            view.setSize(tracksWidth&&!wideTable?getWidth():Math.max(getWidth(),pref.width),tracksHeight?getHeight():h);
             // Re-clamp + re-apply scroll in case the view shrunk. Always fires: the extent
             // or view size may have changed even when the position didn't, and the
             // scroll pane's scrollbars track all three.
@@ -121,7 +123,7 @@ public class JViewport extends JComponent {
         return new Dimension(4, 4);
     }
 
-    public void setExtentSize(Dimension newExtent) {}
+    public void setExtentSize(Dimension newExtent) { if(newExtent==null)throw new NullPointerException("extent");if(!newExtent.equals(getSize())){setSize(newExtent);fireStateChanged();} }
     public int getScrollMode() { return scrollMode; }
     public void setScrollMode(int mode) { this.scrollMode = mode; }
     public void addChangeListener(ChangeListener l) { if (l != null) changeListeners.add(l); }

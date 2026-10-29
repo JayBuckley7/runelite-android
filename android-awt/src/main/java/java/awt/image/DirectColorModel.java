@@ -45,27 +45,32 @@ public class DirectColorModel extends ColorModel {
 
     @Override
     public int getRed(int pixel) {
-        return (pixel & redMask) >>> redShift;
+        return getColorSpace().isCS_sRGB() ? unpremultiply(component(pixel,redMask), pixel) : getRGB(pixel) >>> 16 & 255;
     }
 
     @Override
     public int getGreen(int pixel) {
-        return (pixel & greenMask) >>> greenShift;
+        return getColorSpace().isCS_sRGB() ? unpremultiply(component(pixel,greenMask), pixel) : getRGB(pixel) >>> 8 & 255;
     }
 
     @Override
     public int getBlue(int pixel) {
-        return (pixel & blueMask) >>> blueShift;
+        return getColorSpace().isCS_sRGB() ? unpremultiply(component(pixel,blueMask), pixel) : getRGB(pixel) & 255;
     }
 
     @Override
     public int getAlpha(int pixel) {
-        return alphaMask == 0 ? 255 : ((pixel & alphaMask) >>> alphaShift);
+        return alphaMask == 0 ? 255 : component(pixel,alphaMask);
     }
 
     @Override
     public int getRGB(int pixel) {
-        return (getAlpha(pixel) << 24) | (getRed(pixel) << 16) | (getGreen(pixel) << 8) | getBlue(pixel);
+        int a=getAlpha(pixel),r=unpremultiply(component(pixel,redMask),pixel),g=unpremultiply(component(pixel,greenMask),pixel),b=unpremultiply(component(pixel,blueMask),pixel);
+        if(!getColorSpace().isCS_sRGB()){
+            float[] rgb=getColorSpace().toRGB(new float[]{r/255f,g/255f,b/255f});
+            r=Math.max(0,Math.min(255,Math.round(rgb[0]*255)));g=Math.max(0,Math.min(255,Math.round(rgb[1]*255)));b=Math.max(0,Math.min(255,Math.round(rgb[2]*255)));
+        }
+        return a<<24|r<<16|g<<8|b;
     }
 
     @Override
@@ -76,6 +81,24 @@ public class DirectColorModel extends ColorModel {
         return new SinglePixelPackedSampleModel(transferType, w, h, masks);
     }
 
+    private int unpremultiply(int component, int pixel) { int alpha = getAlpha(pixel); return !isAlphaPremultiplied() ? component : alpha == 0 ? 0 : Math.min(255, (component * 255 + alpha / 2) / alpha); }
+    private static int component(int pixel,int mask){if(mask==0)return 0;int shift=Integer.numberOfTrailingZeros(mask);long max=(mask&0xffffffffL)>>>shift;return (int)((((pixel&mask)&0xffffffffL)>>>shift)*255/max);}
+    private static int pack(int value,int mask){if(mask==0)return 0;int shift=Integer.numberOfTrailingZeros(mask);long max=(mask&0xffffffffL)>>>shift;return (int)((value*max+127)/255)<<shift;}
+    @Override public Object getDataElements(int rgb,Object pixel){
+        Object p = pixel != null ? pixel : transferType == DataBuffer.TYPE_BYTE ? new byte[1] : transferType == DataBuffer.TYPE_USHORT ? new short[1] : new int[1];int a=rgb>>>24,r=(rgb>>>16)&255,g=(rgb>>>8)&255,b=rgb&255;
+        if(!getColorSpace().isCS_sRGB()){
+            float[] components=getColorSpace().fromRGB(new float[]{r/255f,g/255f,b/255f});
+            r=Math.round(components[0]*255);g=Math.round(components[1]*255);b=Math.round(components[2]*255);
+        }
+        if(isAlphaPremultiplied()){r=(r*a+127)/255;g=(g*a+127)/255;b=(b*a+127)/255;}
+        SampleModel.transferSet(p, 0, pack(r,redMask)|pack(g,greenMask)|pack(b,blueMask)|pack(a,alphaMask));return p;
+    }
+    @Override public boolean isCompatibleRaster(Raster raster) {
+        if (!(raster.getSampleModel() instanceof SinglePixelPackedSampleModel) || raster.getTransferType() != transferType) return false;
+        int[] masks = ((SinglePixelPackedSampleModel)raster.getSampleModel()).getBitMasks();
+        int[] expected = alphaMask == 0 ? new int[]{redMask, greenMask, blueMask} : new int[]{redMask, greenMask, blueMask, alphaMask};
+        return java.util.Arrays.equals(masks, expected);
+    }
     private static int trailingZeros(int mask) {
         if (mask == 0) return 0;
         int n = 0;

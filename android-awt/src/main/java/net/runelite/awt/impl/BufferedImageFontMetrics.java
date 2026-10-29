@@ -45,15 +45,17 @@ public final class BufferedImageFontMetrics extends FontMetrics {
     /** Android's Paint.setTextSize takes pixels; Java Font.size is conventionally points
      *  but the OSRS/RuneLite code paths treat it as pixels too, so pass through. */
     public static float pxSize(Font f) {
-        return Math.max(1f, (float) f.getSize());
+        return Math.max(1f, f.getSize2D());
+    }
+
+    public static android.graphics.Paint paintFor(Font font){
+        android.graphics.Paint paint=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setTextSize(pxSize(font));paint.setTypeface(typefaceFor(font));paint.setLetterSpacing(font.getTracking());return paint;
     }
 
     public BufferedImageFontMetrics(Font font) {
         super(font);
-        paint = new android.graphics.Paint();
-        paint.setAntiAlias(true);
-        paint.setTextSize(pxSize(font));
-        paint.setTypeface(typefaceFor(font));
+        paint = paintFor(font);
         android.graphics.Paint.FontMetrics afm = paint.getFontMetrics();
         this.ascent = Math.max(0, (int) Math.ceil(-afm.ascent));
         this.descent = Math.max(0, (int) Math.ceil(afm.descent));
@@ -128,7 +130,7 @@ public final class BufferedImageFontMetrics extends FontMetrics {
 
     @Override
     public int charWidth(int codePoint) {
-        return charWidth((char) codePoint);
+        return (int)Math.ceil(paint.measureText(new String(Character.toChars(codePoint))));
     }
 
     @Override

@@ -16,7 +16,7 @@ public class SimpleAttributeSet implements MutableAttributeSet, Cloneable, java.
     public AttributeSet copyAttributes() { SimpleAttributeSet a=new SimpleAttributeSet(this);a.parent=parent;return a; }
     public Object clone() { return copyAttributes(); }
     public void addAttribute(Object k,Object v) { values.put(k,v); }
-    public void addAttributes(AttributeSet a) { if(a==null)return;Enumeration<?> e=a.getAttributeNames();while(e.hasMoreElements()){Object k=e.nextElement();values.put(k,a.getAttribute(k));} }
+    public void addAttributes(AttributeSet a) { if(a==null)return;if(a.getResolveParent()!=null)parent=a.getResolveParent();Enumeration<?> e=a.getAttributeNames();while(e.hasMoreElements()){Object k=e.nextElement();values.put(k,a.getAttribute(k));} }
     public void removeAttribute(Object k) { values.remove(k); }
     public void removeAttributes(Enumeration<?> e) { while(e.hasMoreElements())values.remove(e.nextElement()); }
     public void removeAttributes(AttributeSet a) { List<Object> keys=new ArrayList<>();Enumeration<?> e=a.getAttributeNames();while(e.hasMoreElements()){Object k=e.nextElement();if(containsAttribute(k,a.getAttribute(k)))keys.add(k);}for(Object k:keys)values.remove(k); }

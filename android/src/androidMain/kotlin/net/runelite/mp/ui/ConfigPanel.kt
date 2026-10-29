@@ -238,6 +238,8 @@ private fun ConfigControl(
                 set(field.key, it)
             }
         }
+        ConfigForm.Kind.KEYBIND, ConfigForm.Kind.MODIFIERLESS_KEYBIND ->
+            net.runelite.mp.ui.widgets.KeybindSettingRow(field, current) { set(field.key, it) }
         ConfigForm.Kind.DOUBLE, ConfigForm.Kind.DIMENSION, ConfigForm.Kind.MULTI,
         ConfigForm.Kind.NOTIFICATION, ConfigForm.Kind.FONT ->
             net.runelite.mp.ui.widgets.ExtendedSettingRow(field, current) { set(field.key, it) }

@@ -4,6 +4,20 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 
 public class EventQueue {
+    private static final ThreadLocal<AWTEvent> CURRENT_EVENT = new ThreadLocal<>();
+    private static volatile long mostRecentEventTime = System.currentTimeMillis();
+    public static AWTEvent getCurrentEvent() { return isDispatchThread() ? CURRENT_EVENT.get() : null; }
+    public static long getMostRecentEventTime() { return isDispatchThread() ? mostRecentEventTime : System.currentTimeMillis(); }
+    static AWTEvent beginDispatch(AWTEvent event) {
+        AWTEvent previous = CURRENT_EVENT.get();
+        CURRENT_EVENT.set(event);
+        if (event instanceof java.awt.event.InputEvent)
+            mostRecentEventTime = Math.max(mostRecentEventTime, ((java.awt.event.InputEvent) event).getWhen());
+        else if (event instanceof java.awt.event.ActionEvent)
+            mostRecentEventTime = Math.max(mostRecentEventTime, ((java.awt.event.ActionEvent) event).getWhen());
+        return previous;
+    }
+    static void endDispatch(AWTEvent previous) { if (previous == null) CURRENT_EVENT.remove(); else CURRENT_EVENT.set(previous); }
     private final Deque<AWTEvent> queue = new ArrayDeque<>();
 
     public EventQueue() {

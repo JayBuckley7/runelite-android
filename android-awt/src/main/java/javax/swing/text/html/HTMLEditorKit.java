@@ -22,8 +22,8 @@ public class HTMLEditorKit extends EditorKit {
 
     @Override public String getContentType() { return "text/html"; }
     @Override public Action[] getActions() { return new Action[0]; }
-    @Override public Caret createCaret() { return null; }
-    @Override public Document createDefaultDocument() { return null; }
+    @Override public Caret createCaret() { return new javax.swing.text.DefaultCaret(); }
+    @Override public Document createDefaultDocument() { return new HTMLDocument(getStyleSheet()); }
     @Override public Object clone() { return new HTMLEditorKit(); }
 
     public StyleSheet getStyleSheet() {
@@ -32,5 +32,5 @@ public class HTMLEditorKit extends EditorKit {
     }
     public void setStyleSheet(StyleSheet s) { this.styles = s; }
 
-    public void insertHTML(javax.swing.text.html.HTMLDocument doc, int offset, String html, int popDepth, int pushDepth, javax.swing.text.html.HTML.Tag insertTag) throws BadLocationException, java.io.IOException {}
+    public void insertHTML(javax.swing.text.html.HTMLDocument doc, int offset, String html, int popDepth, int pushDepth, javax.swing.text.html.HTML.Tag insertTag) throws BadLocationException, java.io.IOException { doc.insertString(offset,html,null); }
 }

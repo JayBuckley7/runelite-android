@@ -17,6 +17,8 @@ public class ImageFilter implements ImageConsumer, Cloneable {
     }
     @Override public void imageComplete(int status) { if (consumer != null) consumer.imageComplete(status); }
 
+    public void resendTopDownLeftRight(ImageProducer source) { source.requestTopDownLeftRightResend(this); }
+
     public ImageFilter getFilterInstance(ImageConsumer ic) {
         try {
             ImageFilter copy = (ImageFilter) clone();

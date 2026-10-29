@@ -13,6 +13,9 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
     protected int horizontalScrollBarPolicy = HORIZONTAL_SCROLLBAR_AS_NEEDED;
     private Border viewportBorder;
     private JViewport columnHeader;
+    private JViewport rowHeader;
+    private boolean wheelScrollingEnabled=true;
+    private final java.util.Map<String,Component> corners=new java.util.HashMap<>();
 
     public JScrollPane() { init(); }
     public JScrollPane(Component view) { init(); setViewportView(view); }
@@ -90,6 +93,7 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
         JViewport vp = viewport;
         if (vp == null) return;
         if (columnHeader != null) columnHeader.setViewPosition(new java.awt.Point(vp.getViewPosition().x, 0));
+        if(rowHeader!=null)rowHeader.setViewPosition(new java.awt.Point(0,vp.getViewPosition().y));
         syncScrollBarsWithViewport();
     };
     private final java.awt.event.AdjustmentListener verticalListener = e -> {
@@ -138,7 +142,7 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
         // event on the scrollpane (or anywhere in its subtree, via the walk-up in
         // Compose's input bridge) actually scrolls the content.
         addMouseWheelListener(e -> {
-            if (e == null || viewport == null) return;
+            if (e == null || viewport == null || !wheelScrollingEnabled) return;
             // Use the view's preferred row height (≈ a JLabel line) as the unit, or the
             // scrollbar's increment when the pane asks for more (RuneLite sets 16+).
             int unit = Math.max(16, getFont() == null ? 16 : getFontMetrics(getFont()).getHeight());
@@ -153,13 +157,33 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
 
     @Override
     public void doLayout() {
-        if (viewport != null && getWidth() > 0 && getHeight() > 0) {
-            int headerHeight = columnHeader == null || columnHeader.getView() == null ? 0
-                : Math.min(getHeight(), columnHeader.getView().getPreferredSize().height);
-            if (columnHeader != null) columnHeader.setBounds(0, 0, getWidth(), headerHeight);
-            viewport.setBounds(0, headerHeight, getWidth(), Math.max(0, getHeight() - headerHeight));
-        }
+        if(viewport==null)return;
+        java.awt.Insets in=getInsets();int width=Math.max(0,getWidth()-in.left-in.right),height=Math.max(0,getHeight()-in.top-in.bottom);
+        int headerHeight=columnHeader==null||columnHeader.getView()==null?0:Math.min(height,columnHeader.getView().getPreferredSize().height);
+        int headerWidth=rowHeader==null||rowHeader.getView()==null?0:Math.min(width,rowHeader.getView().getPreferredSize().width);
+        // Native hosts supply the scrolling gesture/indicator. Reserve explicit corner
+        // slots without adding a second scrollbar over the default native viewport.
+        int right=cornerExtent(true),bottom=cornerExtent(false);
+        if(verticalScrollBarPolicy==VERTICAL_SCROLLBAR_NEVER)right=0;
+        if(horizontalScrollBarPolicy==HORIZONTAL_SCROLLBAR_NEVER)bottom=0;
+        right=Math.min(right,Math.max(0,width-headerWidth));bottom=Math.min(bottom,Math.max(0,height-headerHeight));
+        int viewWidth=Math.max(0,width-headerWidth-right),viewHeight=Math.max(0,height-headerHeight-bottom);
+        if(columnHeader!=null)columnHeader.setBounds(in.left+headerWidth,in.top,viewWidth,headerHeight);
+        if(rowHeader!=null)rowHeader.setBounds(in.left,in.top+headerHeight,headerWidth,viewHeight);
+        viewport.setBounds(in.left+headerWidth,in.top+headerHeight,viewWidth,viewHeight);
+        layoutCorner(UPPER_LEFT_CORNER,in.left,in.top,headerWidth,headerHeight);
+        layoutCorner(UPPER_RIGHT_CORNER,in.left+width-right,in.top,right,headerHeight);
+        layoutCorner(LOWER_LEFT_CORNER,in.left,in.top+height-bottom,headerWidth,bottom);
+        layoutCorner(LOWER_RIGHT_CORNER,in.left+width-right,in.top+height-bottom,right,bottom);
     }
+    private int cornerExtent(boolean vertical){
+        Component first=corners.get(vertical?UPPER_RIGHT_CORNER:LOWER_LEFT_CORNER),second=corners.get(LOWER_RIGHT_CORNER);
+        if(first==null&&second==null)return 0;
+        int result=16;
+        for(Component component:new Component[]{first,second})if(component!=null){java.awt.Dimension size=component.getPreferredSize();result=Math.max(result,vertical?size.width:size.height);}
+        return result;
+    }
+    private void layoutCorner(String key,int x,int y,int width,int height){Component component=corners.get(key);if(component!=null)component.setBounds(x,y,width,height);}
 
     /** ScrollPaneLayout's sizing: insets + the viewport's preferred size + the column header. */
     @Override
@@ -173,6 +197,9 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
             h += hd.height;
             w = Math.max(w, hd.width);
         }
+        if(rowHeader!=null&&rowHeader.getView()!=null){java.awt.Dimension rd=rowHeader.getView().getPreferredSize();w+=rd.width;h=Math.max(h,rd.height);}
+        if(verticalScrollBarPolicy!=VERTICAL_SCROLLBAR_NEVER)w+=cornerExtent(true);
+        if(horizontalScrollBarPolicy!=HORIZONTAL_SCROLLBAR_NEVER)h+=cornerExtent(false);
         return new java.awt.Dimension(w + in.left + in.right, h + in.top + in.bottom);
     }
 
@@ -231,8 +258,9 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
     public void setHorizontalScrollBarPolicy(int policy) { this.horizontalScrollBarPolicy = policy; }
     public Border getViewportBorder() { return viewportBorder; }
     public void setViewportBorder(Border viewportBorder) { this.viewportBorder = viewportBorder; }
-    public JViewport getRowHeader() { return null; }
-    public void setRowHeader(JViewport rowHeader) {}
+    public JViewport getRowHeader() { return rowHeader; }
+    public void setRowHeader(JViewport header) { JViewport old=rowHeader;if(old!=null)remove(old);rowHeader=header;if(header!=null)add(header);firePropertyChange("rowHeader",old,header);revalidate();repaint(); }
+    public void setRowHeaderView(Component view) { if(rowHeader==null)setRowHeader(new JViewport());rowHeader.setView(view);revalidate(); }
     public void setColumnHeaderView(Component view) {
         if (columnHeader == null) setColumnHeader(new JViewport());
         columnHeader.setView(view); revalidate(); repaint();
@@ -244,8 +272,9 @@ public class JScrollPane extends JComponent implements ScrollPaneConstants {
         if (header != null) add(header);
         revalidate(); repaint();
     }
-    public Component getCorner(String key) { return null; }
-    public void setCorner(String key, Component corner) {}
-    public void setWheelScrollingEnabled(boolean enable) {}
-    public boolean isWheelScrollingEnabled() { return true; }
+    private String cornerKey(String key) { if(UPPER_LEADING_CORNER.equals(key))return UPPER_LEFT_CORNER;if(UPPER_TRAILING_CORNER.equals(key))return UPPER_RIGHT_CORNER;if(LOWER_LEADING_CORNER.equals(key))return LOWER_LEFT_CORNER;if(LOWER_TRAILING_CORNER.equals(key))return LOWER_RIGHT_CORNER;return key; }
+    public Component getCorner(String key) { return corners.get(cornerKey(key)); }
+    public void setCorner(String key,Component corner) { key=cornerKey(key);if(!UPPER_LEFT_CORNER.equals(key)&&!UPPER_RIGHT_CORNER.equals(key)&&!LOWER_LEFT_CORNER.equals(key)&&!LOWER_RIGHT_CORNER.equals(key))throw new IllegalArgumentException("invalid corner");Component old=corners.remove(key);if(old!=null)remove(old);if(corner!=null){corners.put(key,corner);add(corner);}firePropertyChange(key,old,corner);revalidate();repaint(); }
+    public void setWheelScrollingEnabled(boolean enable) { boolean old=wheelScrollingEnabled;wheelScrollingEnabled=enable;firePropertyChange("wheelScrollingEnabled",old,enable); }
+    public boolean isWheelScrollingEnabled() { return wheelScrollingEnabled; }
 }

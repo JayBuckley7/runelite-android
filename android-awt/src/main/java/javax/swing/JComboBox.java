@@ -51,9 +51,7 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
         return (javax.swing.plaf.ComboBoxUI) ui;
     }
     public void setUI(javax.swing.plaf.ComboBoxUI delegate) {
-        if (ui != null) ui.uninstallUI(this);
         super.setUI(delegate);
-        if (delegate != null) delegate.installUI(this);
         revalidate(); repaint();
     }
     @Override public void updateUI() {
@@ -223,10 +221,30 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     private Object prototypeDisplayValue;
     public Object getPrototypeDisplayValue() { return prototypeDisplayValue; }
     public void setPrototypeDisplayValue(Object value) { this.prototypeDisplayValue = value; invalidate(); }
-    public void showPopup() {}
-    public void hidePopup() {}
-    public void setPopupVisible(boolean v) {}
-    public boolean isPopupVisible() { return false; }
+    public interface PopupHandler { void show(JComboBox<?> combo, boolean visible); }
+    private static volatile PopupHandler popupHandler;
+    public static void setPopupHandler(PopupHandler handler) { popupHandler = handler; }
+    private boolean popupVisible;
+    private final javax.swing.event.EventListenerList popupListeners = new javax.swing.event.EventListenerList();
+    public void showPopup() { setPopupVisible(true); }
+    public void hidePopup() { setPopupVisible(false); }
+    public void setPopupVisible(boolean visible) {
+        if (popupVisible == visible || (visible && !isEnabled())) return;
+        popupVisible = visible;
+        javax.swing.event.PopupMenuEvent event = new javax.swing.event.PopupMenuEvent(this);
+        for (PopupMenuListener listener : getPopupMenuListeners()) {
+            if (visible) listener.popupMenuWillBecomeVisible(event); else listener.popupMenuWillBecomeInvisible(event);
+        }
+        PopupHandler handler = popupHandler;
+        if (handler != null) handler.show(this, visible);
+        firePropertyChange("popupVisible", !visible, visible);
+    }
+    public boolean isPopupVisible() { return popupVisible; }
+    public void firePopupMenuCanceled() {
+        javax.swing.event.PopupMenuEvent event = new javax.swing.event.PopupMenuEvent(this);
+        for (PopupMenuListener listener : getPopupMenuListeners()) listener.popupMenuCanceled(event);
+        hidePopup();
+    }
 
     private final java.util.List<ActionListener> actionListeners = new java.util.ArrayList<>();
     private final java.util.List<ItemListener> itemListeners = new java.util.ArrayList<>();
@@ -237,8 +255,9 @@ public class JComboBox<E> extends JComponent implements ListDataListener {
     public void addItemListener(ItemListener l) { if (l != null) itemListeners.add(l); }
     public void removeItemListener(ItemListener l) { itemListeners.remove(l); }
     public ItemListener[] getItemListeners() { return itemListeners.toArray(new ItemListener[0]); }
-    public void addPopupMenuListener(PopupMenuListener l) {}
-    public void removePopupMenuListener(PopupMenuListener l) {}
+    public void addPopupMenuListener(PopupMenuListener l) { popupListeners.add(PopupMenuListener.class, l); }
+    public void removePopupMenuListener(PopupMenuListener l) { popupListeners.remove(PopupMenuListener.class, l); }
+    public PopupMenuListener[] getPopupMenuListeners() { return popupListeners.getListeners(PopupMenuListener.class); }
 
     /** Stand-in for BasicComboBoxUI's popup list: renderers are handed a real JList and
      *  some (quest-helper's DropdownRenderer) read its colours. */

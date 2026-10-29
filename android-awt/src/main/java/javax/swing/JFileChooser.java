@@ -17,13 +17,23 @@ public class JFileChooser extends JComponent {
     public static final int DIRECTORIES_ONLY = 1;
     public static final int FILES_AND_DIRECTORIES = 2;
 
-    private File currentDirectory = new File(".");
+    private File currentDirectory = new File(System.getProperty("user.home", "."));
     private File selectedFile;
+    private File[] selectedFiles = new File[0];
     private int fileSelectionMode = FILES_ONLY;
     private boolean multiSelectionEnabled;
     private FileFilter fileFilter;
+    private final java.util.List<FileFilter> filters = new java.util.ArrayList<>();
+    private final FileFilter acceptAll = new FileFilter() {
+        @Override public boolean accept(File file) { return true; }
+        @Override public String getDescription() { return "All files"; }
+    };
     private boolean acceptAllFileFilterUsed = true;
-    public void setAcceptAllFileFilterUsed(boolean used) { acceptAllFileFilterUsed = used; }
+    public void setAcceptAllFileFilterUsed(boolean used) {
+        boolean previous = acceptAllFileFilterUsed; acceptAllFileFilterUsed = used;
+        if (!used && fileFilter == acceptAll) fileFilter = filters.isEmpty() ? null : filters.get(0);
+        firePropertyChange("acceptAllFileFilterUsedChanged", previous, used);
+    }
     public boolean isAcceptAllFileFilterUsed() { return acceptAllFileFilterUsed; }
     private String dialogTitle;
     private int dialogType = OPEN_DIALOG;
@@ -31,25 +41,62 @@ public class JFileChooser extends JComponent {
     private static volatile DialogHandler dialogHandler;
     public static void setDialogHandler(DialogHandler handler) { dialogHandler = handler; }
 
-    public JFileChooser() {}
-    public JFileChooser(String currentDirectoryPath) { currentDirectory = new File(currentDirectoryPath); }
-    public JFileChooser(File currentDirectory) { this.currentDirectory = currentDirectory; }
+    public JFileChooser() { fileFilter = acceptAll; }
+    public JFileChooser(String currentDirectoryPath) { this(); if (currentDirectoryPath != null) setCurrentDirectory(new File(currentDirectoryPath)); }
+    public JFileChooser(File currentDirectory) { this(); setCurrentDirectory(currentDirectory); }
 
     public File getSelectedFile() { return selectedFile; }
-    public void setSelectedFile(File file) { this.selectedFile = file; }
-    public File[] getSelectedFiles() { return selectedFile == null ? new File[0] : new File[]{selectedFile}; }
-    public void setSelectedFiles(File[] selectedFiles) {}
+    public void setSelectedFile(File file) {
+        File previous = selectedFile; selectedFile = file;
+        firePropertyChange("SelectedFileChangedProperty", previous, file);
+    }
+    public File[] getSelectedFiles() { return selectedFiles.clone(); }
+    public void setSelectedFiles(File[] files) {
+        File[] previous = selectedFiles;
+        selectedFiles = files == null ? new File[0] : files.clone();
+        setSelectedFile(selectedFiles.length == 0 ? null : selectedFiles[0]);
+        firePropertyChange("SelectedFilesChangedProperty", previous, selectedFiles.clone());
+    }
     public File getCurrentDirectory() { return currentDirectory; }
-    public void setCurrentDirectory(File dir) { this.currentDirectory = dir; }
+    public void setCurrentDirectory(File dir) {
+        if (dir == null) dir = new File(System.getProperty("user.home", "."));
+        if (dir.isFile()) dir = dir.getParentFile();
+        File previous = currentDirectory; currentDirectory = dir;
+        firePropertyChange("directoryChanged", previous, dir);
+    }
     public int getFileSelectionMode() { return fileSelectionMode; }
-    public void setFileSelectionMode(int mode) { this.fileSelectionMode = mode; }
+    public void setFileSelectionMode(int mode) {
+        if (mode < FILES_ONLY || mode > FILES_AND_DIRECTORIES) throw new IllegalArgumentException("Invalid file selection mode");
+        int previous = fileSelectionMode; fileSelectionMode = mode;
+        firePropertyChange("fileSelectionChanged", previous, mode);
+    }
+    public boolean isFileSelectionEnabled() { return fileSelectionMode != DIRECTORIES_ONLY; }
+    public boolean isDirectorySelectionEnabled() { return fileSelectionMode != FILES_ONLY; }
     public boolean isMultiSelectionEnabled() { return multiSelectionEnabled; }
-    public void setMultiSelectionEnabled(boolean b) { this.multiSelectionEnabled = b; }
+    public void setMultiSelectionEnabled(boolean b) { boolean previous = multiSelectionEnabled; multiSelectionEnabled = b; firePropertyChange("MultiSelectionEnabledChangedProperty", previous, b); }
     public FileFilter getFileFilter() { return fileFilter; }
-    public void setFileFilter(FileFilter filter) { this.fileFilter = filter; }
-    public void addChoosableFileFilter(FileFilter filter) { fileFilter = filter; }
-    public boolean removeChoosableFileFilter(FileFilter f) { return false; }
-    public FileFilter[] getChoosableFileFilters() { return new FileFilter[0]; }
+    public void setFileFilter(FileFilter filter) {
+        if (filter != null && filter != acceptAll && !filters.contains(filter)) filters.add(filter);
+        FileFilter previous = fileFilter; fileFilter = filter;
+        firePropertyChange("fileFilterChanged", previous, filter);
+    }
+    public void addChoosableFileFilter(FileFilter filter) {
+        if (filter != null && filter != acceptAll && !filters.contains(filter)) filters.add(filter);
+        if (fileFilter == null) setFileFilter(filter);
+    }
+    public boolean removeChoosableFileFilter(FileFilter filter) {
+        boolean removed = filters.remove(filter);
+        if (removed && fileFilter == filter) setFileFilter(acceptAllFileFilterUsed ? acceptAll : filters.isEmpty() ? null : filters.get(0));
+        return removed;
+    }
+    public FileFilter[] getChoosableFileFilters() {
+        java.util.List<FileFilter> result = new java.util.ArrayList<>(filters);
+        if (acceptAllFileFilterUsed) result.add(0, acceptAll);
+        return result.toArray(new FileFilter[0]);
+    }
+    public FileFilter getAcceptAllFileFilter() { return acceptAll; }
+    public void resetChoosableFileFilters() { filters.clear(); setFileFilter(acceptAllFileFilterUsed ? acceptAll : null); }
+    public boolean accept(File file) { return fileFilter == null || fileFilter.accept(file); }
     public int showOpenDialog(Component parent) { dialogType = OPEN_DIALOG; return showDialog(parent, null); }
     public int showSaveDialog(Component parent) { dialogType = SAVE_DIALOG; return showDialog(parent, null); }
     public int showDialog(Component parent, String approveButtonText) {

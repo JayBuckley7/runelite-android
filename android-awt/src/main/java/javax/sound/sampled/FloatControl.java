@@ -14,17 +14,23 @@ public class FloatControl extends Control {
     private float value;
     private final float min, max;
     private final String units;
+    private final float precision;
+    private final int updatePeriod;
+    private String minLabel = "", midLabel = "", maxLabel = "";
 
     public FloatControl(Type type, float min, float max, float precision, int updatePeriod, float initialValue, String units) {
         super(type);
         this.min = min; this.max = max;
         this.value = initialValue;
         this.units = units;
+        this.precision = precision;
+        this.updatePeriod = updatePeriod;
     }
 
     public FloatControl(Type type, float min, float max, float precision, int updatePeriod, float initialValue,
                         String units, String minLabel, String midLabel, String maxLabel) {
         this(type, min, max, precision, updatePeriod, initialValue, units);
+        this.minLabel = minLabel; this.midLabel = midLabel; this.maxLabel = maxLabel;
     }
 
     public void setValue(float newValue) {
@@ -36,7 +42,13 @@ public class FloatControl extends Control {
     public float getMinimum() { return min; }
     public float getMaximum() { return max; }
     public String getUnits() { return units; }
-    public float getPrecision() { return 0.01f; }
-    public int getUpdatePeriod() { return -1; }
-    public void shift(float from, float to, int microseconds) { setValue(to); }
+    public float getPrecision() { return precision; }
+    public int getUpdatePeriod() { return updatePeriod; }
+    public String getMinLabel() { return minLabel; }
+    public String getMidLabel() { return midLabel; }
+    public String getMaxLabel() { return maxLabel; }
+    public void shift(float from, float to, int microseconds) {
+        if (from < min || from > max) throw new IllegalArgumentException("value out of range");
+        setValue(to);
+    }
 }

@@ -5,7 +5,7 @@ package javax.management;
  * but record nothing.
  */
 public interface MBeanServer {
-    Object registerMBean(Object obj, ObjectName name) throws Exception;
+    ObjectInstance registerMBean(Object obj, ObjectName name) throws Exception;
     void unregisterMBean(ObjectName name) throws Exception;
     boolean isRegistered(ObjectName name);
     Object getAttribute(ObjectName name, String attribute) throws Exception;

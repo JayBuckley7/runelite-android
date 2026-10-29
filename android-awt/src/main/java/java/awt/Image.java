@@ -19,9 +19,13 @@ public abstract class Image {
         return UndefinedProperty;
     }
 
+    public java.awt.image.ImageProducer getSource(){throw new UnsupportedOperationException("image producer unavailable");}
+
     public Image getScaledInstance(int width, int height, int hints) {
-        // RuneLite doesn't appear to call this; return self as a graceful fallback.
-        return this;
+        java.awt.image.ProducerImage image=new java.awt.image.ProducerImage(getSource());
+        java.awt.image.BufferedImage buffered=image.getBufferedImage();
+        if(buffered==null)throw new IllegalStateException("Image is not loaded");
+        return buffered.getScaledInstance(width,height,hints);
     }
 
     public void flush() {

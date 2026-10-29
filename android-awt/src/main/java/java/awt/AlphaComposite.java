@@ -56,18 +56,36 @@ public final class AlphaComposite implements Composite {
     }
 
     public static AlphaComposite getInstance(int rule, float alpha) {
-        if (alpha < 0f || alpha > 1f) throw new IllegalArgumentException("alpha out of range: " + alpha);
+        getInstance(rule);
+        if (!(alpha >= 0f && alpha <= 1f)) throw new IllegalArgumentException("alpha out of range: " + alpha);
         return new AlphaComposite(rule, alpha);
     }
 
     public int getRule()      { return rule; }
     public float getAlpha()   { return alpha; }
-    public AlphaComposite derive(float newAlpha) { return new AlphaComposite(rule, newAlpha); }
-    public AlphaComposite derive(int newRule) { return new AlphaComposite(newRule, alpha); }
+    public AlphaComposite derive(float newAlpha) { return getInstance(rule, newAlpha); }
+    public AlphaComposite derive(int newRule) { return getInstance(newRule, alpha); }
 
     @Override
     public CompositeContext createContext(ColorModel srcCM, ColorModel dstCM, RenderingHints hints) {
-        throw new UnsupportedOperationException("AlphaComposite contexts are implemented by the renderer");
+        return new CompositeContext(){
+            public void dispose(){}
+            public void compose(java.awt.image.Raster src,java.awt.image.Raster dst,java.awt.image.WritableRaster out){
+                int w=Math.min(src.getWidth(),Math.min(dst.getWidth(),out.getWidth())),h=Math.min(src.getHeight(),Math.min(dst.getHeight(),out.getHeight()));
+                for(int y=0;y<h;y++)for(int x=0;x<w;x++){
+                    int sp=srcCM.getRGB(src.getDataElements(src.getMinX()+x,src.getMinY()+y,null)),dp=dstCM.getRGB(dst.getDataElements(dst.getMinX()+x,dst.getMinY()+y,null));
+                    double sa=(sp>>>24)/255.0*alpha,da=(dp>>>24)/255.0,fs=1,fd=1-sa;
+                    switch(rule){
+                        case CLEAR:fs=fd=0;break;case SRC:fd=0;break;case DST:fs=0;fd=1;break;case DST_OVER:fs=1-da;fd=1;break;
+                        case SRC_IN:fs=da;fd=0;break;case DST_IN:fs=0;fd=sa;break;case SRC_OUT:fs=1-da;fd=0;break;case DST_OUT:fs=0;fd=1-sa;break;
+                        case SRC_ATOP:fs=da;fd=1-sa;break;case DST_ATOP:fs=1-da;fd=sa;break;case XOR:fs=1-da;fd=1-sa;break;
+                    }
+                    double oa=sa*fs+da*fd;int pixel=Math.max(0,Math.min(255,(int)Math.round(oa*255)))<<24;
+                    if(oa>0)for(int shift=0;shift<=16;shift+=8)pixel|=Math.max(0,Math.min(255,(int)Math.round((((sp>>>shift)&255)*sa*fs+((dp>>>shift)&255)*da*fd)/oa)))<<shift;
+                    out.setDataElements(out.getMinX()+x,out.getMinY()+y,dstCM.getDataElements(pixel,null));
+                }
+            }
+        };
     }
 
     @Override

@@ -25,12 +25,13 @@ public abstract class GraphicsEnvironment {
     }
     public boolean registerFont(Font font) { return true; }
 
-    public java.awt.geom.Point2D getCenterPoint() { return new java.awt.geom.Point2D.Double(0, 0); }
+    public Point getCenterPoint() { Rectangle bounds = getMaximumWindowBounds(); return new Point(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); }
+    public String[] getAvailableFontFamilyNames(java.util.Locale locale) { java.util.Objects.requireNonNull(locale); return getAvailableFontFamilyNames(); }
 
     private static final class HeadlessGraphicsEnvironment extends GraphicsEnvironment {
-        @Override public GraphicsDevice[] getScreenDevices() { return new GraphicsDevice[0]; }
+        @Override public GraphicsDevice[] getScreenDevices() { return new GraphicsDevice[]{getDefaultScreenDevice()}; }
         @Override public GraphicsDevice getDefaultScreenDevice() {
-            throw new java.awt.HeadlessException("No screen devices on Android shadow");
+            return net.runelite.awt.impl.HeadlessGraphicsConfiguration.INSTANCE.getDevice();
         }
         @Override public Graphics2D createGraphics(java.awt.image.BufferedImage img) { return img.createGraphics(); }
         @Override public Font[] getAllFonts() { return new Font[]{new Font(Font.DIALOG, Font.PLAIN, 12)}; }

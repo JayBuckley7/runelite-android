@@ -4,6 +4,10 @@ import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 
 public class TableColumn implements java.io.Serializable {
+    private TableCellEditor cellEditor;
+    public TableCellEditor getCellEditor(){return cellEditor;}
+    public void setCellEditor(TableCellEditor editor){cellEditor=editor;}
+
     private int modelIndex, width, preferredWidth, minWidth = 15, maxWidth = Integer.MAX_VALUE;
     private Object identifier, headerValue;
     private TableCellRenderer headerRenderer, cellRenderer;

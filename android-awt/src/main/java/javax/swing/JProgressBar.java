@@ -10,14 +10,16 @@ public class JProgressBar extends JComponent implements SwingConstants {
     protected boolean indeterminate;
     protected String progressString;
 
-    public JProgressBar() {}
-    public JProgressBar(int orient) { this.orientation = orient; }
+    private final javax.swing.event.EventListenerList listeners=new javax.swing.event.EventListenerList();
+    private final ChangeListener modelListener=e->{javax.swing.event.ChangeEvent event=new javax.swing.event.ChangeEvent(this);for(ChangeListener l:getChangeListeners())l.stateChanged(event);repaint();};
+    public JProgressBar() { model.addChangeListener(modelListener); }
+    public JProgressBar(int orient) { this();setOrientation(orient); }
     public JProgressBar(int min, int max) { this(); setMinimum(min); setMaximum(max); }
     public JProgressBar(int orient, int min, int max) { this(orient); setMinimum(min); setMaximum(max); }
-    public JProgressBar(BoundedRangeModel newModel) { this.model = newModel; }
+    public JProgressBar(BoundedRangeModel newModel) { this();setModel(newModel); }
 
     public int getOrientation() { return orientation; }
-    public void setOrientation(int o) { this.orientation = o; }
+    public void setOrientation(int o) { if(o!=HORIZONTAL&&o!=VERTICAL)throw new IllegalArgumentException("orientation");int old=orientation;orientation=o;firePropertyChange("orientation",old,o);revalidate();repaint(); }
     public int getValue() { return model.getValue(); }
     public void setValue(int n) { model.setValue(n); }
     public int getMinimum() { return model.getMinimum(); }
@@ -31,13 +33,14 @@ public class JProgressBar extends JComponent implements SwingConstants {
     public boolean isIndeterminate() { return indeterminate; }
     public void setIndeterminate(boolean b) { indeterminate = b; }
     public BoundedRangeModel getModel() { return model; }
-    public void setModel(BoundedRangeModel m) { this.model = m; }
+    public void setModel(BoundedRangeModel m) { java.util.Objects.requireNonNull(m);BoundedRangeModel old=model;old.removeChangeListener(modelListener);model=m;m.addChangeListener(modelListener);firePropertyChange("model",old,m);repaint(); }
     public double getPercentComplete() {
         double range = model.getMaximum() - model.getMinimum();
         return range == 0 ? 0 : (model.getValue() - model.getMinimum()) / range;
     }
-    public void addChangeListener(ChangeListener l) {}
-    public void removeChangeListener(ChangeListener l) {}
+    public void addChangeListener(ChangeListener l) { listeners.add(ChangeListener.class,l); }
+    public void removeChangeListener(ChangeListener l) { listeners.remove(ChangeListener.class,l); }
+    public ChangeListener[] getChangeListeners() { return listeners.getListeners(ChangeListener.class); }
     public void setUI(javax.swing.plaf.ProgressBarUI ui) { super.setUI(ui); }
     public javax.swing.plaf.ProgressBarUI getUI() { return (javax.swing.plaf.ProgressBarUI) super.getUI(); }
 
@@ -49,6 +52,7 @@ public class JProgressBar extends JComponent implements SwingConstants {
      */
     @Override
     protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
         java.awt.Color bg = getBackground();
@@ -62,7 +66,7 @@ public class JProgressBar extends JComponent implements SwingConstants {
             java.awt.Color fg = getForeground();
             if (fg != null) {
                 g.setColor(fg);
-                g.fillRect(0, 0, fillW, h);
+                if(orientation==HORIZONTAL)g.fillRect(0,0,fillW,h);else{int fillH=(int)Math.round(h*Math.max(0,Math.min(1,pct)));g.fillRect(0,h-fillH,w,fillH);}
             }
         }
         if (stringPainted) {

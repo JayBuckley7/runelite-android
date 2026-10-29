@@ -47,4 +47,34 @@ public abstract class SampleModel {
     public abstract DataBuffer createDataBuffer();
 
     public abstract int[] getSampleSize(int band, int[] iArray);
+    public int getTransferType() { return dataType; }
+    public Object getDataElements(int x, int y, Object out, DataBuffer data) {
+        int count = getNumDataElements();
+        Object result = transferArray(out, count);
+        for (int band = 0; band < count; band++) transferSet(result, band, getSample(x, y, band, data));
+        return result;
+    }
+    public void setDataElements(int x, int y, Object in, DataBuffer data) {
+        for (int band = 0; band < getNumDataElements(); band++) setSample(x, y, band, transferGet(in, band), data);
+    }
+    final Object transferArray(Object out, int count) {
+        if (out != null) return out;
+        switch (getTransferType()) {
+            case DataBuffer.TYPE_BYTE: return new byte[count];
+            case DataBuffer.TYPE_USHORT: case DataBuffer.TYPE_SHORT: return new short[count];
+            case DataBuffer.TYPE_INT: return new int[count];
+            default: throw new UnsupportedOperationException("Floating point transfer arrays");
+        }
+    }
+    static int transferGet(Object array, int i) {
+        if (array instanceof byte[]) return ((byte[]) array)[i] & 255;
+        if (array instanceof short[]) return ((short[]) array)[i] & 65535;
+        return ((int[]) array)[i];
+    }
+    static void transferSet(Object array, int i, int value) {
+        if (array instanceof byte[]) ((byte[]) array)[i] = (byte) value;
+        else if (array instanceof short[]) ((short[]) array)[i] = (short) value;
+        else ((int[]) array)[i] = value;
+    }
+    public SampleModel createSubsetSampleModel(int[] bands) { throw new UnsupportedOperationException("Sample model cannot select bands"); }
 }

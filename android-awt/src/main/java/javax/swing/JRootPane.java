@@ -21,56 +21,31 @@ public class JRootPane extends JComponent {
     protected Component glassPane = new JPanel();
     protected JMenuBar menuBar;
 
+    private JButton defaultButton;
+    private int decorationStyle;
     public JRootPane() {
-        setLayout(new java.awt.BorderLayout());
-        // contentPane fills the rootPane — real Swing layers via JLayeredPane,
-        // but a single-layer model is enough for runelite-client's chrome.
-        super.add(contentPane, java.awt.BorderLayout.CENTER);
+        setLayout(null);layeredPane.add(contentPane,JLayeredPane.FRAME_CONTENT_LAYER);
+        super.add(layeredPane,null,-1);glassPane.setVisible(false);super.add(glassPane,null,0);
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER,0),"pressDefault");
+        getActionMap().put("pressDefault",new AbstractAction(){public void actionPerformed(java.awt.event.ActionEvent e){if(defaultButton!=null&&defaultButton.isEnabled())defaultButton.doClick();}});
     }
-
-    public Container getContentPane() { return contentPane; }
-    public void setContentPane(Container c) {
-        if (this.contentPane != null) super.remove(this.contentPane);
-        this.contentPane = c;
-        if (c != null) super.add(c, java.awt.BorderLayout.CENTER);
-    }
-
-    @Override
-    public java.awt.Component add(java.awt.Component comp) {
-        // Real JRootPane forwards add() to contentPane unless the caller goes through super.
-        return contentPane.add(comp);
-    }
-    @Override
-    public java.awt.Component add(java.awt.Component comp, int index) {
-        return contentPane.add(comp, index);
-    }
-    @Override
-    public void add(java.awt.Component comp, Object constraints) {
-        contentPane.add(comp, constraints);
-    }
-
-    @Override
-    public void setBounds(int x, int y, int w, int h) {
-        super.setBounds(x, y, w, h);
-        doLayout();
-    }
-    @Override
-    public void setSize(int w, int h) {
-        super.setSize(w, h);
-        doLayout();
-    }
-    public JLayeredPane getLayeredPane() { return layeredPane; }
-    public void setLayeredPane(JLayeredPane lp) { this.layeredPane = lp; }
-    public Component getGlassPane() { return glassPane; }
-    public void setGlassPane(Component g) { this.glassPane = g; }
-    public JMenuBar getJMenuBar() { return menuBar; }
-    public void setJMenuBar(JMenuBar menu) {
-        if (this.menuBar != null) super.remove(this.menuBar);
-        this.menuBar = menu;
-        if (menu != null) super.add(menu, java.awt.BorderLayout.NORTH);
-    }
-    public JButton getDefaultButton() { return null; }
-    public void setDefaultButton(JButton defaultButton) {}
-    public int getWindowDecorationStyle() { return NONE; }
-    public void setWindowDecorationStyle(int style) {}
+    public Container getContentPane(){return contentPane;}
+    public void setContentPane(Container value){if(value==null)throw new java.awt.IllegalComponentStateException("content pane cannot be null");Container old=contentPane;layeredPane.remove(contentPane);contentPane=value;layeredPane.add(value,JLayeredPane.FRAME_CONTENT_LAYER);firePropertyChange("contentPane",old,value);revalidate();}
+    public Component add(Component component){return contentPane.add(component);}
+    public Component add(Component component,int index){return contentPane.add(component,index);}
+    public void add(Component component,Object constraints){contentPane.add(component,constraints);}
+    public void setBounds(int x,int y,int width,int height){super.setBounds(x,y,width,height);doLayout();}
+    public void setSize(int width,int height){super.setSize(width,height);doLayout();}
+    public void doLayout(){if(layeredPane==null)return;java.awt.Insets in=getInsets();int width=Math.max(0,getWidth()-in.left-in.right),height=Math.max(0,getHeight()-in.top-in.bottom);layeredPane.setBounds(in.left,in.top,width,height);glassPane.setBounds(in.left,in.top,width,height);int menuHeight=menuBar!=null&&menuBar.isVisible()?menuBar.getPreferredSize().height:0;if(menuBar!=null)menuBar.setBounds(0,0,width,menuHeight);contentPane.setBounds(0,menuHeight,width,Math.max(0,height-menuHeight));}
+    public java.awt.Dimension getPreferredSize(){if(isPreferredSizeSet())return super.getPreferredSize();java.awt.Dimension content=contentPane.getPreferredSize(),menu=menuBar==null?new java.awt.Dimension():menuBar.getPreferredSize();return new java.awt.Dimension(Math.max(content.width,menu.width),content.height+menu.height);}
+    public JLayeredPane getLayeredPane(){return layeredPane;}
+    public void setLayeredPane(JLayeredPane value){java.util.Objects.requireNonNull(value);JLayeredPane old=layeredPane;super.remove(old);layeredPane=value;value.add(contentPane,JLayeredPane.FRAME_CONTENT_LAYER);if(menuBar!=null)value.add(menuBar,JLayeredPane.FRAME_CONTENT_LAYER);super.add(value,null,-1);firePropertyChange("layeredPane",old,value);revalidate();}
+    public Component getGlassPane(){return glassPane;}
+    public void setGlassPane(Component value){java.util.Objects.requireNonNull(value);Component old=glassPane;boolean visible=old.isVisible();super.remove(old);glassPane=value;value.setVisible(visible);super.add(value,null,0);firePropertyChange("glassPane",old,value);revalidate();}
+    public JMenuBar getJMenuBar(){return menuBar;}
+    public void setJMenuBar(JMenuBar value){JMenuBar old=menuBar;if(old!=null)layeredPane.remove(old);menuBar=value;if(value!=null)layeredPane.add(value,JLayeredPane.FRAME_CONTENT_LAYER);firePropertyChange("JMenuBar",old,value);revalidate();}
+    public JButton getDefaultButton(){return defaultButton;}
+    public void setDefaultButton(JButton value){JButton old=defaultButton;defaultButton=value;firePropertyChange("defaultButton",old,value);}
+    public int getWindowDecorationStyle(){return decorationStyle;}
+    public void setWindowDecorationStyle(int style){if(style<NONE||style>WARNING_DIALOG)throw new IllegalArgumentException("decoration style");int old=decorationStyle;decorationStyle=style;firePropertyChange("windowDecorationStyle",old,style);}
 }

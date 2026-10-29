@@ -26,4 +26,5 @@ public abstract class HttpExchange implements AutoCloseable {
     public abstract Object getAttribute(String name);
     public abstract void setAttribute(String name, Object value);
     public abstract void setStreams(InputStream i, OutputStream o);
+    public abstract HttpPrincipal getPrincipal();
 }

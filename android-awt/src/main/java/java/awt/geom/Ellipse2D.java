@@ -19,7 +19,7 @@ public abstract class Ellipse2D extends RectangularShape {
 
     @Override
     public boolean intersects(double x, double y, double w, double h) {
-        return getBounds2D().intersects(x, y, w, h);
+        return PathGeometry.rectangle(this,x,y,w,h,false);
     }
 
     @Override
@@ -34,7 +34,7 @@ public abstract class Ellipse2D extends RectangularShape {
 
     @Override
     public PathIterator getPathIterator(AffineTransform at, double flatness) {
-        return getPathIterator(at);
+        return new FlatteningPathIterator(getPathIterator(at),flatness);
     }
 
     public static class Double extends Ellipse2D implements Serializable {

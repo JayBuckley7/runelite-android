@@ -183,13 +183,121 @@ if (androidSdkAvailable) {
     }
 }
 
+if (androidSdkAvailable) {
+    tasks.register<Exec>("verifyReleasePluginApi") {
+        group = "verification"
+        description = "Verify external plugin library APIs survive release shrinking"
+        dependsOn("assembleRelease")
+        doFirst {
+            val apk = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+                .listFiles { file -> file.extension == "apk" }?.singleOrNull()
+                ?: error("Expected exactly one release APK")
+            val libraries = configurations.getByName("releaseRuntimeClasspath").incoming.artifactView {
+                attributes.attribute(org.gradle.api.attributes.Attribute.of("artifactType", String::class.java), "jar")
+                componentFilter { id -> id is org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
+                    (id.module == "jopt-simple" || id.module == "protobuf-javalite") }
+            }.files.files
+                .filter { it.extension == "jar" && (it.name.startsWith("jopt-simple-") || it.name.startsWith("protobuf-javalite-")) }
+            val python = providers.environmentVariable("PYTHON").orNull
+                ?: if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+            commandLine(listOf(python, rootProject.file("tools-src/verify-release-plugin-api.py").absolutePath,
+                "--apk", apk.absolutePath) + libraries.flatMap { listOf("--library-jar", it.absolutePath) })
+        }
+    }
+}
+
+// One version controls both the APK compiler and the on-device plugin/client compiler.
+val coreLibraryVersion = "2.1.4"
+if (androidSdkAvailable) {
+    val runtimeDesugarConfiguration = configurations.create("runtimeDesugarConfiguration") {
+        isCanBeConsumed = false
+        isTransitive = false
+    }
+    dependencies.add(runtimeDesugarConfiguration.name,
+        "com.android.tools:desugar_jdk_libs_configuration:$coreLibraryVersion")
+    val bootApi = provider {
+        extensions.getByType<com.android.build.api.variant.ApplicationAndroidComponentsExtension>()
+            .sdkComponents.bootClasspath.get()
+    }
+    val hostApi = provider {
+        project(":android-awt").tasks.named<JavaCompile>("compileReleaseJavaWithJavac")
+            .get().destinationDirectory.get().asFile
+    }
+    val generatedAssets = layout.buildDirectory.dir("generated/runtime-desugar-assets")
+    val prepareRuntimeDesugarAssets = tasks.register("prepareRuntimeDesugarAssets") {
+        dependsOn(":android-awt:compileReleaseJavaWithJavac")
+        inputs.files(runtimeDesugarConfiguration, bootApi)
+        inputs.dir(hostApi)
+        inputs.property("coreLibraryVersion", coreLibraryVersion)
+        outputs.dir(generatedAssets)
+        doLast {
+            val out = generatedAssets.get().dir("runtime-dex").asFile.apply { mkdirs() }
+            val configuration = runtimeDesugarConfiguration.singleFile
+            java.util.zip.ZipFile(configuration).use { archive ->
+                archive.getInputStream(archive.getEntry("META-INF/desugar/d8/desugar.json")).use {
+                    out.resolve("desugar.json").writeBytes(it.readBytes())
+                }
+            }
+            // These are compiler API inputs, never loaded as application code. The
+            // platform JDK surface and host compatibility hierarchy are enough for D8
+            // to resolve core-library interfaces without shipping the whole SDK jar.
+            java.util.zip.ZipOutputStream(out.resolve("java-api.jar").outputStream()).use { target ->
+                val seen = mutableSetOf<String>()
+                for (library in bootApi.get()) java.util.zip.ZipFile(library.asFile).use { archive ->
+                    archive.entries().asSequence().filter { !it.isDirectory && it.name.endsWith(".class") &&
+                        (it.name.startsWith("java/") || it.name.startsWith("javax/")) }
+                        .sortedBy { it.name }.forEach { entry ->
+                            if (seen.add(entry.name)) {
+                                target.putNextEntry(java.util.zip.ZipEntry(entry.name).apply { time = 0 })
+                                archive.getInputStream(entry).use { it.copyTo(target) }
+                                target.closeEntry()
+                            }
+                        }
+                }
+            }
+            java.util.zip.ZipOutputStream(out.resolve("host-api.jar").outputStream()).use { target ->
+                hostApi.get().walkTopDown().filter { it.isFile && it.extension == "class" }
+                    .sortedBy { it.relativeTo(hostApi.get()).invariantSeparatorsPath }.forEach { file ->
+                        target.putNextEntry(java.util.zip.ZipEntry(file.relativeTo(hostApi.get()).invariantSeparatorsPath).apply { time = 0 })
+                        file.inputStream().use { it.copyTo(target) }
+                        target.closeEntry()
+                    }
+            }
+            fun sha256(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            out.resolve("inputs.properties").writeText(buildString {
+                append("version=$coreLibraryVersion\n")
+                append("configurationArtifact=${configuration.name}\n")
+                append("configurationSha256=${sha256(configuration)}\n")
+                for (name in listOf("desugar.json", "java-api.jar", "host-api.jar")) {
+                    append("sha256.$name=${sha256(out.resolve(name))}\n")
+                }
+            })
+        }
+    }
+    extensions.configure<com.android.build.api.dsl.ApplicationExtension> {
+        sourceSets.named("main") { assets.srcDir(generatedAssets.get().asFile) }
+    }
+    tasks.configureEach {
+        if ((name.startsWith("merge") && name.endsWith("Assets")) ||
+            name.contains("lint", ignoreCase = true)) {
+            dependsOn(prepareRuntimeDesugarAssets)
+        }
+    }
+}
+
 // AGP's `coreLibraryDesugaring` configuration is set up by the android plugin after the
 // KMP `kotlin {}` block runs, so add the polyfill dep here outside the source-set
 // closures. desugar_jdk_libs 2.1.x is the version that ships the LambdaMetafactory
 // polyfill alongside the rest of the modern JDK surface.
 if (androidSdkAvailable) {
+    // Downloaded clients/plugins are compiled after the APK's reachability analysis.
+    // Preserve the desugared library ABI at L8 too, not only in the host R8 rules.
+    tasks.withType<com.android.build.gradle.internal.tasks.L8DexDesugarLibTask>().configureEach {
+        keepRulesConfigurations.add("-keep class j$.** { *; }")
+    }
     dependencies {
-        add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:2.1.4")
+        add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:$coreLibraryVersion")
         // Lombok — 117HD's java sources use @Slf4j / @Getter / @AllArgsConstructor.
         // Wired here because KMP source-set closures don't expose `annotationProcessor`;
         // AGP creates the config for the android variant.

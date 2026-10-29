@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Vector;
 import javax.swing.event.ListSelectionListener;
 
-public class JList<E> extends JComponent {
+public class JList<E> extends JComponent implements Scrollable {
     private static final long serialVersionUID = -1697842831055920921L;
 
     public static final int VERTICAL = 0;
@@ -13,69 +13,90 @@ public class JList<E> extends JComponent {
 
     private ListModel<E> model = new DefaultListModel<>();
     private ListCellRenderer<? super E> renderer = new DefaultListCellRenderer();
-    private int selectionMode = 0;
-    private int selectedIndex = -1;
+    private ListSelectionModel selectionModel;
+    private final javax.swing.event.ListDataListener dataListener = new javax.swing.event.ListDataListener() {
+        public void intervalAdded(javax.swing.event.ListDataEvent e) { selectionModel.insertIndexInterval(e.getIndex0(), e.getIndex1()-e.getIndex0()+1, true); revalidate(); repaint(); }
+        public void intervalRemoved(javax.swing.event.ListDataEvent e) { selectionModel.removeIndexInterval(e.getIndex0(), e.getIndex1()); revalidate(); repaint(); }
+        public void contentsChanged(javax.swing.event.ListDataEvent e) { revalidate(); repaint(); }
+    };
+    private final ListSelectionListener selectionForwarder = e -> { fireSelectionChanged(e.getFirstIndex(), e.getLastIndex(), e.getValueIsAdjusting()); repaint(); };
+
     private int layoutOrientation = VERTICAL;
     private int visibleRowCount = 8;
     private int fixedCellWidth = -1, fixedCellHeight = -1;
 
-    public JList() {}
-    public JList(ListModel<E> model) { this.model = model; }
-    public JList(E[] listData) {
-        DefaultListModel<E> m = new DefaultListModel<>();
-        for (E e : listData) m.addElement(e);
-        this.model = m;
+    public JList() {
+        setSelectionModel(new DefaultListSelectionModel());
+        model.addListDataListener(dataListener);
+        addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                if (!isEnabled() || e.getButton() != java.awt.event.MouseEvent.BUTTON1) return;
+                int index=locationToIndex(e.getPoint());
+                if (index<0 || !getCellBounds(index,index).contains(e.getPoint())) return;
+                if (e.isShiftDown() && selectionModel.getAnchorSelectionIndex()>=0) setSelectionInterval(selectionModel.getAnchorSelectionIndex(),index);
+                else if (e.isControlDown()) { if(isSelectedIndex(index))removeSelectionInterval(index,index);else addSelectionInterval(index,index); }
+                else setSelectedIndex(index);
+                requestFocusInWindow();
+            }
+        });
     }
-    public JList(Vector<? extends E> listData) {
-        DefaultListModel<E> m = new DefaultListModel<>();
-        for (E e : listData) m.addElement(e);
-        this.model = m;
-    }
+    public JList(ListModel<E> model) { this(); setModel(model); }
+    public JList(E[] data) { this(); setListData(data); }
+    public JList(Vector<? extends E> data) { this(); setListData(data); }
 
     public ListModel<E> getModel() { return model; }
-    public void setModel(ListModel<E> model) { this.model = model; invalidate(); }
+    public void setModel(ListModel<E> model) {
+        java.util.Objects.requireNonNull(model); ListModel<E> old=this.model;
+        if(old!=null)old.removeListDataListener(dataListener);
+        this.model=model; model.addListDataListener(dataListener); clearSelection();
+        firePropertyChange("model",old,model); revalidate(); repaint();
+    }
     public void setListData(E[] listData) {
         DefaultListModel<E> m = new DefaultListModel<>();
         for (E e : listData) m.addElement(e);
-        this.model = m;
+        setModel(m);
     }
     public void setListData(Vector<? extends E> listData) {
         DefaultListModel<E> m = new DefaultListModel<>();
         for (E e : listData) m.addElement(e);
-        this.model = m;
+        setModel(m);
     }
 
     public ListCellRenderer<? super E> getCellRenderer() { return renderer; }
     public void setCellRenderer(ListCellRenderer<? super E> r) { this.renderer = r; }
 
-    public int getSelectedIndex() { return selectedIndex; }
-    public void setSelectedIndex(int index) {
-        if (index == selectedIndex) return;
-        int old = selectedIndex;
-        selectedIndex = index;
-        fireSelectionChanged(Math.min(old, index), Math.max(old, index));
+    public ListSelectionModel getSelectionModel() { return selectionModel; }
+    public void setSelectionModel(ListSelectionModel value) {
+        java.util.Objects.requireNonNull(value); ListSelectionModel old=selectionModel;
+        if(old!=null)old.removeListSelectionListener(selectionForwarder);
+        selectionModel=value; value.addListSelectionListener(selectionForwarder);
+        firePropertyChange("selectionModel",old,value); repaint();
     }
+    public int getSelectedIndex() { return selectionModel.getMinSelectionIndex(); }
+    public void setSelectedIndex(int index) { if(index>=model.getSize())return; if(index<0)clearSelection();else selectionModel.setSelectionInterval(index,index); }
     public void setSelectedIndices(int[] indices) {
-        // We track a single index — pick the first.
-        setSelectedIndex(indices == null || indices.length == 0 ? -1 : indices[0]);
+        selectionModel.setValueIsAdjusting(true);
+        try { clearSelection(); for(int i:indices)if(i>=0&&i<model.getSize())selectionModel.addSelectionInterval(i,i); }
+        finally { selectionModel.setValueIsAdjusting(false); }
     }
-    public int[] getSelectedIndices() { return selectedIndex < 0 ? new int[0] : new int[]{selectedIndex}; }
-    public E getSelectedValue() { return selectedIndex < 0 ? null : model.getElementAt(selectedIndex); }
-    public void setSelectedValue(Object o, boolean scroll) {
-        if (model == null) return;
-        for (int i = 0; i < model.getSize(); i++) {
-            if (java.util.Objects.equals(model.getElementAt(i), o)) { setSelectedIndex(i); return; }
-        }
-        setSelectedIndex(-1);
-    }
-    public java.util.List<E> getSelectedValuesList() {
-        ArrayList<E> r = new ArrayList<>();
-        if (selectedIndex >= 0) r.add(model.getElementAt(selectedIndex));
-        return r;
-    }
-
-    public int getSelectionMode() { return selectionMode; }
-    public void setSelectionMode(int mode) { this.selectionMode = mode; }
+    public int[] getSelectedIndices() { java.util.List<Integer> result=new ArrayList<>();for(int i=0;i<model.getSize();i++)if(isSelectedIndex(i))result.add(i);int[] indices=new int[result.size()];for(int i=0;i<indices.length;i++)indices[i]=result.get(i);return indices; }
+    public E getSelectedValue() { int index=getSelectedIndex();return index<0||index>=model.getSize()?null:model.getElementAt(index); }
+    public void setSelectedValue(Object value,boolean scroll) { for(int i=0;i<model.getSize();i++)if(java.util.Objects.equals(value,model.getElementAt(i))){setSelectedIndex(i);if(scroll)ensureIndexIsVisible(i);return;}clearSelection(); }
+    public java.util.List<E> getSelectedValuesList() { ArrayList<E> result=new ArrayList<>();for(int index:getSelectedIndices())result.add(model.getElementAt(index));return result; }
+    public Object[] getSelectedValues() { return getSelectedValuesList().toArray(); }
+    public boolean isSelectedIndex(int index) { return selectionModel.isSelectedIndex(index); }
+    public boolean isSelectionEmpty() { return selectionModel.isSelectionEmpty(); }
+    public int getMinSelectionIndex() { return selectionModel.getMinSelectionIndex(); }
+    public int getMaxSelectionIndex() { return selectionModel.getMaxSelectionIndex(); }
+    public int getAnchorSelectionIndex() { return selectionModel.getAnchorSelectionIndex(); }
+    public int getLeadSelectionIndex() { return selectionModel.getLeadSelectionIndex(); }
+    public void setSelectionInterval(int start,int end) { selectionModel.setSelectionInterval(start,end); }
+    public void addSelectionInterval(int start,int end) { selectionModel.addSelectionInterval(start,end); }
+    public void removeSelectionInterval(int start,int end) { selectionModel.removeSelectionInterval(start,end); }
+    public void setValueIsAdjusting(boolean value) { selectionModel.setValueIsAdjusting(value); }
+    public boolean getValueIsAdjusting() { return selectionModel.getValueIsAdjusting(); }
+    public int getSelectionMode() { return selectionModel.getSelectionMode(); }
+    public void setSelectionMode(int mode) { selectionModel.setSelectionMode(mode); }
     public int getLayoutOrientation() { return layoutOrientation; }
     public void setLayoutOrientation(int o) { this.layoutOrientation = o; }
     public int getVisibleRowCount() { return visibleRowCount; }
@@ -90,11 +111,11 @@ public class JList<E> extends JComponent {
     public void removeListSelectionListener(ListSelectionListener l) { selectionListeners.remove(l); }
     public ListSelectionListener[] getListSelectionListeners() { return selectionListeners.toArray(new ListSelectionListener[0]); }
 
-    private void fireSelectionChanged(int firstIndex, int lastIndex) {
+    private void fireSelectionChanged(int firstIndex, int lastIndex, boolean adjusting) {
         javax.swing.event.ListSelectionEvent ev = new javax.swing.event.ListSelectionEvent(
-            this, Math.max(0, firstIndex), Math.max(0, lastIndex), false);
+            this, Math.max(0, firstIndex), Math.max(0, lastIndex), adjusting);
         for (ListSelectionListener l : new java.util.ArrayList<>(selectionListeners)) {
-            try { l.valueChanged(ev); } catch (Throwable ignored) {}
+            l.valueChanged(ev);
         }
     }
 
@@ -107,7 +128,7 @@ public class JList<E> extends JComponent {
         int[] heights = new int[count];
         for (int i = 0; i < count; i++) {
             java.awt.Component c = renderer == null ? null : renderer.getListCellRendererComponent(
-                this, model.getElementAt(i), i, i == selectedIndex, false);
+                this, model.getElementAt(i), i, isSelectedIndex(i), false);
             java.awt.Dimension d = c == null ? new java.awt.Dimension(0, 16) : c.getPreferredSize();
             if (fixedCellWidth < 0) cw = Math.max(cw, d.width);
             heights[i] = fixedCellHeight >= 0 ? fixedCellHeight : Math.max(1, d.height);
@@ -172,6 +193,7 @@ public class JList<E> extends JComponent {
         return new java.awt.Dimension(w + in.right, h + in.bottom);
     }
     @Override protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         if (isOpaque()) { g.setColor(getBackground()); g.fillRect(0, 0, getWidth(), getHeight()); }
         if (renderer == null) return;
         java.awt.Rectangle[] cells = cellBounds();
@@ -179,7 +201,7 @@ public class JList<E> extends JComponent {
         for (int i = 0; i < cells.length; i++) {
             java.awt.Rectangle b = cells[i];
             if (clip != null && !clip.intersects(b)) continue;
-            java.awt.Component c = renderer.getListCellRendererComponent(this, model.getElementAt(i), i, i == selectedIndex, false);
+            java.awt.Component c = renderer.getListCellRendererComponent(this, model.getElementAt(i), i, isSelectedIndex(i), false);
             if (c == null) continue;
             c.setBounds(0, 0, b.width, b.height);
             if (c instanceof java.awt.Container) ((java.awt.Container) c).validate();
@@ -188,6 +210,12 @@ public class JList<E> extends JComponent {
         }
     }
 
-    public void clearSelection() { setSelectedIndex(-1); }
-    public void ensureIndexIsVisible(int index) {}
+    public void clearSelection() { selectionModel.clearSelection(); }
+    public void ensureIndexIsVisible(int index) { java.awt.Rectangle bounds=getCellBounds(index,index);if(bounds!=null)scrollRectToVisible(bounds); }
+    public java.awt.Point indexToLocation(int index) { java.awt.Rectangle bounds=getCellBounds(index,index);return bounds==null?null:bounds.getLocation(); }
+    public java.awt.Dimension getPreferredScrollableViewportSize() { java.awt.Dimension size=getPreferredSize();return new java.awt.Dimension(size.width,Math.max(1,visibleRowCount)*(fixedCellHeight>0?fixedCellHeight:16)); }
+    public int getScrollableUnitIncrement(java.awt.Rectangle visible,int orientation,int direction) { return fixedCellHeight>0?fixedCellHeight:16; }
+    public int getScrollableBlockIncrement(java.awt.Rectangle visible,int orientation,int direction) { return orientation==SwingConstants.VERTICAL?visible.height:visible.width; }
+    public boolean getScrollableTracksViewportWidth() { return layoutOrientation==VERTICAL; }
+    public boolean getScrollableTracksViewportHeight() { return false; }
 }

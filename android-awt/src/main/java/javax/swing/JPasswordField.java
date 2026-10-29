@@ -12,6 +12,9 @@ public class JPasswordField extends JTextField {
     public JPasswordField(String text, int columns) { super(text, columns); }
     public JPasswordField(Document doc, String text, int columns) { super(doc, text, columns); }
 
+    @Override public void copy() { getToolkit().beep(); }
+    @Override public void cut() { getToolkit().beep(); }
+
     public char getEchoChar() { return echoChar; }
     public void setEchoChar(char c) { echoChar = c; }
     public boolean echoCharIsSet() { return echoChar != 0; }

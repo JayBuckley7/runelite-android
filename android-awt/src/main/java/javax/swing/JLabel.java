@@ -26,8 +26,11 @@ public class JLabel extends JComponent implements SwingConstants {
     public void setIcon(Icon icon) { this.icon = icon; cachedPref = null; invalidate(); }
     @Override
     public void setFont(java.awt.Font f) { super.setFont(f); cachedPref = null; invalidate(); }
-    public Icon getDisabledIcon() { return icon; }
-    public void setDisabledIcon(Icon icon) {}
+    private Icon disabledIcon;
+    private java.awt.Component labelFor;
+    private int displayedMnemonic,displayedMnemonicIndex=-1;
+    public Icon getDisabledIcon() { if(disabledIcon==null&&icon instanceof ImageIcon)disabledIcon=new ImageIcon(GrayFilter.createDisabledImage(((ImageIcon)icon).getImage()));return disabledIcon==null?icon:disabledIcon; }
+    public void setDisabledIcon(Icon value) { Icon old=disabledIcon;disabledIcon=value;firePropertyChange("disabledIcon",old,value);repaint(); }
     public int getHorizontalAlignment() { return horizontalAlignment; }
     public void setHorizontalAlignment(int a) { this.horizontalAlignment = a; }
     public int getVerticalAlignment() { return verticalAlignment; }
@@ -38,10 +41,13 @@ public class JLabel extends JComponent implements SwingConstants {
     public void setVerticalTextPosition(int p) { this.verticalTextPosition = p; cachedPref = null; invalidate(); }
     public int getIconTextGap() { return iconTextGap; }
     public void setIconTextGap(int g) { this.iconTextGap = g; cachedPref = null; invalidate(); }
-    public void setLabelFor(java.awt.Component c) {}
-    public java.awt.Component getLabelFor() { return null; }
-    public void setDisplayedMnemonic(int key) {}
-    public int getDisplayedMnemonic() { return 0; }
+    public void setLabelFor(java.awt.Component c) { java.awt.Component old=labelFor;labelFor=c;firePropertyChange("labelFor",old,c); }
+    public java.awt.Component getLabelFor() { return labelFor; }
+    public void setDisplayedMnemonic(int key) { if(displayedMnemonic!=0)unregisterKeyboardAction(KeyStroke.getKeyStroke(displayedMnemonic,java.awt.event.InputEvent.ALT_DOWN_MASK));int old=displayedMnemonic;displayedMnemonic=key;if(key!=0)registerKeyboardAction(e->{if(labelFor!=null)labelFor.requestFocusInWindow();},KeyStroke.getKeyStroke(key,java.awt.event.InputEvent.ALT_DOWN_MASK),WHEN_IN_FOCUSED_WINDOW);firePropertyChange("displayedMnemonic",old,key); }
+    public void setDisplayedMnemonic(char key) { setDisplayedMnemonic((int)Character.toUpperCase(key)); }
+    public int getDisplayedMnemonic() { return displayedMnemonic; }
+    public void setDisplayedMnemonicIndex(int index) { if(index< -1||index>=text.length())throw new IllegalArgumentException("mnemonic index");displayedMnemonicIndex=index;repaint(); }
+    public int getDisplayedMnemonicIndex() { return displayedMnemonicIndex; }
 
     /** JShadowedLabel and friends call the typed overload — accept and discard. */
     public void setUI(javax.swing.plaf.LabelUI ui) { super.setUI(ui); }
@@ -193,6 +199,7 @@ public class JLabel extends JComponent implements SwingConstants {
 
     @Override
     protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         super.paintComponent(g);
         java.awt.FontMetrics fm = g.getFontMetrics(getFont());
         java.awt.Insets in = getInsets();

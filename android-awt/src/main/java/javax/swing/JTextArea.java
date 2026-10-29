@@ -26,9 +26,9 @@ public class JTextArea extends JTextComponent {
     public void setLineWrap(boolean wrap) { this.lineWrap = wrap; invalidate(); }
     public boolean getWrapStyleWord() { return wrapStyleWord; }
     public void setWrapStyleWord(boolean word) { this.wrapStyleWord = word; invalidate(); }
-    public void append(String str) { setText(getText() + str); }
-    public void insert(String str, int pos) {}
-    public void replaceRange(String str, int start, int end) {}
+    public void append(String str) { insert(str,getDocument().getLength()); }
+    public void insert(String str,int pos) { try { getDocument().insertString(pos,str,null); } catch(javax.swing.text.BadLocationException e) { throw new IllegalArgumentException(e); } }
+    public void replaceRange(String str,int start,int end) { if(end<start)throw new IllegalArgumentException("range");try { ((javax.swing.text.AbstractDocument)getDocument()).replace(start,end-start,str,null); }catch(javax.swing.text.BadLocationException e){throw new IllegalArgumentException(e);} }
 
     @Override public java.awt.Dimension getPreferredSize() {
         if (isPreferredSizeSet()) return super.getPreferredSize();

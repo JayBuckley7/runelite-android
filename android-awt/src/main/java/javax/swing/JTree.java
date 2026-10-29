@@ -1,64 +1,107 @@
 package javax.swing;
 
-import java.awt.Rectangle;
-import javax.swing.event.TreeSelectionListener;
-import javax.swing.tree.DefaultMutableTreeNode;
-import javax.swing.tree.DefaultTreeModel;
-import javax.swing.tree.TreeModel;
-import javax.swing.tree.TreeNode;
-import javax.swing.tree.TreePath;
-import javax.swing.tree.TreeSelectionModel;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.*;
+import javax.swing.event.*;
+import javax.swing.tree.*;
 
+/** Tree state and renderer shared by desktop-style plugins and the Android host. */
 public class JTree extends JComponent implements Scrollable {
-    private static final long serialVersionUID = 1L;
-
+    private static final long serialVersionUID=1L;
     protected TreeModel treeModel;
-
-    public JTree() { this(new DefaultMutableTreeNode("root")); }
-    public JTree(TreeNode root) { this(new DefaultTreeModel(root)); }
-    public JTree(TreeModel newModel) { this.treeModel = newModel; }
-    public JTree(Object[] value) { this(new DefaultMutableTreeNode("root")); }
-
-    public TreeModel getModel() { return treeModel; }
-    public void setModel(TreeModel m) { this.treeModel = m; }
-    public TreePath getSelectionPath() { return null; }
-    public void setSelectionPath(TreePath path) {}
-    public TreePath[] getSelectionPaths() { return new TreePath[0]; }
-    public void setSelectionPaths(TreePath[] paths) {}
-    public int[] getSelectionRows() { return new int[0]; }
-    public void setSelectionRow(int row) {}
-    public void setSelectionRows(int[] rows) {}
-    public int getRowCount() { return 0; }
-    public int getRowHeight() { return 16; }
-    public void setRowHeight(int rowHeight) {}
-    public TreeSelectionModel getSelectionModel() { return null; }
-    public void setSelectionModel(TreeSelectionModel model) {}
-    public void expandPath(TreePath path) {}
-    public void expandRow(int row) {}
-    public void collapsePath(TreePath path) {}
-    public void collapseRow(int row) {}
-    public boolean isExpanded(TreePath path) { return false; }
-    public boolean isExpanded(int row) { return false; }
-    public boolean isCollapsed(TreePath path) { return true; }
-    public boolean isCollapsed(int row) { return true; }
-    public boolean isRootVisible() { return true; }
-    public void setRootVisible(boolean rootVisible) {}
-    public boolean getShowsRootHandles() { return false; }
-    public void setShowsRootHandles(boolean b) {}
-    public Rectangle getRowBounds(int row) { return new Rectangle(); }
-    public Rectangle getPathBounds(TreePath path) { return new Rectangle(); }
-    public int getRowForPath(TreePath path) { return -1; }
-    public TreePath getPathForRow(int row) { return null; }
-    public TreePath getClosestPathForLocation(int x, int y) { return null; }
-    public int getClosestRowForLocation(int x, int y) { return -1; }
-    public void scrollPathToVisible(TreePath path) {}
-    public void scrollRowToVisible(int row) {}
-    public void addTreeSelectionListener(TreeSelectionListener l) {}
-    public void removeTreeSelectionListener(TreeSelectionListener l) {}
-
-    @Override public java.awt.Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
-    @Override public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) { return getRowHeight(); }
-    @Override public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) { return 1; }
-    @Override public boolean getScrollableTracksViewportWidth() { return false; }
-    @Override public boolean getScrollableTracksViewportHeight() { return false; }
+    private TreeSelectionModel selectionModel;
+    private final Set<TreePath> expanded=new HashSet<>();
+    private final EventListenerList listeners=new EventListenerList();
+    private boolean rootVisible=true, showsRootHandles;
+    private int rowHeight=16, visibleRowCount=20;
+    private TreeCellRenderer renderer=(tree,value,selected,open,leaf,row,focus)->{
+        JLabel label=new JLabel(convertValueToText(value,selected,open,leaf,row,focus));
+        label.setFont(getFont());label.setForeground(getForeground());
+        if(selected){label.setOpaque(true);label.setBackground(new Color(0x3875D6));}
+        return label;
+    };
+    private final TreeSelectionListener selectionListener=e->{TreeSelectionEvent forwarded=(TreeSelectionEvent)e.cloneWithSource(this);for(TreeSelectionListener l:getTreeSelectionListeners())l.valueChanged(forwarded);repaint();};
+    private final TreeModelListener modelListener=new TreeModelListener(){
+        private void changed(){selectionModel.resetRowSelection();revalidate();repaint();}
+        public void treeNodesChanged(TreeModelEvent e){changed();}
+        public void treeNodesInserted(TreeModelEvent e){changed();}
+        public void treeNodesRemoved(TreeModelEvent e){Object[] children=e.getChildren();if(children!=null)for(Object child:children){TreePath path=e.getTreePath().pathByAddingChild(child);for(TreePath selected:getSelectionPaths()==null?new TreePath[0]:getSelectionPaths())if(path.isDescendant(selected))selectionModel.removeSelectionPath(selected);}changed();}
+        public void treeStructureChanged(TreeModelEvent e){expanded.removeIf(path->e.getTreePath()!=null&&e.getTreePath().isDescendant(path)&&!e.getTreePath().equals(path));changed();}
+    };
+    public JTree(){this(new DefaultMutableTreeNode("root"));}
+    public JTree(TreeNode root){this(new DefaultTreeModel(root));}
+    public JTree(Object[] values){this(nodes(values));}
+    private static TreeNode nodes(Object[] values){DefaultMutableTreeNode root=new DefaultMutableTreeNode("root");for(Object value:values)root.add(new DefaultMutableTreeNode(value));return root;}
+    public JTree(TreeModel model){
+        setSelectionModel(new DefaultTreeSelectionModel());setModel(model);
+        addMouseListener(new MouseAdapter(){public void mousePressed(MouseEvent e){if(!isEnabled()||e.getButton()!=MouseEvent.BUTTON1)return;TreePath path=getPathForLocation(e.getX(),e.getY());if(path==null)return;Rectangle bounds=getPathBounds(path);if(e.getX()<bounds.x+14&&!treeModel.isLeaf(path.getLastPathComponent())){if(isExpanded(path))collapsePath(path);else expandPath(path);}else if(e.isControlDown()) {if(selectionModel.isPathSelected(path))selectionModel.removeSelectionPath(path);else selectionModel.addSelectionPath(path);}else setSelectionPath(path);requestFocusInWindow();}});
+    }
+    public TreeModel getModel(){return treeModel;}
+    public void setModel(TreeModel model){TreeModel old=treeModel;if(old!=null)old.removeTreeModelListener(modelListener);treeModel=model;expanded.clear();clearSelection();if(model!=null){model.addTreeModelListener(modelListener);if(model.getRoot()!=null)expanded.add(new TreePath(model.getRoot()));}firePropertyChange("model",old,model);revalidate();repaint();}
+    private java.util.List<TreePath> rows(){java.util.List<TreePath> rows=new ArrayList<>();if(treeModel!=null&&treeModel.getRoot()!=null)collect(new TreePath(treeModel.getRoot()),rows,true);return rows;}
+    private void collect(TreePath path,java.util.List<TreePath> result,boolean root){if(!root||rootVisible)result.add(path);if(expanded.contains(path))for(int i=0;i<treeModel.getChildCount(path.getLastPathComponent());i++)collect(path.pathByAddingChild(treeModel.getChild(path.getLastPathComponent(),i)),result,false);}
+    public TreeSelectionModel getSelectionModel(){return selectionModel;}
+    public void setSelectionModel(TreeSelectionModel model){Objects.requireNonNull(model);TreeSelectionModel old=selectionModel;if(old!=null)old.removeTreeSelectionListener(selectionListener);selectionModel=model;model.setRowMapper(paths->{int[] result=new int[paths.length];for(int i=0;i<result.length;i++)result[i]=getRowForPath(paths[i]);return result;});model.addTreeSelectionListener(selectionListener);firePropertyChange("selectionModel",old,model);}
+    public TreePath getSelectionPath(){return selectionModel.getSelectionPath();}
+    public TreePath[] getSelectionPaths(){return selectionModel.getSelectionPaths();}
+    public void setSelectionPath(TreePath path){selectionModel.setSelectionPath(path);}
+    public void setSelectionPaths(TreePath[] paths){selectionModel.setSelectionPaths(paths);}
+    public void addSelectionPath(TreePath path){selectionModel.addSelectionPath(path);}
+    public void removeSelectionPath(TreePath path){selectionModel.removeSelectionPath(path);}
+    public void clearSelection(){selectionModel.clearSelection();}
+    public boolean isSelectionEmpty(){return selectionModel.isSelectionEmpty();}
+    public int getSelectionCount(){return selectionModel.getSelectionCount();}
+    public int[] getSelectionRows(){return selectionModel.getSelectionRows();}
+    public void setSelectionRow(int row){setSelectionPath(getPathForRow(row));}
+    public void setSelectionRows(int[] rows){if(rows==null){clearSelection();return;}java.util.List<TreePath> paths=new ArrayList<>();for(int row:rows){TreePath path=getPathForRow(row);if(path!=null)paths.add(path);}setSelectionPaths(paths.toArray(new TreePath[0]));}
+    public boolean isPathSelected(TreePath path){return selectionModel.isPathSelected(path);}
+    public boolean isRowSelected(int row){return selectionModel.isRowSelected(row);}
+    public int getRowCount(){return rows().size();}
+    public int getRowHeight(){return rowHeight;}
+    public void setRowHeight(int height){int old=rowHeight;rowHeight=height;firePropertyChange("rowHeight",old,height);revalidate();repaint();}
+    private int effectiveRowHeight(){return rowHeight>0?rowHeight:Math.max(16,getFontMetrics(getFont()).getHeight());}
+    public void expandPath(TreePath path){if(path==null)return;java.util.List<TreePath> ancestors=new ArrayList<>();for(TreePath p=path;p!=null;p=p.getParentPath())ancestors.add(0,p);for(TreePath p:ancestors)setExpanded(p,true);}
+    public void collapsePath(TreePath path){setExpanded(path,false);}
+    private void setExpanded(TreePath path,boolean open){if(path==null||expanded.contains(path)==open)return;TreeExpansionEvent event=new TreeExpansionEvent(this,path);try{for(TreeWillExpandListener l:listeners.getListeners(TreeWillExpandListener.class)){if(open)l.treeWillExpand(event);else l.treeWillCollapse(event);}}catch(ExpandVetoException veto){return;}if(open)expanded.add(path);else expanded.remove(path);selectionModel.resetRowSelection();for(TreeExpansionListener l:listeners.getListeners(TreeExpansionListener.class)){if(open)l.treeExpanded(event);else l.treeCollapsed(event);}revalidate();repaint();}
+    public void expandRow(int row){expandPath(getPathForRow(row));}
+    public void collapseRow(int row){collapsePath(getPathForRow(row));}
+    public boolean isExpanded(TreePath path){for(TreePath p=path;p!=null;p=p.getParentPath())if(!expanded.contains(p))return false;return path!=null;}
+    public boolean isExpanded(int row){return isExpanded(getPathForRow(row));}
+    public boolean isCollapsed(TreePath path){return !isExpanded(path);}
+    public boolean isCollapsed(int row){return !isExpanded(row);}
+    public boolean isRootVisible(){return rootVisible;}
+    public void setRootVisible(boolean value){boolean old=rootVisible;rootVisible=value;selectionModel.resetRowSelection();firePropertyChange("rootVisible",old,value);revalidate();repaint();}
+    public boolean getShowsRootHandles(){return showsRootHandles;}
+    public void setShowsRootHandles(boolean value){showsRootHandles=value;repaint();}
+    public Rectangle getRowBounds(int row){TreePath path=getPathForRow(row);if(path==null)return null;int x=(path.getPathCount()-(rootVisible?1:2))*16;return new Rectangle(Math.max(0,x),row*effectiveRowHeight(),Math.max(16,getWidth()-x),effectiveRowHeight());}
+    public Rectangle getPathBounds(TreePath path){return getRowBounds(getRowForPath(path));}
+    public int getRowForPath(TreePath path){return rows().indexOf(path);}
+    public TreePath getPathForRow(int row){java.util.List<TreePath> rows=rows();return row<0||row>=rows.size()?null:rows.get(row);}
+    public int getClosestRowForLocation(int x,int y){return getRowCount()==0?-1:Math.max(0,Math.min(getRowCount()-1,y/effectiveRowHeight()));}
+    public TreePath getClosestPathForLocation(int x,int y){return getPathForRow(getClosestRowForLocation(x,y));}
+    public TreePath getPathForLocation(int x,int y){int row=y/effectiveRowHeight();Rectangle bounds=getRowBounds(row);return y<0||bounds==null||!bounds.contains(x,y)?null:getPathForRow(row);}
+    public int getRowForLocation(int x,int y){return getRowForPath(getPathForLocation(x,y));}
+    public void scrollPathToVisible(TreePath path){if(path==null)return;expandPath(path.getParentPath());Rectangle bounds=getPathBounds(path);if(bounds!=null)scrollRectToVisible(bounds);}
+    public void scrollRowToVisible(int row){scrollPathToVisible(getPathForRow(row));}
+    public void addTreeSelectionListener(TreeSelectionListener l){listeners.add(TreeSelectionListener.class,l);}
+    public void removeTreeSelectionListener(TreeSelectionListener l){listeners.remove(TreeSelectionListener.class,l);}
+    public TreeSelectionListener[] getTreeSelectionListeners(){return listeners.getListeners(TreeSelectionListener.class);}
+    public void addTreeExpansionListener(TreeExpansionListener l){listeners.add(TreeExpansionListener.class,l);}
+    public void removeTreeExpansionListener(TreeExpansionListener l){listeners.remove(TreeExpansionListener.class,l);}
+    public void addTreeWillExpandListener(TreeWillExpandListener l){listeners.add(TreeWillExpandListener.class,l);}
+    public void removeTreeWillExpandListener(TreeWillExpandListener l){listeners.remove(TreeWillExpandListener.class,l);}
+    public TreeCellRenderer getCellRenderer(){return renderer;}
+    public void setCellRenderer(TreeCellRenderer value){renderer=value;revalidate();repaint();}
+    public String convertValueToText(Object value,boolean selected,boolean expanded,boolean leaf,int row,boolean focus){return value==null?"":value.toString();}
+    public int getVisibleRowCount(){return visibleRowCount;}
+    public void setVisibleRowCount(int count){visibleRowCount=count;revalidate();}
+    public Dimension getPreferredSize(){if(isPreferredSizeSet())return super.getPreferredSize();int width=0;for(TreePath path:rows())width=Math.max(width,(path.getPathCount()+1)*16+getFontMetrics(getFont()).stringWidth(String.valueOf(path.getLastPathComponent())));return new Dimension(width,getRowCount()*effectiveRowHeight());}
+    protected void paintComponent(Graphics g){
+        if(paintDelegate(g))return;super.paintComponent(g);if(renderer==null)return;for(int row=0;row<getRowCount();row++){TreePath path=getPathForRow(row);Rectangle bounds=getRowBounds(row);if(g.getClipBounds()!=null&&!g.getClipBounds().intersects(bounds))continue;boolean leaf=treeModel.isLeaf(path.getLastPathComponent());Component cell=renderer.getTreeCellRendererComponent(this,path.getLastPathComponent(),isPathSelected(path),isExpanded(path),leaf,row,false);if(cell!=null){cell.setBounds(0,0,Math.max(0,bounds.width-14),bounds.height);Graphics cg=g.create(bounds.x+14,bounds.y,Math.max(0,bounds.width-14),bounds.height);try{cell.paint(cg);}finally{cg.dispose();}}if(!leaf){g.setColor(getForeground());g.drawString(isExpanded(path)?"-":"+",bounds.x+2,bounds.y+effectiveRowHeight()-3);}}}
+    public Dimension getPreferredScrollableViewportSize(){Dimension size=getPreferredSize();return new Dimension(size.width,visibleRowCount*effectiveRowHeight());}
+    public int getScrollableUnitIncrement(Rectangle visible,int orientation,int direction){return effectiveRowHeight();}
+    public int getScrollableBlockIncrement(Rectangle visible,int orientation,int direction){return orientation==SwingConstants.VERTICAL?visible.height:visible.width;}
+    public boolean getScrollableTracksViewportWidth(){return false;}
+    public boolean getScrollableTracksViewportHeight(){return false;}
 }

@@ -18,17 +18,18 @@ public class Font implements Serializable {
 
     private final String name;
     private final int style;
-    private final int size;
+    private final float size;
     /** TextAttribute.UNDERLINE value, -1 when off. Decoration only: drawn by
      *  BufferedImageGraphics2D.drawString, never affects metrics. */
     private final int underline;
     private final boolean strikethrough;
+    private final java.util.Map<TextAttribute, Object> layoutAttributes = new java.util.HashMap<>();
 
     public Font(String name, int style, int size) {
         this(name, style, size, -1, false);
     }
 
-    private Font(String name, int style, int size, int underline, boolean strikethrough) {
+    private Font(String name, int style, float size, int underline, boolean strikethrough) {
         this.name = name != null ? name : "Default";
         this.style = style;
         this.size = size;
@@ -42,12 +43,13 @@ public class Font implements Serializable {
 
     protected Font(Font font) {
         this(font.name, font.style, font.size, font.underline, font.strikethrough);
+        layoutAttributes.putAll(font.layoutAttributes);
     }
 
     public String getName()   { return name; }
     public String getFamily() { return name; }
     public int getStyle()     { return style; }
-    public int getSize()      { return size; }
+    public int getSize()      { return Math.round(size); }
     public float getSize2D()  { return size; }
 
     /** Non-JDK accessor: whether TextAttribute.UNDERLINE is on. */
@@ -76,6 +78,13 @@ public class Font implements Serializable {
      * Used by RuneLite's FontManager static initializer to load runescape.ttf,
      * runescape_bold.ttf, runescape_small.ttf and any plugin-side custom fonts.
      */
+    public static Font getFont(java.util.Map<? extends java.text.AttributedCharacterIterator.Attribute, ?> attributes) {
+        Object specified = attributes.get(TextAttribute.FONT);
+        return specified instanceof Font ? (Font)specified : new Font(attributes);
+    }
+    public java.text.AttributedCharacterIterator.Attribute[] getAvailableAttributes() {
+        return new java.text.AttributedCharacterIterator.Attribute[]{TextAttribute.FAMILY, TextAttribute.WEIGHT, TextAttribute.WIDTH, TextAttribute.POSTURE, TextAttribute.SIZE, TextAttribute.TRANSFORM, TextAttribute.SUPERSCRIPT, TextAttribute.TRACKING, TextAttribute.UNDERLINE, TextAttribute.STRIKETHROUGH};
+    }
     public static Font getFont(String property) { return getFont(property,null); }
     public static Font getFont(String property,Font fallback) {
         String value=System.getProperty(property);
@@ -90,9 +99,11 @@ public class Font implements Serializable {
         return new Font(name,style,size>0?size:12);
     }
     public static Font createFont(int fontFormat, java.io.InputStream fontStream) throws java.io.IOException, FontFormatException {
+        if(fontFormat!=TRUETYPE_FONT && fontFormat!=TYPE1_FONT)throw new IllegalArgumentException("font format");
+        if(fontFormat==TYPE1_FONT)throw new FontFormatException("Type 1 fonts are not supported by Android");
         String family = net.runelite.awt.impl.AwtFontRegistry.register(fontStream);
-        if (family == null) family = Font.DIALOG;
-        return new Font(family, Font.PLAIN, 12);
+        if(family==null)throw new FontFormatException("Invalid TrueType font");
+        return new Font(family, Font.PLAIN, 1);
     }
 
     public static Font createFont(int fontFormat, java.io.File fontFile) throws java.io.IOException, FontFormatException {
@@ -103,15 +114,21 @@ public class Font implements Serializable {
 
     // derive* keep the decoration attributes, as the JDK's do.
     public Font deriveFont(int style) {
-        return new Font(name, style, size, underline, strikethrough);
+        Font result = new Font(name, style, size, underline, strikethrough);
+        result.layoutAttributes.putAll(layoutAttributes);
+        return result;
     }
 
     public Font deriveFont(float size) {
-        return new Font(name, style, (int) size, underline, strikethrough);
+        Font result = new Font(name, style, size, underline, strikethrough);
+        result.layoutAttributes.putAll(layoutAttributes);
+        return result;
     }
 
     public Font deriveFont(int style, float size) {
-        return new Font(name, style, (int) size, underline, strikethrough);
+        Font result = new Font(name, style, size, underline, strikethrough);
+        result.layoutAttributes.putAll(layoutAttributes);
+        return result;
     }
 
     /**
@@ -120,7 +137,7 @@ public class Font implements Serializable {
      * round-trip.
      */
     public java.util.Map<TextAttribute, ?> getAttributes() {
-        java.util.Map<TextAttribute, Object> m = new java.util.HashMap<>();
+        java.util.Map<TextAttribute, Object> m = new java.util.HashMap<>(layoutAttributes);
         m.put(TextAttribute.FAMILY, name);
         m.put(TextAttribute.SIZE, (float) size);
         m.put(TextAttribute.WEIGHT, isBold() ? TextAttribute.WEIGHT_BOLD : TextAttribute.WEIGHT_REGULAR);
@@ -139,13 +156,13 @@ public class Font implements Serializable {
         if (attrs == null || attrs.isEmpty()) return this;
         String newName = name;
         int newStyle = style;
-        int newSize = size;
+        float newSize = size;
         int newUnderline = underline;
         boolean newStrike = strikethrough;
         Object fam = attrs.get(TextAttribute.FAMILY);
         if (fam instanceof String) newName = (String) fam;
         Object sz = attrs.get(TextAttribute.SIZE);
-        if (sz instanceof Number) newSize = ((Number) sz).intValue();
+        if (sz instanceof Number) newSize = ((Number) sz).floatValue();
         Object weight = attrs.get(TextAttribute.WEIGHT);
         if (weight instanceof Number) {
             if (((Number) weight).floatValue() >= TextAttribute.WEIGHT_BOLD) newStyle |= BOLD;
@@ -163,22 +180,80 @@ public class Font implements Serializable {
         if (attrs.containsKey(TextAttribute.STRIKETHROUGH)) {
             newStrike = Boolean.TRUE.equals(attrs.get(TextAttribute.STRIKETHROUGH));
         }
-        return new Font(newName, newStyle, newSize, newUnderline, newStrike);
+        Font result = new Font(newName, newStyle, newSize, newUnderline, newStrike);
+        result.layoutAttributes.putAll(layoutAttributes);
+        for (java.util.Map.Entry<? extends java.text.AttributedCharacterIterator.Attribute, ?> entry : attrs.entrySet()) {
+            if (entry.getKey() instanceof TextAttribute) {
+                TextAttribute key = (TextAttribute) entry.getKey();
+                if (entry.getValue() == null) result.layoutAttributes.remove(key);
+                else result.layoutAttributes.put(key, entry.getValue());
+            }
+        }
+        return result;
     }
+
+    public Font deriveFont(java.awt.geom.AffineTransform transform) {
+        return deriveFont(java.util.Collections.singletonMap(TextAttribute.TRANSFORM, new java.awt.font.TransformAttribute(java.util.Objects.requireNonNull(transform))));
+    }
+    public Font deriveFont(int style, java.awt.geom.AffineTransform transform) { return deriveFont(style).deriveFont(transform); }
+    public java.awt.geom.AffineTransform getTransform() {
+        Object value = layoutAttributes.get(TextAttribute.TRANSFORM);
+        java.awt.geom.AffineTransform result = value instanceof java.awt.font.TransformAttribute ? ((java.awt.font.TransformAttribute)value).getTransform() : value instanceof java.awt.geom.AffineTransform ? new java.awt.geom.AffineTransform((java.awt.geom.AffineTransform)value) : new java.awt.geom.AffineTransform();
+        Object width = layoutAttributes.get(TextAttribute.WIDTH);
+        if (width instanceof Number) result.scale(((Number)width).doubleValue(), 1);
+        Object superscript = layoutAttributes.get(TextAttribute.SUPERSCRIPT);
+        if (superscript instanceof Number && ((Number)superscript).intValue() != 0) {
+            int level = ((Number)superscript).intValue();
+            double scale = Math.pow(2d / 3, Math.abs(level));
+            result.translate(0, (level > 0 ? -1 : 1) * size * (1 - scale)); result.scale(scale, scale);
+        }
+        return result;
+    }
+    public boolean isTransformed() {
+        if (layoutAttributes.isEmpty()) return false;
+        Object transform = layoutAttributes.get(TextAttribute.TRANSFORM);
+        if (transform instanceof java.awt.font.TransformAttribute && !((java.awt.font.TransformAttribute)transform).isIdentity()) return true;
+        if (transform instanceof java.awt.geom.AffineTransform && !((java.awt.geom.AffineTransform)transform).isIdentity()) return true;
+        Object width = layoutAttributes.get(TextAttribute.WIDTH), superscript = layoutAttributes.get(TextAttribute.SUPERSCRIPT);
+        return width instanceof Number && ((Number)width).doubleValue() != 1 || superscript instanceof Number && ((Number)superscript).intValue() != 0;
+    }
+    public boolean hasLayoutAttributes() { return !layoutAttributes.isEmpty() || underline >= 0 || strikethrough; }
+    public float getTracking() { Object value = layoutAttributes.get(TextAttribute.TRACKING); return value instanceof Number ? ((Number)value).floatValue() : 0; }
+
+    public boolean canDisplay(char c){return canDisplay((int)c);}
+    public boolean canDisplay(int codePoint){if(!Character.isValidCodePoint(codePoint))throw new IllegalArgumentException("code point");return canDisplayUpTo(new String(Character.toChars(codePoint)))<0;}
+    public int canDisplayUpTo(char[] text,int start,int limit){int index=canDisplayUpTo(new String(text,start,limit-start));return index<0?-1:start+index;}
+    public String getFamily(java.util.Locale locale){return getFamily();}
+    public String getFontName(){return getName();}
+    public String getFontName(java.util.Locale locale){return getName();}
+    public String getPSName(){return getName().replace(" ","");}
+    public java.awt.geom.Rectangle2D getStringBounds(String text,java.awt.font.FontRenderContext context){
+        android.graphics.Paint paint=net.runelite.awt.impl.BufferedImageFontMetrics.paintFor(this);
+        android.graphics.Paint.FontMetrics metrics=paint.getFontMetrics();
+        java.awt.geom.Rectangle2D bounds = new java.awt.geom.Rectangle2D.Float(0,metrics.ascent,paint.measureText(text),metrics.descent-metrics.ascent+metrics.leading);
+        return isTransformed() ? getTransform().createTransformedShape(bounds).getBounds2D() : bounds;
+    }
+    public java.awt.geom.Rectangle2D getStringBounds(String text,int start,int limit,java.awt.font.FontRenderContext context){return getStringBounds(text.substring(start,limit),context);}
+    public java.awt.geom.Rectangle2D getStringBounds(char[] text,int start,int limit,java.awt.font.FontRenderContext context){return getStringBounds(new String(text,start,limit-start),context);}
+    public java.awt.font.LineMetrics getLineMetrics(String text,java.awt.font.FontRenderContext context){return new net.runelite.awt.impl.AndroidLineMetrics(this,text.length());}
+    public java.awt.font.LineMetrics getLineMetrics(String text,int start,int limit,java.awt.font.FontRenderContext context){return new net.runelite.awt.impl.AndroidLineMetrics(this,limit-start);}
+    public java.awt.font.LineMetrics getLineMetrics(char[] text,int start,int limit,java.awt.font.FontRenderContext context){return new net.runelite.awt.impl.AndroidLineMetrics(this,limit-start);}
+    public java.awt.geom.Rectangle2D getMaxCharBounds(java.awt.font.FontRenderContext context){return getStringBounds("W",context);}
+    public boolean hasUniformLineMetrics(){return false;}
 
     @Override
     public boolean equals(Object obj) {
         if (obj instanceof Font) {
             Font f = (Font) obj;
             return size == f.size && style == f.style && name.equals(f.name)
-                && underline == f.underline && strikethrough == f.strikethrough;
+                && underline == f.underline && strikethrough == f.strikethrough && layoutAttributes.equals(f.layoutAttributes);
         }
         return false;
     }
 
     @Override
     public int hashCode() {
-        return name.hashCode() ^ style ^ size ^ ((underline + 1) << 16) ^ (strikethrough ? 0x40000000 : 0);
+        return name.hashCode() ^ style ^ Float.floatToIntBits(size) ^ ((underline + 1) << 16) ^ (strikethrough ? 0x40000000 : 0) ^ layoutAttributes.hashCode();
     }
 
     @Override

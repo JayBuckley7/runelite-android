@@ -32,8 +32,10 @@ final class HtmlTextRenderer
 	{
 		final String text;
 		final Color color;       // null = use foreground
+		final String href;
 		final boolean bold;
-		Run(String text, Color color, boolean bold) { this.text = text; this.color = color; this.bold = bold; }
+		Run(String text, Color color, boolean bold) { this(text,color,bold,null); }
+		Run(String text, Color color, boolean bold,String href) { this.text=text;this.color=color;this.bold=bold;this.href=href; }
 	}
 
 	static final class Line
@@ -88,7 +90,7 @@ final class HtmlTextRenderer
 						width = Math.max(width, used); line = new Line(); lines.add(line); used = 0;
 					}
 					if (used == 0 && word.trim().isEmpty()) continue;
-					line.runs.add(new Run(word, run.color, run.bold)); used += w;
+					line.runs.add(new Run(word, run.color, run.bold,run.href)); used += w;
 				}
 			}
 			width = Math.max(width, used);
@@ -131,6 +133,7 @@ final class HtmlTextRenderer
 
 		Color color = null;
 		boolean bold = false;
+		String href=null;
 
 		StringBuilder buf = new StringBuilder();
 		int i = 0;
@@ -143,7 +146,7 @@ final class HtmlTextRenderer
 				// Flush accumulated text
 				if (buf.length() > 0)
 				{
-					current.runs.add(new Run(buf.toString(), color, bold));
+					current.runs.add(new Run(buf.toString(), color, bold,href));
 					buf.setLength(0);
 				}
 				// Find matching '>'
@@ -164,7 +167,12 @@ final class HtmlTextRenderer
 
 				switch (tagName)
 				{
-					case "br":
+					case "a":
+                        if(closing)href=null;else{java.util.regex.Matcher match=java.util.regex.Pattern.compile("(?i)href\\s*=\\s*[\"']([^\"']*)[\"']").matcher(tag);href=match.find()?match.group(1):null;}
+                        break;
+                    case "p": case "div":
+                        if(!current.runs.isEmpty()){current=new Line();lines.add(current);}break;
+                    case "br":
 						current = new Line();
 						lines.add(current);
 						break;
@@ -234,7 +242,7 @@ final class HtmlTextRenderer
 		}
 		if (buf.length() > 0)
 		{
-			current.runs.add(new Run(buf.toString(), color, bold));
+			current.runs.add(new Run(buf.toString(), color, bold,href));
 		}
 		// Drop trailing empty trailing line caused by closing </html>
 		if (lines.size() > 1 && lines.get(lines.size() - 1).runs.isEmpty())

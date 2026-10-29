@@ -15,19 +15,66 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     public static final int AUTO_RESIZE_ALL_COLUMNS = 4;
 
     private RowSorter<? extends TableModel> sorter;
+    private ListSelectionModel selectionModel = new DefaultListSelectionModel();
+    private final ListSelectionModel columnSelection = new DefaultListSelectionModel();
+    private final java.util.Map<Integer,Integer> rowHeights = new java.util.HashMap<>();
+    private final java.util.Map<Class<?>,javax.swing.table.TableCellEditor> defaultEditors = new java.util.HashMap<>();
+    private final java.util.Map<Class<?>,javax.swing.table.TableCellRenderer> defaultRenderers = new java.util.HashMap<>();
+    private javax.swing.table.TableCellEditor cellEditor;
+    private Component editorComponent;
+    private int editingRow=-1,editingColumn=-1,editingModelRow=-1,editingModelColumn=-1;
+    private final java.util.Set<Integer> selectedModelRows=new java.util.LinkedHashSet<>();
+    private boolean restoringSelection;
+    private int modelAnchor=-1,modelLead=-1;
+    private final ListSelectionListener selectionListener=e->{rememberSelection();repaint();};
+    private final javax.swing.event.CellEditorListener editorListener = new javax.swing.event.CellEditorListener() {
+        public void editingStopped(javax.swing.event.ChangeEvent e) { if(cellEditor!=null){Object value=cellEditor.getCellEditorValue();int row=editingModelRow,col=editingModelColumn;removeEditor();if(row>=0&&row<dataModel.getRowCount()&&col>=0&&col<dataModel.getColumnCount())dataModel.setValueAt(value,row,col);} }
+        public void editingCanceled(javax.swing.event.ChangeEvent e) { removeEditor(); }
+    };
+
     private java.awt.Color selectionBackground = new java.awt.Color(0x3875D6), selectionForeground = java.awt.Color.WHITE, gridColor = java.awt.Color.GRAY;
     private boolean showGrid = true;
-    private final javax.swing.event.RowSorterListener sortListener = e -> { revalidate(); repaint(); };
+    private final javax.swing.event.RowSorterListener sortListener = e -> {
+        if(e.getType()==javax.swing.event.RowSorterEvent.Type.SORTED){restoreSelection();relocateEditor();}
+        revalidate(); repaint();
+    };
+    private int selectedModelIndex(int view){return view<0||view>=getRowCount()?-1:convertRowIndexToModel(view);}
+    private void rememberSelection(){
+        if(restoringSelection||dataModel==null)return;
+        selectedModelRows.clear();
+        for(int row:getSelectedRows())selectedModelRows.add(convertRowIndexToModel(row));
+        modelAnchor=selectedModelIndex(selectionModel.getAnchorSelectionIndex());modelLead=selectedModelIndex(selectionModel.getLeadSelectionIndex());
+    }
+    private int visibleModelIndex(int model){return model<0||model>=dataModel.getRowCount()?-1:convertRowIndexToView(model);}
+    private void restoreSelection(){
+        restoringSelection=true;boolean adjusting=selectionModel.getValueIsAdjusting();
+        try{
+            selectionModel.setValueIsAdjusting(true);selectionModel.clearSelection();
+            for(int model:selectedModelRows){int view=visibleModelIndex(model);if(view>=0)selectionModel.addSelectionInterval(view,view);}
+            selectionModel.setAnchorSelectionIndex(visibleModelIndex(modelAnchor));
+            if(selectionModel instanceof DefaultListSelectionModel)((DefaultListSelectionModel)selectionModel).moveLeadSelectionIndex(visibleModelIndex(modelLead));
+        }finally{selectionModel.setValueIsAdjusting(adjusting);restoringSelection=false;}
+    }
+    private void relocateEditor(){
+        if(cellEditor==null)return;
+        editingRow=visibleModelIndex(editingModelRow);editingColumn=convertColumnIndexToView(editingModelColumn);
+        if(editingRow<0||editingColumn<0){cellEditor.cancelCellEditing();return;}
+        editorComponent.setBounds(getCellRect(editingRow,editingColumn,false));
+    }
     public RowSorter<? extends TableModel> getRowSorter() { return sorter; }
     public void setRowSorter(RowSorter<? extends TableModel> value) {
+        rememberSelection();
         if (sorter != null) sorter.removeRowSorterListener(sortListener);
         sorter = value;
         if (sorter != null) sorter.addRowSorterListener(sortListener);
-        revalidate(); repaint();
+        restoreSelection();relocateEditor();revalidate(); repaint();
     }
     public int convertRowIndexToModel(int row) { return sorter == null ? row : sorter.convertRowIndexToModel(row); }
     public int convertRowIndexToView(int row) { return sorter == null ? row : sorter.convertRowIndexToView(row); }
-    public int rowAtPoint(java.awt.Point p) { int row = p.y / rowHeight; return p.y < 0 || row >= getRowCount() ? -1 : row; }
+    public int rowAtPoint(java.awt.Point p) { if(p.y<0)return -1;int y=0;for(int row=0;row<getRowCount();row++){y+=getRowHeight(row);if(p.y<y)return row;}return -1; }
+    public int columnAtPoint(java.awt.Point p) { return columnModel.getColumnIndexAtX(p.x); }
+    public int convertColumnIndexToModel(int column) { return column<0?column:columnModel.getColumn(column).getModelIndex(); }
+    public int convertColumnIndexToView(int column) { for(int i=0;i<getColumnCount();i++)if(convertColumnIndexToModel(i)==column)return i;return -1; }
     public void setGridColor(java.awt.Color c) { gridColor = c; repaint(); }
     public java.awt.Color getGridColor() { return gridColor; }
     public void setShowGrid(boolean value) { showGrid = value; repaint(); }
@@ -52,7 +99,11 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     protected boolean autoCreateColumnsFromModel = true;
 
     public JTable() { this(new javax.swing.table.DefaultTableModel()); }
-    public JTable(TableModel model) { tableHeader.setTable(this); setModel(model); setOpaque(true); }
+    public JTable(TableModel model) {
+        tableHeader.setTable(this); setModel(model); setOpaque(true);
+        selectionModel.addListSelectionListener(selectionListener); columnSelection.addListSelectionListener(e->repaint());
+        addMouseListener(new java.awt.event.MouseAdapter(){public void mousePressed(java.awt.event.MouseEvent e){if(!isEnabled()||e.getButton()!=java.awt.event.MouseEvent.BUTTON1)return;int row=rowAtPoint(e.getPoint()),col=columnAtPoint(e.getPoint());if(row>=0&&col>=0){changeSelection(row,col,e.isControlDown(),e.isShiftDown());if(e.getClickCount()>=2)editCellAt(row,col,e);requestFocusInWindow();}}});
+    }
     public JTable(Object[][] rows, Object[] columns) { this(new javax.swing.table.DefaultTableModel(rows, columns)); }
     public JTable(int rows, int columns) { this(new javax.swing.table.DefaultTableModel(rows, columns)); }
     public JTable(java.util.Vector<? extends java.util.Vector> rows, java.util.Vector<?> columns) {
@@ -62,6 +113,10 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     public void setModel(TableModel model) {
         if (model == null) throw new IllegalArgumentException("model");
         if (dataModel != null) dataModel.removeTableModelListener(this);
+        if(cellEditor!=null)cellEditor.cancelCellEditing();
+        if(sorter!=null){sorter.removeRowSorterListener(sortListener);sorter=null;}
+        selectedModelRows.clear();rowHeights.clear();modelAnchor=modelLead=-1;
+        selectionModel.clearSelection();columnSelection.clearSelection();
         dataModel = model;
         dataModel.addTableModelListener(this);
         if (autoCreateColumnsFromModel) createDefaultColumnsFromModel();
@@ -83,27 +138,48 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
         if (tableHeader != null) { tableHeader.revalidate(); tableHeader.repaint(); }
     }
     @Override public void tableChanged(javax.swing.event.TableModelEvent event) {
-        if ((event == null || event.getFirstRow() == javax.swing.event.TableModelEvent.HEADER_ROW)
-                && autoCreateColumnsFromModel) createDefaultColumnsFromModel();
-        if (sorter != null) {
-            if (event == null || event.getFirstRow() == javax.swing.event.TableModelEvent.HEADER_ROW) sorter.modelStructureChanged();
-            else sorter.allRowsChanged();
+        boolean structure=event==null||event.getFirstRow()==javax.swing.event.TableModelEvent.HEADER_ROW;
+        if(structure){
+            selectedModelRows.clear();modelAnchor=modelLead=-1;rowHeights.clear();
+            if(cellEditor!=null)cellEditor.cancelCellEditing();
+            if(autoCreateColumnsFromModel)createDefaultColumnsFromModel();
+        }else if(event.getType()!=javax.swing.event.TableModelEvent.UPDATE){
+            int first=event.getFirstRow(),last=event.getLastRow(),delta=last-first+1;
+            boolean insert=event.getType()==javax.swing.event.TableModelEvent.INSERT;
+            java.util.Set<Integer> shifted=new java.util.LinkedHashSet<>();
+            for(int row:selectedModelRows){int mapped=shiftRow(row,first,last,delta,insert);if(mapped>=0)shifted.add(mapped);}
+            selectedModelRows.clear();selectedModelRows.addAll(shifted);
+            modelAnchor=shiftRow(modelAnchor,first,last,delta,insert);modelLead=shiftRow(modelLead,first,last,delta,insert);
+            java.util.Map<Integer,Integer> heights=new java.util.HashMap<>();
+            for(java.util.Map.Entry<Integer,Integer> entry:rowHeights.entrySet()){int mapped=shiftRow(entry.getKey(),first,last,delta,insert);if(mapped>=0)heights.put(mapped,entry.getValue());}
+            rowHeights.clear();rowHeights.putAll(heights);
+            if(cellEditor!=null){editingModelRow=shiftRow(editingModelRow,first,last,delta,insert);if(editingModelRow<0)cellEditor.cancelCellEditing();}
         }
-        revalidate(); repaint();
+        if(sorter!=null){
+            if(structure)sorter.modelStructureChanged();
+            else if(event.getType()==javax.swing.event.TableModelEvent.INSERT)sorter.rowsInserted(event.getFirstRow(),event.getLastRow());
+            else if(event.getType()==javax.swing.event.TableModelEvent.DELETE)sorter.rowsDeleted(event.getFirstRow(),event.getLastRow());
+            else if(event.getLastRow()==Integer.MAX_VALUE)sorter.allRowsChanged();
+            else if(event.getColumn()==javax.swing.event.TableModelEvent.ALL_COLUMNS)sorter.rowsUpdated(event.getFirstRow(),event.getLastRow());
+            else sorter.rowsUpdated(event.getFirstRow(),event.getLastRow(),event.getColumn());
+        }
+        restoreSelection();relocateEditor();revalidate();repaint();
     }
+    private int shiftRow(int row,int first,int last,int delta,boolean insert){return row<0?row:insert?(row>=first?row+delta:row):(row>=first&&row<=last?-1:row>last?row-delta:row);}
     public javax.swing.table.TableCellRenderer getCellRenderer(int row, int column) {
         javax.swing.table.TableCellRenderer renderer = columnModel.getColumn(column).getCellRenderer();
-        return renderer == null ? defaultRenderer : renderer;
+        return renderer == null ? getDefaultRenderer(getColumnClass(column)) : renderer;
     }
     @Override public java.awt.Dimension getPreferredSize() {
         if (isPreferredSizeSet()) return super.getPreferredSize();
-        return new java.awt.Dimension(columnModel.getTotalColumnWidth(), getRowCount() * rowHeight);
+        return new java.awt.Dimension(columnModel.getTotalColumnWidth(), totalRowHeight());
     }
     @Override protected void paintComponent(java.awt.Graphics g) {
+        if(paintDelegate(g))return;
         super.paintComponent(g);
         Rectangle clip = g.getClipBounds();
-        int first = clip == null ? 0 : Math.max(0, clip.y / rowHeight);
-        int last = clip == null ? getRowCount() : Math.min(getRowCount(), (clip.y + clip.height) / rowHeight + 1);
+        int first = 0;
+        int last = getRowCount();
         for (int row = first; row < last; row++) for (int col = 0; col < getColumnCount(); col++) {
             Rectangle bounds = getCellRect(row, col, false);
             if (clip != null && !clip.intersects(bounds)) continue;
@@ -114,9 +190,11 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
         }
     }
     public int getRowHeight() { return rowHeight; }
-    public void setRowHeight(int h) { if (h <= 0) throw new IllegalArgumentException("rowHeight"); this.rowHeight = h; revalidate(); repaint(); }
-    public int getRowHeight(int row) { return rowHeight; }
-    public void setRowHeight(int row, int h) {}
+    public void setRowHeight(int h) { if (h <= 0) throw new IllegalArgumentException("rowHeight"); this.rowHeight = h; rowHeights.clear(); revalidate(); repaint(); }
+    public int getRowHeight(int row) { return rowHeights.getOrDefault(convertRowIndexToModel(row),rowHeight); }
+    public void setRowHeight(int row, int h) { if(h<=0||row<0||row>=getRowCount())throw new IllegalArgumentException("row height");rowHeights.put(convertRowIndexToModel(row),h);revalidate();repaint(); }
+    private int rowY(int row) { int y=0;for(int i=0;i<row;i++)y+=getRowHeight(i);return y; }
+    private int totalRowHeight() { return rowY(getRowCount()); }
     public int getRowMargin() { return rowMargin; }
     public void setRowMargin(int m) { this.rowMargin = m; }
     public boolean getRowSelectionAllowed() { return rowSelectionAllowed; }
@@ -127,46 +205,95 @@ public class JTable extends JComponent implements Scrollable, javax.swing.event.
     public void setAutoResizeMode(int mode) { this.autoResizeMode = mode; }
     public boolean getAutoCreateColumnsFromModel() { return autoCreateColumnsFromModel; }
     public void setAutoCreateColumnsFromModel(boolean v) { this.autoCreateColumnsFromModel = v; if (v) createDefaultColumnsFromModel(); }
-    public int getSelectedRow() { return -1; }
-    public int[] getSelectedRows() { return new int[0]; }
-    public int getSelectedRowCount() { return 0; }
-    public int getSelectedColumn() { return -1; }
-    public int[] getSelectedColumns() { return new int[0]; }
-    public int getSelectedColumnCount() { return 0; }
-    public boolean isRowSelected(int row) { return false; }
-    public boolean isColumnSelected(int col) { return false; }
-    public boolean isCellSelected(int row, int col) { return false; }
-    public void clearSelection() {}
-    public void selectAll() {}
+    public ListSelectionModel getSelectionModel() { return selectionModel; }
+    public void setSelectionModel(ListSelectionModel value) { java.util.Objects.requireNonNull(value);ListSelectionModel old=selectionModel;old.removeListSelectionListener(selectionListener);selectionModel=value;value.addListSelectionListener(selectionListener);rememberSelection();firePropertyChange("selectionModel",old,value); }
+    public void setSelectionMode(int mode) { selectionModel.setSelectionMode(mode);columnSelection.setSelectionMode(mode); }
+    private int[] selected(ListSelectionModel model,int count) { java.util.List<Integer> list=new java.util.ArrayList<>();for(int i=0;i<count;i++)if(model.isSelectedIndex(i))list.add(i);int[] result=new int[list.size()];for(int i=0;i<result.length;i++)result[i]=list.get(i);return result; }
+    public int getSelectedRow() { return selectionModel.getMinSelectionIndex(); }
+    public int[] getSelectedRows() { return selected(selectionModel,getRowCount()); }
+    public int getSelectedRowCount() { return getSelectedRows().length; }
+    public int getSelectedColumn() { return columnSelection.getMinSelectionIndex(); }
+    public int[] getSelectedColumns() { return selected(columnSelection,getColumnCount()); }
+    public int getSelectedColumnCount() { return getSelectedColumns().length; }
+    public boolean isRowSelected(int row) { return selectionModel.isSelectedIndex(row); }
+    public boolean isColumnSelected(int col) { return columnSelection.isSelectedIndex(col); }
+    public boolean isCellSelected(int row,int col) { return rowSelectionAllowed&&columnSelectionAllowed?isRowSelected(row)&&isColumnSelected(col):rowSelectionAllowed?isRowSelected(row):columnSelectionAllowed&&isColumnSelected(col); }
+    public boolean getCellSelectionEnabled() { return rowSelectionAllowed&&columnSelectionAllowed; }
+    public void setCellSelectionEnabled(boolean value) { rowSelectionAllowed=columnSelectionAllowed=value;repaint(); }
+    public void clearSelection() { selectionModel.clearSelection();columnSelection.clearSelection(); }
+    public void selectAll() { if(getRowCount()>0)selectionModel.setSelectionInterval(0,getRowCount()-1);if(getColumnCount()>0)columnSelection.setSelectionInterval(0,getColumnCount()-1); }
+    public void changeSelection(int row,int column,boolean toggle,boolean extend) { select(selectionModel,row,toggle,extend);select(columnSelection,column,toggle,extend);scrollRectToVisible(getCellRect(row,column,true)); }
+    private void select(ListSelectionModel model,int index,boolean toggle,boolean extend) { if(extend&&model.getAnchorSelectionIndex()>=0)model.setSelectionInterval(model.getAnchorSelectionIndex(),index);else if(toggle){if(model.isSelectedIndex(index))model.removeSelectionInterval(index,index);else model.addSelectionInterval(index,index);}else model.setSelectionInterval(index,index); }
     public Object getValueAt(int row, int col) { return dataModel.getValueAt(convertRowIndexToModel(row), columnModel.getColumn(col).getModelIndex()); }
     public void setValueAt(Object value, int row, int col) { dataModel.setValueAt(value, convertRowIndexToModel(row), columnModel.getColumn(col).getModelIndex()); }
     public int getRowCount() { return sorter == null ? dataModel.getRowCount() : sorter.getViewRowCount(); }
     public int getColumnCount() { return columnModel.getColumnCount(); }
-    public String getColumnName(int col) { return dataModel.getColumnName(col); }
-    public Class<?> getColumnClass(int col) { return dataModel.getColumnClass(col); }
-    public boolean isCellEditable(int row, int col) { return dataModel.isCellEditable(row, col); }
+    public String getColumnName(int col) { return dataModel.getColumnName(convertColumnIndexToModel(col)); }
+    public Class<?> getColumnClass(int col) { return dataModel.getColumnClass(convertColumnIndexToModel(col)); }
+    public boolean isCellEditable(int row, int col) { return dataModel.isCellEditable(convertRowIndexToModel(row), convertColumnIndexToModel(col)); }
     public Rectangle getCellRect(int row, int column, boolean includeSpacing) {
         int x = 0;
         for (int i = 0; i < column; i++) x += columnModel.getColumn(i).getWidth();
         int gap = includeSpacing ? 0 : columnModel.getColumnMargin();
-        return new Rectangle(x, row * rowHeight, Math.max(0, columnModel.getColumn(column).getWidth() - gap),
-            Math.max(0, rowHeight - (includeSpacing ? 0 : rowMargin)));
+        return new Rectangle(x, rowY(row), Math.max(0, columnModel.getColumn(column).getWidth() - gap),
+            Math.max(0, getRowHeight(row) - (includeSpacing ? 0 : rowMargin)));
     }
-    public void addRowSelectionInterval(int index0, int index1) {}
-    public void addColumnSelectionInterval(int index0, int index1) {}
-    public void setRowSelectionInterval(int index0, int index1) {}
-    public void setColumnSelectionInterval(int index0, int index1) {}
-    public void removeRowSelectionInterval(int index0, int index1) {}
-    public void removeColumnSelectionInterval(int index0, int index1) {}
-    public void scrollRectToVisible(Rectangle aRect) {}
-    public boolean editCellAt(int row, int column) { return false; }
+    public void addRowSelectionInterval(int index0, int index1) { selectionModel.addSelectionInterval(index0,index1); }
+    public void addColumnSelectionInterval(int index0, int index1) { columnSelection.addSelectionInterval(index0,index1); }
+    public void setRowSelectionInterval(int index0, int index1) { selectionModel.setSelectionInterval(index0,index1); }
+    public void setColumnSelectionInterval(int index0, int index1) { columnSelection.setSelectionInterval(index0,index1); }
+    public void removeRowSelectionInterval(int index0, int index1) { selectionModel.removeSelectionInterval(index0,index1); }
+    public void removeColumnSelectionInterval(int index0, int index1) { columnSelection.removeSelectionInterval(index0,index1); }
+    public boolean editCellAt(int row,int column) { return editCellAt(row,column,null); }
+    public boolean editCellAt(int row,int column,java.util.EventObject event) {
+        if(row<0||column<0||row>=getRowCount()||column>=getColumnCount()||!isCellEditable(row,column))return false;
+        if(cellEditor!=null&&!cellEditor.stopCellEditing())return false;
+        javax.swing.table.TableCellEditor editor=getCellEditor(row,column);if(editor==null||!editor.isCellEditable(event))return false;
+        Component component=editor.getTableCellEditorComponent(this,getValueAt(row,column),isCellSelected(row,column),row,column);
+        if(component==null)return false;cellEditor=editor;editingRow=row;editingColumn=column;editingModelRow=convertRowIndexToModel(row);editingModelColumn=convertColumnIndexToModel(column);editorComponent=component;editor.addCellEditorListener(editorListener);add(component);component.setBounds(getCellRect(row,column,false));component.requestFocus();repaint();return true;
+    }
+    public javax.swing.table.TableCellEditor getCellEditor() { return cellEditor; }
+    public javax.swing.table.TableCellEditor getCellEditor(int row,int column) { javax.swing.table.TableCellEditor editor=columnModel.getColumn(column).getCellEditor();return editor!=null?editor:getDefaultEditor(getColumnClass(column)); }
+    public void setDefaultEditor(Class<?> type,javax.swing.table.TableCellEditor editor) { if(editor==null)defaultEditors.remove(type);else defaultEditors.put(type,editor); }
+    public javax.swing.table.TableCellEditor getDefaultEditor(Class<?> type) {
+        if(type==Boolean.class&&!defaultEditors.containsKey(Boolean.class))defaultEditors.put(Boolean.class,new DefaultCellEditor(new JCheckBox()));
+        for(Class<?> c=type;c!=null;c=c.getSuperclass())if(defaultEditors.containsKey(c))return defaultEditors.get(c);
+        return defaultEditors.computeIfAbsent(Object.class,key->new GenericEditor());
+    }
+    public void setDefaultRenderer(Class<?> type,javax.swing.table.TableCellRenderer renderer) { if(renderer==null)defaultRenderers.remove(type);else defaultRenderers.put(type,renderer);repaint(); }
+    public javax.swing.table.TableCellRenderer getDefaultRenderer(Class<?> type) { for(Class<?> c=type;c!=null;c=c.getSuperclass())if(defaultRenderers.containsKey(c))return defaultRenderers.get(c);return defaultRenderer; }
+    public boolean isEditing() { return cellEditor!=null; }
+    public int getEditingRow() { return editingRow; }
+    public int getEditingColumn() { return editingColumn; }
+    public Component getEditorComponent() { return editorComponent; }
+    public void removeEditor() { if(cellEditor!=null)cellEditor.removeCellEditorListener(editorListener);if(editorComponent!=null)remove(editorComponent);cellEditor=null;editorComponent=null;editingRow=editingColumn=editingModelRow=editingModelColumn=-1;repaint(); }
+
+    private static final class GenericEditor extends DefaultCellEditor {
+        private Class<?> valueType;
+        private Object parsedValue;
+        GenericEditor(){super(new JTextField());}
+        @Override public Component getTableCellEditorComponent(JTable table,Object value,boolean selected,int row,int column){valueType=table.getColumnClass(column);return super.getTableCellEditorComponent(table,value,selected,row,column);}
+        @Override public boolean stopCellEditing(){
+            String text=((JTextField)editorComponent).getText();
+            try{
+                if(valueType==Object.class||valueType==String.class)parsedValue=text;
+                else if(text.isEmpty())parsedValue=null;
+                else if(valueType==Character.class){if(text.length()!=1)return false;parsedValue=text.charAt(0);}
+                else if(valueType==Number.class)parsedValue=new java.math.BigDecimal(text);
+                else parsedValue=valueType.getConstructor(String.class).newInstance(text);
+            }catch(ReflectiveOperationException|IllegalArgumentException invalid){return false;}
+            return super.stopCellEditing();
+        }
+        @Override public Object getCellEditorValue(){return parsedValue;}
+    }
+
     public Component prepareRenderer(javax.swing.table.TableCellRenderer renderer, int row, int column) {
         return renderer.getTableCellRendererComponent(this, getValueAt(row, column), isCellSelected(row, column), false, row, column);
     }
 
     @Override public java.awt.Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
     @Override public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) { return rowHeight; }
-    @Override public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) { return 1; }
+    @Override public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) { return orientation==SwingConstants.VERTICAL?visibleRect.height:visibleRect.width; }
     @Override public boolean getScrollableTracksViewportWidth() { return false; }
     @Override public boolean getScrollableTracksViewportHeight() { return false; }
 }

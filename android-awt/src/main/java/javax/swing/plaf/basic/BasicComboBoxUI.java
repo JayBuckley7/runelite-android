@@ -18,8 +18,8 @@ public class BasicComboBoxUI extends ComboBoxUI {
         comboBox = null; arrowButton = null; popupVisible = false;
     }
     protected JButton createArrowButton() { return new BasicArrowButton(SwingConstants.SOUTH); }
-    @Override public void setPopupVisible(JComboBox<?> c, boolean visible) { popupVisible = visible; }
-    @Override public boolean isPopupVisible(JComboBox<?> c) { return popupVisible; }
+    @Override public void setPopupVisible(JComboBox<?> c, boolean visible) { c.setPopupVisible(visible); }
+    @Override public boolean isPopupVisible(JComboBox<?> c) { return c.isPopupVisible(); }
     @Override public boolean isFocusTraversable(JComboBox<?> c) { return c.isEnabled(); }
     public void paintArrow(Graphics g, int x, int y, int width, int height) {
         if (arrowButton == null) return;

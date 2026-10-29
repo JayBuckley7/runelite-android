@@ -12,6 +12,7 @@ public abstract class ColorModel implements Transparency {
     private final boolean isAlphaPremultiplied;
     private final int transparency;
     private final ColorSpace colorSpace;
+    private final int[] componentSizes;
 
     public ColorModel(int bits) {
         this(bits, new int[]{8, 8, 8, 8}, ColorSpace.getInstance(ColorSpace.CS_sRGB),
@@ -28,7 +29,11 @@ public abstract class ColorModel implements Transparency {
         this.isAlphaPremultiplied = isAlphaPremultiplied;
         this.transparency = transparency;
         this.colorSpace = cspace;
+        this.componentSizes = bits == null ? null : bits.clone();
     }
+
+    public int getComponentSize(int component) { return componentSizes[component]; }
+    public int[] getComponentSize() { return componentSizes.clone(); }
 
     public final int getPixelSize()       { return pixel_bits; }
     public final ColorSpace getColorSpace() { return colorSpace; }
@@ -48,8 +53,12 @@ public abstract class ColorModel implements Transparency {
         return (getAlpha(pixel) << 24) | (getRed(pixel) << 16) | (getGreen(pixel) << 8) | getBlue(pixel);
     }
 
+    private static final ColorModel RGB=new DirectColorModel(32,0xff0000,0xff00,0xff,0xff000000);
+    public static ColorModel getRGBdefault(){return RGB;}
+    public Object getDataElements(int rgb,Object pixel){int[] p=pixel instanceof int[]?(int[])pixel:new int[1];p[0]=rgb;return p;}
+    public int getRGB(Object pixel){if(pixel instanceof int[])return getRGB(((int[])pixel)[0]);if(pixel instanceof byte[])return getRGB(((byte[])pixel)[0]&255);if(pixel instanceof short[])return getRGB(((short[])pixel)[0]&65535);throw new IllegalArgumentException("pixel data");}
     public boolean isCompatibleRaster(Raster raster) {
-        return true;
+        throw new UnsupportedOperationException("Color model must implement raster compatibility");
     }
 
     public WritableRaster createCompatibleWritableRaster(int w, int h) {
@@ -59,5 +68,20 @@ public abstract class ColorModel implements Transparency {
 
     public SampleModel createCompatibleSampleModel(int w, int h) {
         throw new UnsupportedOperationException("Subclasses must override createCompatibleSampleModel");
+    }
+    public ColorModel coerceData(WritableRaster raster, boolean premultiplied) {
+        if (!hasAlpha() || isAlphaPremultiplied() == premultiplied) return this;
+        ColorModel target;
+        if (this instanceof DirectColorModel) {
+            DirectColorModel direct = (DirectColorModel)this;
+            target = new DirectColorModel(colorSpace, pixel_bits, direct.getRedMask(), direct.getGreenMask(), direct.getBlueMask(), direct.getAlphaMask(), premultiplied, transferType);
+        } else if (this instanceof ComponentColorModel) target = new ComponentColorModel(colorSpace, componentSizes, true, premultiplied, transparency, transferType);
+        else throw new UnsupportedOperationException("Color model does not support alpha coercion");
+        Object pixel = null;
+        for (int y = raster.getMinY(); y < raster.getMinY() + raster.getHeight(); y++) for (int x = raster.getMinX(); x < raster.getMinX() + raster.getWidth(); x++) {
+            pixel = raster.getDataElements(x, y, pixel);
+            raster.setDataElements(x, y, target.getDataElements(getRGB(pixel), null));
+        }
+        return target;
     }
 }

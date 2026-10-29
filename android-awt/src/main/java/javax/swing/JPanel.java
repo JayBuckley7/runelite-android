@@ -14,4 +14,7 @@ public class JPanel extends JComponent {
         setDoubleBuffered(isDoubleBuffered);
         setOpaque(true);
     }
+    public javax.swing.plaf.PanelUI getUI(){return (javax.swing.plaf.PanelUI)ui;}
+    public void setUI(javax.swing.plaf.PanelUI value){super.setUI(value);}
+    public String getUIClassID(){return "PanelUI";}
 }
