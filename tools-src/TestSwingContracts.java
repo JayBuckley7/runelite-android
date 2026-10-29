@@ -226,6 +226,15 @@ public final class TestSwingContracts {
         check("InsetsUIResource keeps base insets",new javax.swing.plaf.InsetsUIResource(1,2,3,4).right==4);
         check("FontUIResource keeps base font",new javax.swing.plaf.FontUIResource("Dialog",java.awt.Font.BOLD,17).getSize()==17);
 
+        String crossPlatform = UIManager.getCrossPlatformLookAndFeelClassName();
+        check("cross-platform look and feel has a loadable class name", !crossPlatform.isEmpty() &&
+            LookAndFeel.class.isAssignableFrom(Class.forName(crossPlatform)));
+        UIManager.setLookAndFeel(crossPlatform);
+        check("cross-platform look and feel installs for splash startup", UIManager.getLookAndFeel() != null &&
+            UIManager.getLookAndFeel().isSupportedLookAndFeel());
+        UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        check("system look and feel installs", UIManager.getLookAndFeel() != null);
+
         System.out.println("SUMMARY " + total + " checks, " + failures + " failures");
         if(failures!=0)throw new AssertionError(failures+" Swing contract checks failed");
     }

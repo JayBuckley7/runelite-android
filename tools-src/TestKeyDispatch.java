@@ -23,6 +23,8 @@ public class TestKeyDispatch {
             Field singleton = dispatchClass.getDeclaredField("INSTANCE"); singleton.setAccessible(true);
             dispatch = singleton.get(null);
         }
+        UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+        check(UIManager.getLookAndFeel() != null, "splash look and feel installs in the release APK");
         JFrame window = new JFrame(); window.setVisible(true);
         Canvas canvas = new Canvas(); window.add(canvas);
         JPanel plugin = new JPanel(); window.add(plugin);

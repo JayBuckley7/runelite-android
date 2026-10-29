@@ -291,6 +291,11 @@ if (androidSdkAvailable) {
 // closures. desugar_jdk_libs 2.1.x is the version that ships the LambdaMetafactory
 // polyfill alongside the rest of the modern JDK surface.
 if (androidSdkAvailable) {
+    // Downloaded clients/plugins are compiled after the APK's reachability analysis.
+    // Preserve the desugared library ABI at L8 too, not only in the host R8 rules.
+    tasks.withType<com.android.build.gradle.internal.tasks.L8DexDesugarLibTask>().configureEach {
+        keepRulesConfigurations.add("-keep class j$.** { *; }")
+    }
     dependencies {
         add("coreLibraryDesugaring", "com.android.tools:desugar_jdk_libs:$coreLibraryVersion")
         // Lombok — 117HD's java sources use @Slf4j / @Getter / @AllArgsConstructor.

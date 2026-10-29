@@ -27,10 +27,20 @@ public class UIManager {
     public static void installLookAndFeel(LookAndFeelInfo info) { installed.add(info); }
     public static void installLookAndFeel(String name, String className) { installLookAndFeel(new LookAndFeelInfo(name,className)); }
     public static LookAndFeel getLookAndFeel() { return laf; }
-    public static void setLookAndFeel(LookAndFeel value) { if(value!=null&&!value.isSupportedLookAndFeel())throw new IllegalArgumentException("Unsupported look and feel");LookAndFeel old=laf;if(old!=null)old.uninitialize();laf=value;lafDefaults=new UIDefaults();if(value!=null){value.initialize();lafDefaults=value.getDefaults();}changes.firePropertyChange("lookAndFeel",old,value); }
+    public static void setLookAndFeel(LookAndFeel value) {
+        if (value != null && !value.isSupportedLookAndFeel())
+            throw new IllegalArgumentException("Unsupported look and feel");
+        LookAndFeel old = laf;
+        // Android renders controls and menus itself. Desktop theme initialization
+        // installs native event hooks/UI delegates that this renderer does not use.
+        laf = value;
+        changes.firePropertyChange("lookAndFeel", old, value);
+    }
     public static void setLookAndFeel(String className) throws Exception { setLookAndFeel((LookAndFeel)Class.forName(className).getDeclaredConstructor().newInstance()); }
-    public static String getSystemLookAndFeelClassName() { return ""; }
-    public static String getCrossPlatformLookAndFeelClassName() { return ""; }
+    /** Default for the compatibility renderer, which paints controls without desktop UI delegates. */
+    public static final class CompatLookAndFeel extends javax.swing.plaf.basic.BasicLookAndFeel {}
+    public static String getSystemLookAndFeelClassName() { return getCrossPlatformLookAndFeelClassName(); }
+    public static String getCrossPlatformLookAndFeelClassName() { return CompatLookAndFeel.class.getName(); }
     public static UIDefaults getDefaults() { return defaults; }
     public static UIDefaults getLookAndFeelDefaults() { return lafDefaults; }
 
@@ -53,7 +63,7 @@ public class UIManager {
     public static void addPropertyChangeListener(PropertyChangeListener l) { changes.addPropertyChangeListener(l); }
     public static void removePropertyChangeListener(PropertyChangeListener l) { changes.removePropertyChangeListener(l); }
     public static PropertyChangeListener[] getPropertyChangeListeners() { return changes.getPropertyChangeListeners(); }
-    public static void addAuxiliaryLookAndFeel(LookAndFeel laf) { if(laf!=null&&!auxiliary.contains(laf)){laf.initialize();auxiliary.add(laf);} }
-    public static boolean removeAuxiliaryLookAndFeel(LookAndFeel laf) { if(!auxiliary.remove(laf))return false;laf.uninitialize();return true; }
+    public static void addAuxiliaryLookAndFeel(LookAndFeel laf) { if(laf!=null&&!auxiliary.contains(laf))auxiliary.add(laf); }
+    public static boolean removeAuxiliaryLookAndFeel(LookAndFeel laf) { return auxiliary.remove(laf); }
     public static LookAndFeel[] getAuxiliaryLookAndFeels() { return auxiliary.toArray(new LookAndFeel[0]); }
 }

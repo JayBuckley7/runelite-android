@@ -8,6 +8,9 @@ import zipfile
 
 
 PREFIXES = ("joptsimple/", "com/google/protobuf/")
+# Runtime D8 can introduce these interfaces even when APK code never names them.
+RUNTIME_CLASSES = ("j$/util/Collection", "j$/util/concurrent/Flow$Publisher",
+                   "j$/util/concurrent/Flow$Subscriber", "j$/util/concurrent/Flow$Subscription")
 
 
 def class_api(data):
@@ -94,7 +97,7 @@ def dex_api(data):
     for i in range(u4(96)):
         offset = u4(100) + i * 32
         name = types[u4(offset)][1:-1]
-        if not name.startswith(PREFIXES):
+        if not name.startswith(PREFIXES) and name not in RUNTIME_CLASSES:
             continue
         access = u4(offset + 4)
         pos = u4(offset + 24)
@@ -139,7 +142,7 @@ def main():
         for entry in archive.namelist():
             if re.fullmatch(r"classes\d*\.dex", entry):
                 actual.update(dex_api(archive.read(entry)))
-    failures = []
+    failures = ["Missing runtime class " + name for name in RUNTIME_CLASSES if name not in actual]
     member_count = 0
     for name, (access, members) in expected.items():
         if name not in actual:
@@ -158,7 +161,7 @@ def main():
     if failures:
         print("\n".join(failures[:80]))
         raise SystemExit("FAIL: %d external API mismatches" % len(failures))
-    print("PASS: %d library classes and %d public/protected members retained in %s" % (len(expected), member_count, args.apk.name))
+    print("PASS: runtime interfaces present; %d library classes and %d public/protected members retained in %s" % (len(expected), member_count, args.apk.name))
 
 
 if __name__ == "__main__":

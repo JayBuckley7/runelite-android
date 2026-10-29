@@ -151,11 +151,12 @@ class SwingContractProbeActivity : ComponentActivity() {
                                 progress.add(message)
                                 Log.i(TAG, "CLIENT $message")
                             }
-                            // Resolve metadata only; never initialize or instantiate the game.
+                            // Construct the applet too: metadata-only checks miss lazily resolved runtime interfaces.
                             val client = Class.forName("client", false, ClientPreparer::class.java.classLoader)
                             check(net.runelite.api.Client::class.java.isAssignableFrom(client)) { "Injected client does not implement the host Client API" }
+                            check(net.runelite.api.Client::class.java.isInstance(client.getDeclaredConstructor().newInstance())) { "Client construction failed" }
                             val count = client.declaredMethods.size
-                            result.writeText("PASS actual ClientPreparer conversion/linkage version=$version methods=$count\n" + progress.joinToString("\n"))
+                            result.writeText("PASS actual ClientPreparer conversion/linkage/construction version=$version methods=$count\n" + progress.joinToString("\n"))
                             Log.i(TAG, "RESULT client passed")
                         } catch (error: Throwable) { result.writeText(progress.joinToString("\n") + "\n" + error.stackTraceToString()); Log.e(TAG, "FAILED client", error) }
                     }, "Runtime-client-contract").start()

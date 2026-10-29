@@ -26,7 +26,7 @@ def main():
 
     def run(label, *command, expected_failure=False):
         result = subprocess.run(list(map(str, command)), capture_output=True,
-                                text=True, encoding="utf-8", errors="replace", timeout=120)
+                                text=True, encoding="utf-8", errors="replace", timeout=300 if label.startswith("push ") else 120)
         message = f"[{label}] exit={result.returncode}\n{result.stdout}{result.stderr}"
         print(message, end="", flush=True)
         logs.append(message)

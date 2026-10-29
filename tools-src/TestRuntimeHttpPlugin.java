@@ -1,6 +1,14 @@
 import java.net.http.*; import java.util.concurrent.*; import java.nio.*; import java.util.*;
 public final class TestRuntimeHttpPlugin {
+ private static final class PluginCollection extends AbstractCollection<String> implements Collection<String> {
+  public Iterator<String> iterator() { return Arrays.asList("one", "two").iterator(); }
+  public int size() { return 2; }
+  public <T> T[] toArray(java.util.function.IntFunction<T[]> generator) { return toArray(generator.apply(0)); }
+ }
  public static void main(String[] args) throws Exception {
+  Collection<String> values = new PluginCollection();
+  if (!Arrays.equals(values.toArray(String[]::new), new String[]{"one", "two"}))
+   throw new AssertionError("downloaded Collection implementation");
   HttpRequest.BodyPublisher body=HttpRequest.BodyPublishers.ofString("plugin body");
   StringBuilder result=new StringBuilder();
   body.subscribe(new Flow.Subscriber<ByteBuffer>() {

@@ -16,6 +16,7 @@ main = build / 'main'
 for path in (source, classes, main):
     path.mkdir(parents=True, exist_ok=True)
 names = [
+    'UIManager', 'plaf/basic/BasicLookAndFeel',
     'DefaultButtonModel', 'ButtonGroup', 'DefaultComboBoxModel', 'AbstractListModel',
     'DefaultListModel', 'SpinnerNumberModel', 'Timer', 'ListSelectionModel',
     'DefaultListSelectionModel', 'SingleSelectionModel', 'DefaultSingleSelectionModel', 'text/AbstractDocument', 'text/PlainDocument',
