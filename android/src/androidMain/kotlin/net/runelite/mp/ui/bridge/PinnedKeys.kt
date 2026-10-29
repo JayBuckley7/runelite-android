@@ -27,6 +27,10 @@ object PinnedKeys {
             if (config.pin7()) add("7")
             if (config.pin8()) add("8")
             if (config.pin9()) add("9")
+            if (config.pinUp()) add("↑")
+            if (config.pinDown()) add("↓")
+            if (config.pinLeft()) add("←")
+            if (config.pinRight()) add("→")
         }
         val next = Settings(keys, config.pinKeysAtBottom())
         handler.post {

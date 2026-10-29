@@ -1,6 +1,7 @@
 package net.runelite.mp.ui
 
 import android.graphics.BitmapFactory
+import java.awt.event.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -208,6 +209,10 @@ private fun PinnedKeyChips(keys: List<String>, maxHeight: androidx.compose.ui.un
                     "Shift" -> ModifierState.toggleShift()
                     "Alt" -> ModifierState.toggleAlt()
                     "Space" -> KeyDispatch.sendSpace()
+                    "↑" -> KeyDispatch.sendKey(KeyEvent.VK_UP)
+                    "↓" -> KeyDispatch.sendKey(KeyEvent.VK_DOWN)
+                    "←" -> KeyDispatch.sendKey(KeyEvent.VK_LEFT)
+                    "→" -> KeyDispatch.sendKey(KeyEvent.VK_RIGHT)
                     else -> KeyDispatch.sendChar(key.single())
                 }
             }
