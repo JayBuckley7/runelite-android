@@ -16,7 +16,7 @@ New-Item -ItemType Directory -Force "$out/classes", "$out/lib" | Out-Null
 $r8 = (Get-ChildItem "$env:USERPROFILE/.gradle/caches/modules-2/files-2.1/com.android.tools/r8" -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
 $androidJar = "$Sdk/platforms/android-37.0/android.jar"
 $awt = Join-Path $root 'android-awt/build/intermediates/compile_library_classes_jar/release/bundleLibCompileToJarRelease/classes.jar'
-Run "$Jdk/bin/javac.exe" @('--release', '8', '-d', "$out/classes", "$PSScriptRoot/TestKeyDispatch.java", "$PSScriptRoot/TestLayeredPane.java")
+Run "$Jdk/bin/javac.exe" @('--release', '8', '-d', "$out/classes", "$PSScriptRoot/TestKeyDispatch.java", "$PSScriptRoot/TestLayeredPane.java", "$PSScriptRoot/TestTextCaret.java")
 Run "$Jdk/bin/jar.exe" @('cf', "$out/probe.jar", '-C', "$out/classes", '.')
 Run "$Jdk/bin/java.exe" @('-cp', $r8, 'com.android.tools.r8.D8', '--release', '--min-api', '26', '--lib', $androidJar, '--lib', $awt, '--output', "$out/probe-dex.jar", "$out/probe.jar")
 $zip = [System.IO.Compression.ZipFile]::OpenRead($Apk)
@@ -32,3 +32,4 @@ Run $adb @('-s', $Serial, 'push', "$out/probe-dex.jar", "$remote/probe.jar")
 Run $adb @('-s', $Serial, 'push', "$out/lib/librunelite_awt_native.so", "$remote/lib/")
 Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestKeyDispatch net.runelite.mp.ui.bridge.KeyDispatch dispatchAwtEvent")
 Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestLayeredPane host")
+Run $adb @('-s', $Serial, 'shell', "CLASSPATH=$remote/host.apk`:$remote/probe.jar dalvikvm -Djava.library.path=$remote/lib TestTextCaret")
