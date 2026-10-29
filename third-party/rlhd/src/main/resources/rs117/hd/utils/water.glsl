@@ -46,7 +46,7 @@ vec4 sampleWater(int waterTypeIndex, vec3 viewDir) {
     vec2 uv1 = anchorUv1 - animationFrame(28.0 * waterType.duration);
     vec2 uv2 = anchorUv2 + animationFrame(24.0 * waterType.duration);
     vec2 uv3 = anchorUv3 + animationFrame(21.0 * waterType.duration);
-    vec2 uvFoam = IN.uv;
+    vec2 uvFoam = fUv;
 
     vec2 flowMapUv = worldUvs(15.0) + animationFrame(50.0 * waterType.duration);
     float flowMapStrength = 0.025;
@@ -78,7 +78,7 @@ vec4 sampleWater(int waterTypeIndex, vec3 viewDir) {
     vec2 surfaceDistortion = vec2(0);
     if (abs(lightAxis.y) > .001 * length(lightAxis))
         surfaceDistortion = distortion.xz - lightAxis.xz * (distortion.y / lightAxis.y);
-    vec3 shadowReceiver = IN.position + vec3(surfaceDistortion.x, 0, surfaceDistortion.y);
+    vec3 shadowReceiver = fPosition + vec3(surfaceDistortion.x, 0, surfaceDistortion.y);
     float shadow = sampleShadowMap(shadowReceiver, vec3(0, -1, 0), false, false, true);
     float inverseShadow = 1.0 - shadow;
 
@@ -113,7 +113,7 @@ vec4 sampleWater(int waterTypeIndex, vec3 viewDir) {
     // point lights
     vec3 pointLightsOut = vec3(0);
     vec3 pointLightsSpecularOut = vec3(0);
-    calculateLighting(IN.position, normals, viewDir, fTexBlend, vSpecularGloss, vSpecularStrength,
+    calculateLighting(fPosition, normals, viewDir, fTexBlend, vSpecularGloss, vSpecularStrength,
         0.0, pointLightsOut, pointLightsSpecularOut);
 
     // sky light
@@ -318,7 +318,7 @@ void sampleUnderwater(inout vec3 outputColor, WaterType waterType, float depth, 
     // underwater terrain
     float lowestColorLevel = 500.0;
     float midColorLevel = 150.0;
-    float surfaceLevel = IN.position.y - depth; // e.g. -1600
+    float surfaceLevel = fPosition.y - depth; // e.g. -1600
 
     if (depth < midColorLevel) {
         outputColor *= mix(vec3(1), waterType.depthColor, translateRange(0.0, midColorLevel, depth));
@@ -334,7 +334,7 @@ void sampleUnderwater(inout vec3 outputColor, WaterType waterType, float depth, 
 
         vec2 causticsUv = worldUvs(scale);
 
-        float depthMultiplier = (IN.position.y - surfaceLevel - maxCausticsDepth) / -maxCausticsDepth;
+        float depthMultiplier = (fPosition.y - surfaceLevel - maxCausticsDepth) / -maxCausticsDepth;
         depthMultiplier *= depthMultiplier;
 
         causticsUv *= .75;

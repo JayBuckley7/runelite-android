@@ -24,6 +24,7 @@ tasks.register<JavaExec>("dumpGlesShaderProbes") {
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("HdShaderProbeSources")
     systemProperty("hd.faceStorageBuffer", providers.gradleProperty("hd.faceStorageBuffer").getOrElse("false"))
+    systemProperty("hd.vertexColors", providers.gradleProperty("hd.vertexColors").getOrElse("true"))
     args(rootProject.file("third-party/rlhd/src/main/resources/rs117/hd").absolutePath,
         layout.buildDirectory.dir("shader-probes").get().asFile.absolutePath)
 }
