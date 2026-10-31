@@ -38,7 +38,8 @@ gradle.beforeProject { project ->
             def compileProbe = project.tasks.register('compileCompatProbe', org.gradle.api.tasks.compile.JavaCompile) {
                 dependsOn ':android-awt:bundleLibCompileToJarDebug'
                 setSource(project.rootProject.files('tools-src/TestGraphicsCompatibility.java',
-                    'tools-src/TestRuntimeCoreContracts.java', 'tools-src/TestAudioLineContracts.java'))
+                    'tools-src/TestRuntimeCoreContracts.java', 'tools-src/TestAudioLineContracts.java',
+                    'tools-src/TestImeCompositionReplay.java', 'tools-src/TestKeyboardSession.java'))
                 classpath = project.files(project.rootProject.file('android-awt/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar'))
                 def sdk = System.getenv('ANDROID_HOME') ?: System.getenv('ANDROID_SDK_ROOT') ?: android.sdkDirectory.absolutePath
                 options.bootstrapClasspath = project.files(new File(sdk, 'build-tools/36.0.0/core-lambda-stubs.jar'),
