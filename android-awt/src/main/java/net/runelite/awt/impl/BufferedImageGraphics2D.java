@@ -540,11 +540,8 @@ public class BufferedImageGraphics2D extends Graphics2D {
                 clip.x, clip.y, clipX1(), clipY1(), flags);
             return;
         }
-        int[] cr = clipRects;
-        for (int i = 0; i < cr.length; i += 4) {
-            AwtNative.drawLine(pixels, width, height, x0, y0, x1, y1, argb, rule,
-                cr[i], cr[i + 1], cr[i + 2], cr[i + 3], flags);
-        }
+        AwtNative.drawLineClipped(pixels, width, height, x0, y0, x1, y1,
+            argb, rule, clipRects, flags);
     }
 
     /** Fill device-space contours through the clip in one pass. */

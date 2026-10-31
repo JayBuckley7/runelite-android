@@ -49,6 +49,13 @@ object AwtNative {
         flags: Int,
     )
 
+    /** Draw through disjoint clip rectangles while acquiring the pixel buffer only once. */
+    @JvmStatic external fun drawLineClipped(
+        pixels: IntArray, imgW: Int, imgH: Int,
+        x0: Int, y0: Int, x1: Int, y1: Int,
+        argb: Int, compositeRule: Int, clip: IntArray, flags: Int,
+    )
+
     /** Pixel-centre scanline fill of [nContours] implicitly closed contours (device-space
      *  x,y pairs in [coords], vertex counts in [counts]) under even-odd or non-zero, clipped
      *  to [nClip] disjoint (x0, y0, x1, y1) rects in [clip]. */

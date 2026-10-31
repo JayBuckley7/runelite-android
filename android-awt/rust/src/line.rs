@@ -7,6 +7,20 @@ pub const SKIP_FIRST: jint = 1;
 /// Skip the last pixel (the closing segment of a polygon ends on the already-drawn start).
 pub const SKIP_LAST: jint = 2;
 
+pub fn draw_line_clipped(
+    buf: &mut [i32], img_w: jint, img_h: jint,
+    x0: jint, y0: jint, x1: jint, y1: jint,
+    argb: jint, composite_rule: jint, rects: &[jint], flags: jint,
+) {
+    for r in rects.chunks_exact(4) {
+        // Half-open clip rectangles; reject only lines whose bounding boxes cannot touch.
+        if x0.max(x1) < r[0] || x0.min(x1) >= r[2]
+            || y0.max(y1) < r[1] || y0.min(y1) >= r[3] { continue; }
+        draw_line(buf, img_w, img_h, x0, y0, x1, y1, argb, composite_rule,
+            (r[0], r[1], r[2], r[3]), flags);
+    }
+}
+
 /// Clipped Bresenham line on an int[] buffer.
 ///
 /// The pixel for step `i` along the major axis is computed in closed form
@@ -197,5 +211,32 @@ mod tests {
         assert_eq!(count(&buf), 9);
         assert_eq!(buf[0], 0);
         assert_eq!(buf[10], 0);
+    }
+
+    #[test]
+    fn batched_clip_matches_separate_draws() {
+        let mut rects = Vec::new();
+        for y in 0..64 {
+            let inset = (y - 32i32).abs() / 2;
+            rects.extend_from_slice(&[inset, y, 64 - inset, y + 1]);
+        }
+        let lines = [(-50, 0, 100, 63), (63, 0, 0, 63), (0, 32, 63, 32),
+            (32, -100, 32, 100), (20, 20, 20, 20),
+            (i32::MIN, i32::MIN, i32::MAX, i32::MAX), (90, 90, 100, 100)];
+        for rule in 1..=12 {
+            for flags in 0..=3 {
+                for &(x0, y0, x1, y1) in &lines {
+                    let mut reference = vec![0x40302010; 64 * 64];
+                    let mut batched = reference.clone();
+                    for r in rects.chunks_exact(4) {
+                        draw_line(&mut reference, 64, 64, x0, y0, x1, y1,
+                            0x80804020u32 as i32, rule, (r[0], r[1], r[2], r[3]), flags);
+                    }
+                    draw_line_clipped(&mut batched, 64, 64, x0, y0, x1, y1,
+                        0x80804020u32 as i32, rule, &rects, flags);
+                    assert_eq!(reference, batched, "rule={rule} flags={flags} line={:?}", (x0,y0,x1,y1));
+                }
+            }
+        }
     }
 }
