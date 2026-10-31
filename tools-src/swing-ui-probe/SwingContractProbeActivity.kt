@@ -108,6 +108,17 @@ class SwingContractProbeActivity : ComponentActivity() {
                     }
                     "combo" -> combo.showPopup()
                     "hide combo" -> combo.hidePopup()
+                    "keyboard-replay" -> {
+                        val output = File(filesDir, "keyboard-replay-result.txt")
+                        try {
+                            java.awt.EventQueue.invokeAndWait {
+                                Class.forName("TestKeyboardSession").getMethod("run", android.content.Context::class.java).invoke(null, this)
+                            }
+                            val result = Class.forName("TestImeCompositionReplay").getMethod("run", android.content.Context::class.java).invoke(null, this) as String
+                            output.writeText("PASS existing keyboard session contracts\n$result")
+                            Log.i(TAG, result)
+                        } catch (error: Throwable) { output.writeText(error.stackTraceToString()); throw error }
+                    }
                     "graphics-benchmark" -> {
                         val output = File(filesDir, "graphics-benchmark-result.txt")
                         try {
@@ -173,7 +184,8 @@ class SwingContractProbeActivity : ComponentActivity() {
                 }
             } catch (error: Throwable) { Log.e(TAG, "FAILED $command", error) }
         }
-        if (command in setOf("graphics", "graphics-benchmark", "runtime", "audio")) Thread(action, "Compat-$command").start()
+        if (command == "keyboard-replay") runOnUiThread(action)
+        else if (command in setOf("graphics", "graphics-benchmark", "runtime", "audio")) Thread(action, "Compat-$command").start()
         else SwingUtilities.invokeLater(action)
     }
 

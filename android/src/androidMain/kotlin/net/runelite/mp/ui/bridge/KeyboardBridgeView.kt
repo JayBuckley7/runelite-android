@@ -2,6 +2,8 @@ package net.runelite.mp.ui.bridge
 
 import android.content.Context
 import android.text.InputType
+import android.text.Selection
+import android.text.method.TextKeyListener
 import android.util.AttributeSet
 import android.view.View
 import android.view.WindowInsets
@@ -73,13 +75,18 @@ class KeyboardInputView @JvmOverloads constructor(
         private set
     private var connectionGeneration = 0
     private var imeWasVisible = false
+    private var inputConnection: InputConnection? = null
 
     init {
         isFocusable = false
         isFocusableInTouchMode = false
     }
 
-    fun resetConnection() { connectionGeneration++ }
+    fun resetConnection() {
+        connectionGeneration++
+        inputConnection?.closeConnection()
+        inputConnection = null
+    }
 
     fun openSession() {
         if (isSessionOpen || !isAttachedToWindow || !hasWindowFocus()) return
@@ -138,7 +145,8 @@ class KeyboardInputView @JvmOverloads constructor(
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         if (!isSessionOpen) return null
-        val generation = ++connectionGeneration
+        resetConnection()
+        val generation = connectionGeneration
         outAttrs.inputType = if (SoftKeyboardController.isPasswordProtectedInput) {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -150,70 +158,89 @@ class KeyboardInputView @JvmOverloads constructor(
                 EditorInfo.IME_FLAG_NO_FULLSCREEN
 
         return object : BaseInputConnection(this, true) {
-            private var currentComposing = ""
             private var closed = false
             private fun active() = !closed && isSessionOpen && generation == connectionGeneration
 
             override fun closeConnection() {
                 closed = true
-                currentComposing = ""
                 super.closeConnection()
+                editable?.apply { clear(); clearSpans() }
             }
 
             override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
-                if (!active()) return false
-                val newText = text?.toString() ?: ""
-                syncComposing(newText)
-                return true
+                return edit { super.setComposingText(text ?: "", newCursorPosition) }
             }
 
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
                 if (!active()) return false
                 val newText = text?.toString() ?: ""
-                if (currentComposing.isNotEmpty()) {
-                    syncComposing(newText)
-                    currentComposing = ""
-                } else if (newText.isNotEmpty()) {
-                    KeyDispatch.sendString(newText)
-                }
+                val accepted = edit { super.commitText(newText, newCursorPosition) }
                 if (newText.contains('\n') || newText.contains('\r')) {
                     endSession()
                 }
-                return true
+                return accepted
             }
 
             override fun finishComposingText(): Boolean {
                 if (!active()) return false
-                currentComposing = ""
-                return true
+                return super.finishComposingText()
+            }
+
+            override fun setComposingRegion(start: Int, end: Int): Boolean {
+                if (!active()) return false
+                return super.setComposingRegion(start, end)
+            }
+
+            override fun setSelection(start: Int, end: Int): Boolean {
+                if (!active()) return false
+                val accepted = super.setSelection(start, end)
+                if (accepted) updateSelection()
+                return accepted
             }
 
             override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
                 if (!active()) return false
-                currentComposing = ""
-                for (i in 0 until beforeLength) {
-                    KeyDispatch.sendBackspace()
+                val knownBefore = selectionStart()
+                return edit((beforeLength - knownBefore).coerceAtLeast(0)) {
+                    super.deleteSurroundingText(beforeLength, afterLength)
                 }
-                return true
+            }
+
+            override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
+                if (!active()) return false
+                val knownBefore = editable?.let { Character.codePointCount(it, 0, selectionStart()) } ?: 0
+                return edit((beforeLength - knownBefore).coerceAtLeast(0)) {
+                    super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
+                }
             }
 
             override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence {
                 if (!active() || n <= 0) return ""
-                return if (currentComposing.length > n) {
-                    currentComposing.substring(currentComposing.length - n)
-                } else {
-                    currentComposing
-                }
+                return super.getTextBeforeCursor(n, flags) ?: ""
             }
 
             override fun getTextAfterCursor(n: Int, flags: Int): CharSequence {
-                return ""
+                if (!active() || n <= 0) return ""
+                return super.getTextAfterCursor(n, flags) ?: ""
+            }
+
+            override fun getSelectedText(flags: Int): CharSequence? {
+                if (!active()) return null
+                return super.getSelectedText(flags)
             }
 
             override fun sendKeyEvent(event: android.view.KeyEvent): Boolean {
                 if (!active()) return false
-                currentComposing = ""
+                // Numeric IMEs can send key events instead of commitText. Keep Android's
+                // editor state in sync without emitting those characters a second time.
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    super.finishComposingText()
+                    editable?.let { TextKeyListener.getInstance().onKeyDown(this@KeyboardInputView, it, event.keyCode, event) }
+                } else if (event.action == android.view.KeyEvent.ACTION_UP) {
+                    editable?.let { TextKeyListener.getInstance().onKeyUp(this@KeyboardInputView, it, event.keyCode, event) }
+                }
                 val res = KeyDispatch.sendAndroidKeyEvent(event)
+                updateSelection()
                 if (event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_UP) {
                     endSession()
                 }
@@ -222,7 +249,7 @@ class KeyboardInputView @JvmOverloads constructor(
 
             override fun performEditorAction(actionCode: Int): Boolean {
                 if (!active()) return false
-                currentComposing = ""
+                super.finishComposingText()
                 when (actionCode) {
                     EditorInfo.IME_ACTION_DONE,
                     EditorInfo.IME_ACTION_SEND,
@@ -238,27 +265,39 @@ class KeyboardInputView @JvmOverloads constructor(
                 return super.performEditorAction(actionCode)
             }
 
-            private fun syncComposing(newText: String) {
-                if (newText == currentComposing) return
+            private fun selectionStart(): Int = editable?.let {
+                minOf(Selection.getSelectionStart(it), Selection.getSelectionEnd(it)).coerceAtLeast(0)
+            } ?: 0
 
+            /** Android owns committed text, cursor and composing spans in one Editable.
+             * Forward only the resulting difference through the existing key-event bridge. */
+            private fun edit(unknownBackspaces: Int = 0, operation: () -> Boolean): Boolean {
+                if (!active()) return false
+                val before = editable?.toString() ?: ""
+                val accepted = operation()
+                if (!accepted) return false
+                val after = editable?.toString() ?: ""
                 var commonPrefixLen = 0
-                val minLen = minOf(currentComposing.length, newText.length)
-                while (commonPrefixLen < minLen && currentComposing[commonPrefixLen] == newText[commonPrefixLen]) {
+                val minLen = minOf(before.length, after.length)
+                while (unknownBackspaces == 0 && commonPrefixLen < minLen && before[commonPrefixLen] == after[commonPrefixLen]) {
                     commonPrefixLen++
                 }
-
-                val backspacesNeeded = currentComposing.length - commonPrefixLen
-                for (i in 0 until backspacesNeeded) {
-                    KeyDispatch.sendBackspace()
-                }
-
-                val newSuffix = newText.substring(commonPrefixLen)
-                if (newSuffix.isNotEmpty()) {
-                    KeyDispatch.sendString(newSuffix)
-                }
-
-                currentComposing = newText
+                // The game may contain text from before this keyboard session. Preserve
+                // the existing ability to backspace into that untracked prefix.
+                repeat(before.length - commonPrefixLen + unknownBackspaces) { KeyDispatch.sendBackspace() }
+                KeyDispatch.sendString(after.substring(commonPrefixLen))
+                updateSelection()
+                return true
             }
-        }
+
+            private fun updateSelection() {
+                if (!active() || !isAttachedToWindow) return
+                val buffer = editable ?: return
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.updateSelection(this@KeyboardInputView,
+                    Selection.getSelectionStart(buffer), Selection.getSelectionEnd(buffer),
+                    BaseInputConnection.getComposingSpanStart(buffer), BaseInputConnection.getComposingSpanEnd(buffer))
+            }
+        }.also { inputConnection = it }
     }
 }

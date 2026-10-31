@@ -38,7 +38,8 @@ gradle.beforeProject { project ->
             def compileProbe = project.tasks.register('compileCompatProbe', org.gradle.api.tasks.compile.JavaCompile) {
                 dependsOn ':android-awt:bundleLibCompileToJarDebug'
                 setSource(project.rootProject.files('tools-src/TestGraphicsCompatibility.java',
-                    'tools-src/TestRuntimeCoreContracts.java', 'tools-src/TestAudioLineContracts.java'))
+                    'tools-src/TestRuntimeCoreContracts.java', 'tools-src/TestAudioLineContracts.java',
+                    'tools-src/TestImeCompositionReplay.java', 'tools-src/TestKeyboardSession.java'))
                 if (project.hasProperty('graphicsBaselineSource')) {
                     setSource(getSource() + project.rootProject.files('tools-src/TestGraphicsFallbackBenchmark.java',
                         project.property('graphicsBaselineSource')))
