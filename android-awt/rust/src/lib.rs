@@ -273,6 +273,26 @@ pub extern "system" fn Java_net_runelite_awt_AwtNative_drawLine<'local>(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_net_runelite_awt_AwtNative_drawLineClipped<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    pixels: JIntArray<'local>,
+    img_w: jint, img_h: jint,
+    x0: jint, y0: jint, x1: jint, y1: jint,
+    argb: jint, composite_rule: jint,
+    clip: JIntArray<'local>, flags: jint,
+) {
+    let count = match env.get_array_length(&clip) { Ok(n) if n > 0 && n % 4 == 0 => n, _ => return };
+    let mut rects = vec![0; count as usize];
+    // Copy clip coordinates before pinning pixels: no JVM calls inside the critical section.
+    if env.get_int_array_region(&clip, 0, &mut rects).is_err() { return; }
+    let _ = with_pinned_array(&mut env, &pixels, ReleaseMode::CopyBack, |buf| {
+        line::draw_line_clipped(buf, img_w, img_h, x0, y0, x1, y1,
+            argb, composite_rule, &rects, flags);
+    });
+}
+
+#[no_mangle]
 pub extern "system" fn Java_net_runelite_awt_AwtNative_fillPath<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,

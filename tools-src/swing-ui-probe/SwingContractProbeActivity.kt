@@ -119,6 +119,14 @@ class SwingContractProbeActivity : ComponentActivity() {
                             Log.i(TAG, result)
                         } catch (error: Throwable) { output.writeText(error.stackTraceToString()); throw error }
                     }
+                    "graphics-benchmark" -> {
+                        val output = File(filesDir, "graphics-benchmark-result.txt")
+                        try {
+                            val result = Class.forName("TestGraphicsFallbackBenchmark").getMethod("run").invoke(null) as String
+                            output.writeText(result)
+                            Log.i(TAG, result)
+                        } catch (error: Throwable) { output.writeText(error.stackTraceToString()); throw error }
+                    }
                     "graphics" -> {
                         val output = File(filesDir, "graphics-result.txt")
                         try {
@@ -177,7 +185,7 @@ class SwingContractProbeActivity : ComponentActivity() {
             } catch (error: Throwable) { Log.e(TAG, "FAILED $command", error) }
         }
         if (command == "keyboard-replay") runOnUiThread(action)
-        else if (command in setOf("graphics", "runtime", "audio")) Thread(action, "Compat-$command").start()
+        else if (command in setOf("graphics", "graphics-benchmark", "runtime", "audio")) Thread(action, "Compat-$command").start()
         else SwingUtilities.invokeLater(action)
     }
 
